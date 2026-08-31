@@ -1,0 +1,27 @@
+{
+  "name": "discord-bot",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "음악 스트리밍 + TTS + 이미지 정리 디스코드 봇",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "deploy": "node src/deploy-commands.js",
+    "update-ytdlp": "node scripts/update-ytdlp.mjs",
+    "verify": "node verify.mjs"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@discordjs/voice": "^0.19.2",
+    "discord.js": "^14.27.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "ffmpeg-static": "^5.3.0",
+    "libsodium-wrappers": "^0.8.4",
+    "msedge-tts": "^2.0.7",
+    "opusscript": "^0.0.8"
+  }
+}

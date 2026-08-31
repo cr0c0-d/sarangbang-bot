@@ -1,0 +1,87 @@
+// 모든 슬래시 명령어를 한곳에 모읍니다.
+// 새 명령어를 만들면 여기 배열에만 추가하면 됩니다.
+//
+// 기능이 꺼져 있어도 명령어는 항상 전부 등록합니다.
+// 채널을 /채널설정 으로 언제든 바꿀 수 있게 되면서, 등록 시점에 켜짐/꺼짐을
+// 판단하면 "설정하려는데 설정할 명령어가 없는" 상황이 생기기 때문입니다.
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { commands as musicCommands } from './music/commands.js';
+import { commands as ttsCommands } from './tts/index.js';
+import { commands as imageCommands } from './images/commands.js';
+import { commands as channelCommands } from './channel-commands.js';
+import { getWithSource } from './settings.js';
+
+const basicCommands = [
+  {
+    data: new SlashCommandBuilder().setName('핑').setDescription('봇이 살아있는지 확인합니다'),
+    async execute(interaction) {
+      await interaction.reply({
+        content: `🏓 살아있습니다. 응답속도 ${Math.round(interaction.client.ws.ping)}ms`,
+        flags: MessageFlags.Ephemeral,
+      });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder().setName('도움말').setDescription('쓸 수 있는 기능을 봅니다'),
+    async execute(interaction) {
+      const g = interaction.guildId;
+      const musicText = getWithSource(g, 'musicTextChannelId');
+      const ttsText = getWithSource(g, 'ttsTextChannelId');
+      const imageCh = getWithSource(g, 'imageChannelIds');
+
+      const embed = new EmbedBuilder()
+        .setTitle('🤖 봇 사용법')
+        .setColor(0x5865f2)
+        .setDescription('채널은 `/채널설정` 으로 바꾸고, `/채널확인` 으로 지금 설정을 볼 수 있습니다.')
+        .addFields(
+          {
+            name: '🎵 음악',
+            value: [
+              '`/재생 <링크 또는 검색어>` — 재생 (재생목록 링크도 됩니다)',
+              musicText.source === 'none'
+                ? '아무 채팅방에 유튜브 링크를 붙여넣어도 재생됩니다.'
+                : `<#${musicText.value}> 에 유튜브 링크만 붙여넣어도 재생됩니다.`,
+              '`/다음` `/정지` `/일시정지` `/이어재생` `/반복` `/대기열` `/나가기`',
+            ].join('\n'),
+          },
+          {
+            name: '🗣️ 읽어주기 (TTS)',
+            value:
+              ttsText.source === 'none'
+                ? '읽어줄 채팅방이 없어 꺼져 있습니다.\n`/채널설정` 에서 "읽어주기 채팅방"을 지정하세요.'
+                : [
+                    `<#${ttsText.value}> 에 글을 쓰면 음성채널에서 읽어줍니다.`,
+                    '맨 앞에 `//` 를 붙이면 읽지 않습니다.',
+                    '`/읽어주기 켜기:false` — 끄기 · `/목소리` — 목소리 변경',
+                  ].join('\n'),
+          },
+          {
+            name: '🖼️ 이미지 정리',
+            value:
+              imageCh.source === 'none'
+                ? '감시할 채널이 없어 꺼져 있습니다.\n`/채널설정` 에서 "이미지 채널"을 지정하세요.'
+                : [
+                    `${imageCh.value.map((id) => `<#${id}>`).join(' ')} 에 올린 사진을 정리합니다.`,
+                    '폴더 이름은 기본적으로 **채널 이름**을 씁니다. (스레드면 스레드 이름)',
+                    '`/폴더 <이름>` — 이 채널의 폴더를 다른 이름으로 바꾸기',
+                    '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
+                    '`/폴더목록` `/폴더확인`',
+                  ].join('\n'),
+          }
+        );
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    },
+  },
+];
+
+export const allCommands = [
+  ...basicCommands,
+  ...channelCommands,
+  ...musicCommands,
+  ...ttsCommands,
+  ...imageCommands,
+];
+
+/** 이름 → 명령어 객체 */
+export const commandMap = new Map(allCommands.map((c) => [c.data.name, c]));

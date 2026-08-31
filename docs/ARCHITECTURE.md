@@ -1,0 +1,490 @@
+# 설계 문서 (Architecture)
+
+이 문서는 **다른 개발자 또는 LLM 에이전트가 이 프로젝트를 처음 열었을 때
+코드를 다 읽지 않고도 안전하게 수정할 수 있도록** 쓰였습니다.
+"무엇을 하는가"보다 **"왜 이렇게 되어 있는가"와 "건드리면 깨지는 것"**에 무게를 둡니다.
+
+작성 시점: 2026-08-31 / 소유자: jychoi@archseoul.com
+
+---
+
+## 0. 한 문단 요약
+
+Node.js(ESM) 단일 프로세스 디스코드 봇. 하나의 봇 계정으로 세 가지 기능을 제공한다.
+(1) 유튜브 링크/검색어 → 음성채널 음악 스트리밍, (2) 특정 채팅방 글 → 음성채널 TTS 낭독,
+(3) 특정 채널의 이미지 → 로컬 폴더 자동 정리 + 다중 선택 개별 다운로드 웹 갤러리.
+외부 유료 API를 쓰지 않는다. 상태는 대부분 메모리에 있고, 이미지 메타데이터만 JSON 파일로 남는다.
+
+---
+
+## 1. 환경 전제
+
+| 항목 | 값 | 비고 |
+|---|---|---|
+| Node.js | v24.15.0에서 개발·검증 | `engines: >=20`. top-level await, `Readable.fromWeb`, 전역 `fetch` 사용 |
+| 모듈 시스템 | ESM (`"type": "module"`) | 모든 상대 import는 **확장자 `.js` 필수** |
+| OS | Windows 11에서 개발, Linux 이식 고려 | 경로는 전부 `node:path`로 조립 |
+| ffmpeg | `ffmpeg-static` npm 패키지 | 시스템 PATH에 의존하지 않음 |
+| yt-dlp | `bin/yt-dlp.exe` (Windows) / `bin/yt-dlp` | `npm run update-ytdlp`로 받음. **git에 커밋 안 함** |
+| Python | **불필요** | TTS도 Node 구현체(`msedge-tts`)를 씀 |
+
+### 검증된 의존성 버전
+
+```
+discord.js        14.27.0
+@discordjs/voice   0.19.2
+prism-media         1.3.5   (@discordjs/voice가 내부적으로 사용)
+libsodium-wrappers          (음성 암호화. 없으면 음성 연결 자체가 실패)
+ffmpeg-static               (libopus 인코더 + Ogg Opus 먹서 포함 확인함)
+msedge-tts                  (Microsoft Edge TTS 웹소켓 래퍼)
+express                     (이미지 갤러리)
+opusscript                  (예비용. 현재 경로에서는 실제로 쓰이지 않음 — 3.3절 참고)
+dotenv
+```
+
+---
+
+## 2. 파일 지도
+
+```
+src/
+  index.js              진입점. 클라이언트 생성, 이벤트 라우팅, 웹서버 기동, 종료 처리
+  config.js             .env 파싱 + 필수값 검증. 값이 없으면 여기서 프로세스를 죽인다
+  commands.js           모든 슬래시 명령어를 모으는 곳 + /핑, /도움말
+  channel-commands.js   /채널설정 /채널확인 /채널해제
+  settings.js           ★ 명령어로 바꾼 설정을 기억 (data/settings.json). .env 를 덮어씀
+  deploy-commands.js    슬래시 명령어를 디스코드에 등록 (npm run deploy)
+
+  audio/
+    ffmpeg.js           아무 오디오 → Ogg Opus 48kHz 스테레오 변환 (spawn 래퍼)
+    guild-audio.js      ★ 서버당 음성 상태 전체. 음악 큐 + TTS 끼어들기 조정
+
+  music/
+    ytdlp.js            yt-dlp 프로세스 래퍼. 메타데이터 조회 + 오디오 스트림 생성
+    commands.js         /재생 등 음악 명령어 + 채팅방 유튜브 링크 자동 감지
+
+  tts/
+    synth.js            텍스트 → mp3 스트림 (msedge-tts)
+    index.js            메시지 정제(멘션/이모지/링크 처리) + TTS 명령어
+
+  images/
+    store.js            ★ 디스크 저장소. 경로 안전장치, 폴더 결정 규칙, 메타데이터
+    commands.js         이미지 자동 저장 훅 + /폴더 등 명령어
+
+  web/
+    server.js           Express 갤러리. HTML/CSS/JS를 이 파일 안에 문자열로 들고 있음
+
+scripts/update-ytdlp.mjs  yt-dlp 바이너리 다운로더
+bin/                      yt-dlp 바이너리 (gitignore)
+data/settings.json        /채널설정 으로 바꾼 값 (gitignore)
+data/images/              저장된 이미지 + _meta.json + _folders.json (gitignore)
+```
+
+★ 표시된 세 파일이 이 프로젝트의 무게중심이다. 수정 전에 반드시 읽을 것.
+
+---
+
+## 3. 핵심 설계 결정과 근거
+
+각 항목은 **"왜 다른 방법을 쓰지 않았는지"**를 포함한다. 되돌리기 전에 읽을 것.
+
+### 3.1 유튜브 추출: `ytdl-core` 계열이 아니라 `yt-dlp` 바이너리
+
+- `ytdl-core` / `@distube/ytdl-core` 같은 순수 JS 라이브러리는 유튜브가 서명 알고리즘을
+  바꿀 때마다 깨지고, 수리까지 며칠씩 걸린다. 개인용 봇이 가장 자주 죽는 원인이다.
+- `yt-dlp`는 대응이 며칠이 아니라 몇 시간 단위다. **음악이 안 나오면 90%는
+  `npm run update-ytdlp` 로 해결된다.** 이 사실이 README와 에러 메시지에 박혀 있어야 한다.
+- 바이너리를 npm 패키지(`youtube-dl-exec` 등)로 받지 않고 `scripts/update-ytdlp.mjs`로
+  직접 받는 이유: npm 패키지의 postinstall이 회사 프록시/방화벽에서 자주 실패하고,
+  버전을 우리가 원할 때 갱신할 수 없기 때문.
+
+### 3.2 오디오 경로: `yt-dlp → ffmpeg(libopus) → Ogg Opus → discord.js`
+
+```
+yt-dlp -o -            ffmpeg -c:a libopus -f opus       @discordjs/voice
+(webm/m4a 등)   ──►    (Ogg Opus 48kHz 2ch)        ──►   StreamType.OggOpus
+                                                          = 컨테이너만 벗김
+```
+
+- 디스코드 음성은 **48kHz 스테레오 Opus**만 받는다.
+- 만약 `StreamType.Arbitrary`로 넘기면 discord.js가 내부적으로 PCM으로 풀었다가
+  JS Opus 인코더(`opusscript`)로 다시 인코딩한다. `opusscript`는 순수 JS라 느리고,
+  1코어짜리 무료 VPS에서는 음이 끊긴다.
+- 우리가 미리 ffmpeg의 **네이티브 libopus**로 인코딩해두면 discord.js는 Ogg 컨테이너만
+  벗겨서 그대로 보낸다. 재인코딩이 없다 = CPU가 거의 안 든다.
+- `opusscript`는 이 경로에서 실제로 호출되지 않지만, 누군가 `StreamType.Arbitrary`로
+  바꿨을 때 즉시 죽지 않도록 남겨둔 안전망이다.
+- 검증됨: 3분 33초짜리 곡에서 8초 만에 2.5MB Opus 수신, ffmpeg이 `Audio: opus, 48000 Hz, stereo` 출력.
+
+### 3.3 서버당 음성 커넥션은 **하나**뿐이다 — 음악과 TTS의 공존 방식
+
+**제약**: 디스코드 봇은 한 서버(길드)에서 음성채널에 동시에 하나만 접속할 수 있다.
+음악용 봇과 TTS용 봇을 따로 만들면 이 제약이 없지만, 사용자는 봇 하나를 원했다.
+
+**해결**: `GuildAudio` 하나가 커넥션 1개 + 플레이어 2개(`musicPlayer`, `ttsPlayer`)를 들고,
+구독을 갈아끼우며 TTS가 음악에 **끼어든다**.
+
+```
+음악 재생 중  ──TTS 요청──►  musicPlayer.pause(true)
+                             subscription.unsubscribe()
+                             connection.subscribe(ttsPlayer)
+                             ttsPlayer.play(...)  → Playing → Idle 대기
+                             connection.subscribe(musicPlayer)
+                             musicPlayer.unpause()   ──►  음악 이어서 재생
+```
+
+**⚠️ 반드시 지켜야 하는 것 — `connection.subscribe()`는 이전 구독을 끊어주지 않는다.**
+`@discordjs/voice` 0.19.2 소스(`VoiceConnection.subscribe`)를 직접 확인했다.
+이 메서드는 `state.subscription`만 덮어쓸 뿐, 이전 `PlayerSubscription`을 해제하지 않는다.
+두 플레이어가 동시에 구독된 채로 남으면 **둘 다 오디오 패킷을 보내서 소리가 깨진다.**
+그래서 `GuildAudio.subscribeTo()`가 항상 `this.subscription?.unsubscribe()`를 먼저 호출한다.
+**이 순서를 바꾸거나 생략하지 말 것.**
+
+**대안으로 검토했다가 버린 것들**
+- TTS를 음악 큐 뒤에 붙이기 → 노래 끝날 때까지 안 읽어줘서 쓸모없음
+- 음악을 끊고 TTS만 → 노래가 사라져서 화남
+- 두 소리를 ffmpeg으로 실시간 믹싱 → 구현 복잡도가 v1에 안 맞음
+
+### 3.4 TTS 엔진: `msedge-tts`
+
+- 무료, 가입/API키 불필요, 한국어 음질이 좋다.
+- **Edge TTS 가 실제로 주는 한국어 목소리는 3개뿐이다** (2026-08-31 `getVoices()` 실측):
+  `ko-KR-HyunsuMultilingualNeural`, `ko-KR-SunHiNeural`, `ko-KR-InJoonNeural`.
+  개발 중 Azure 전체 카탈로그에서 가져온 이름 6개를 선택지에 넣었다가, 실재하지 않아
+  런타임에 실패할 뻔했다. `data.toJSON()` 은 이름이 문법적으로 유효하면 통과시키므로 못 잡는다.
+  그래서 `verify.mjs` 가 **선택지를 `listVoices()` 결과와 대조한다.** 목소리를 건드리면 이 검사를 꼭 돌릴 것.
+- **기본 목소리는 `ko-KR-HyunsuMultilingualNeural`(다국어)이다.** 실측 비교:
+
+  | 입력 | SunHi (한국어 전용) | Hyunsu (다국어) |
+  |---|---|---|
+  | 영어 | 5.2초 (한국어 발음으로 늘어짐) | 3.6초 (자연스러움) |
+  | 일본어 | **0 바이트 — 무음, 에러도 없음** | 2.7초 |
+  | 중국어 | 2.6초 (한자 음독) | 2.5초 |
+  | 한영 혼합 | 4.0초 | 4.0초 |
+
+  Hyunsu 가 지는 입력이 없고 SunHi 에는 조용한 실패 모드가 있다. 언어 감지 로직을 넣는 것보다
+  "전부 처리하는 목소리를 기본으로" 두는 쪽이 코드도 적고 오탐 경로도 없다.
+- Google Translate TTS는 200자 제한 + 비공식 + 레이트리밋이 빡세다.
+- 인터넷이 필요하다(마이크로소프트 서버와 웹소켓). **오프라인에서는 TTS가 동작하지 않는다.**
+- 웹소켓 연결을 `synth.js`에서 캐시하고, 실패하면 한 번 새로 만들어 재시도한다.
+  마이크로소프트가 유휴 연결을 끊기 때문에 이 재시도가 없으면 조용히 실패한다.
+- 검증됨: "안녕하세요…" → 57KB mp3 생성 → ffmpeg으로 4.78초 Ogg Opus 변환 성공.
+
+### 3.5 이미지 일괄 다운로드: ZIP이 아니라 **웹 갤러리**
+
+**사용자의 원래 요구**: "여러 장 선택하고 다운로드 버튼을 누르면 한 장씩 다 내려받기.
+디스코드는 개별적으로 눌러야 해서 귀찮다." — 즉 **ZIP은 명시적으로 원하지 않는다.**
+
+- 디스코드 봇 업로드 한도: 부스트 없음 10MB / 레벨2 25MB / 레벨3 100MB.
+  사진 몇 장이면 넘는다. ZIP 첨부는 애초에 성립하지 않는다.
+- 디스코드 UI에는 "여러 장 선택 → 개별 저장" 기능이 없다. 봇으로도 만들 수 없다.
+- 브라우저는 같은 출처의 `<a download>`를 연달아 클릭하면 파일을 각각 저장한다.
+  그래서 Express로 작은 갤러리를 띄우고, 체크박스 다중선택 + 순차 클릭으로 구현했다.
+  크롬은 최초 1회 "여러 파일을 다운로드하시겠습니까?"를 묻고, 허용하면 이후 조용하다.
+- 클릭 간격 **350ms**는 임의값이 아니다. 너무 빠르면 브라우저가 일부 요청을 버린다.
+  줄이려면 실제로 20장 이상으로 테스트해볼 것.
+
+### 3.6 폴더 결정 규칙 (외울 명령어를 줄이는 쪽으로)
+
+`store.js` `resolveFolder(channel, channelId)` — 위에서부터 먼저 맞는 것을 쓴다.
+
+1. 메시지가 **스레드** 안에 있으면 → **스레드 이름**
+2. 그 채널에 `/폴더 <이름>`으로 지정한 값이 있으면 → 그 이름 (`_folders.json`에 저장)
+3. **채널 이름** (기본값)
+4. 채널 이름을 알 수 없을 때만 → 오늘 날짜 `YYYY-MM-DD`
+
+3번이 기본값인 이유: 사용자가 아무 설정도 하지 않아도 `#여행사진` 채널의 사진이
+`여행사진` 폴더로 가는 게 가장 예측 가능하고, 외울 명령어가 0개다.
+(초기 구현은 날짜가 기본값이었는데, 채널이 여러 개면 날짜 폴더 하나에 다 섞여서 쓸모없었다.)
+
+⚠️ **채널 이름을 바꾸면 그때부터 새 폴더가 생긴다.** 이전 사진은 옛 이름 폴더에 남는다.
+요구사항상 불가피하며, 데이터가 사라지는 것은 아니다. 갤러리의 "옮기기"로 합칠 수 있다.
+
+`explainFolder()` 는 `/폴더확인` 이 "왜 이 폴더인지"를 사람 말로 보여주기 위한 짝 함수다.
+규칙을 바꾸면 두 함수를 같이 고쳐야 한다.
+
+### 3.7 메시지 핸들러 우선순위 (채널이 겹칠 때의 동작)
+
+`index.js`의 `MessageCreate` 처리 순서는 의도적으로 이렇게 되어 있다.
+
+```js
+await handleImageMessage(message);            // 막지 않음 (early return 없음)
+if (await handleMusicMessage(message)) return; // 처리하면 여기서 끝
+await handleTtsMessage(message);
+```
+
+- **이미지 저장은 다른 기능을 막지 않는다.** 사진에 설명글을 달아 올리면
+  저장도 되고 그 글을 읽어주기도 한다. (초기 구현은 early return이라 캡션이 안 읽혔다 — 고침)
+- **음악과 TTS는 배타적이다.** 유튜브 링크를 소리내어 읽는 건 의미가 없으므로
+  음악이 처리한 메시지는 TTS로 넘기지 않는다.
+- **`MUSIC_TEXT_CHANNEL_ID`가 비어 있으면 모든 채널에서 링크를 감지한다.**
+  그래서 TTS 채팅방에 유튜브 링크를 써도 읽어주지 않고 재생된다.
+  의도된 동작이며 `.env.example`에도 적어두었다. 바꾸려면 음악 채널을 명시적으로 지정하면 된다.
+
+### 3.8 설정은 명령어가 `.env` 를 덮어쓴다
+
+`settings.js` 가 채널 설정의 단일 진입점이다. 우선순위는:
+
+1. `/채널설정` 으로 지정한 값 — `data/settings.json`, 서버(길드)별로 저장
+2. `.env` 값
+3. 없음 → 그 기능은 꺼진 것으로 취급
+
+**이 구조의 위험은 "조용한 무시"다.** 사용자가 `.env` 를 고치고 재시작했는데
+명령어 설정이 이미 있으면 아무 일도 안 일어난다. 에러도 없다.
+그래서 `getWithSource()` 가 값과 **출처**를 함께 돌려주고, `/채널확인` 과 시작 로그가
+항상 `명령어로 지정` / `.env 기본값` 을 같이 표시한다. **이 표시를 없애지 말 것.**
+
+부수 효과: 채널이 런타임에 바뀔 수 있으므로 **슬래시 명령어는 기능 on/off와 무관하게 전부 등록한다.**
+(예전에는 `.env` 가 비면 해당 모듈 명령어를 등록하지 않았는데, 그러면
+"설정하려는데 설정할 명령어가 없는" 상태가 된다.)
+
+기능 on/off 판정도 `config` 가 아니라 `ttsEnabled(guildId)` / `imagesEnabled(guildId)` 를 쓸 것.
+
+### 3.9 슬래시 명령어는 길드 단위로 등록한다
+
+`deploy-commands.js`가 `Routes.applicationGuildCommands(clientId, guildId)`를 쓴다.
+전역(`applicationCommands`) 등록은 디스코드 전파에 최대 1시간이 걸려서,
+초보자가 "봇이 고장났다"고 오해하는 대표적인 지점이다. 개인용 단일 서버이므로 길드 등록이 옳다.
+
+---
+
+## 4. 불변조건 (Invariants) — 어기면 조용히 깨진다
+
+1. **`GuildAudio.subscribeTo()`를 거치지 않고 `connection.subscribe()`를 직접 부르지 말 것.**
+   3.3절 참고. 소리가 깨진다.
+2. **디스크에 경로를 쓰기 전 반드시 `store.js`의 `folderPath()` / `filePath()`를 통과시킬 것.**
+   이 두 함수가 `..`, 드라이브 문자, Windows 금지문자를 걷어내고,
+   최종 경로가 `data/images` 안쪽인지 `startsWith` 로 다시 검사한다.
+   웹 갤러리의 `/img/:folder/:file`, `/dl/...`이 사용자 입력을 그대로 받으므로
+   **이 검사를 우회하면 서버의 임의 파일이 읽힌다.**
+3. **`MessageContent` 인텐트가 없으면 `message.content`가 빈 문자열이 된다.**
+   개발자 포털에서 켜야 하고, 코드는 정상인데 TTS와 링크 감지만 조용히 죽는다.
+   증상이 "에러는 없는데 아무 반응이 없다"라면 여기부터 볼 것.
+4. **`libsodium-wrappers`를 지우지 말 것.** 음성 암호화용이고, 없으면 음성 연결 시점에
+   예외가 난다. 순수 JS라 Windows에서 빌드툴이 필요없다(`sodium-native`는 컴파일러가 필요).
+5. **ESM이므로 상대 import에 `.js` 확장자를 반드시 붙일 것.**
+6. **`.env`를 절대 커밋하지 말 것.** 토큰이 노출되면 디스코드가 자동으로 무효화한다.
+7. **슬래시 명령어를 추가·개명하면 반드시 `npm run deploy` 를 실행할 것.**
+   `PUT applicationGuildCommands` 는 명령어 집합을 통째로 교체하므로 옛 이름은 자동으로 사라지지만,
+   deploy 를 안 돌리면 디스코드에는 옛 이름이 그대로 남아 "고쳤는데 안 바뀐다"가 된다.
+8. **채널 설정을 읽을 때 `config.*` 를 직접 보지 말고 `settings.js` 를 거칠 것.**
+   `config` 만 보면 `/채널설정` 으로 지정한 값이 무시된다. 3.8절 참고.
+9. **`/목소리` 선택지에 새 목소리를 넣으면 `npm run verify` 로 실재를 확인할 것.**
+   Azure 카탈로그에는 있어도 Edge TTS 무료 엔드포인트에는 없는 목소리가 많다. 3.4절 참고.
+10. **숨김 응답은 `ephemeral: true`가 아니라 `flags: MessageFlags.Ephemeral`로 쓸 것.**
+   discord.js 14.27에서 `ephemeral` 옵션은 deprecated 되어, 쓸 때마다 콘솔에 경고를 찍는다
+   (`InteractionResponses.js`에서 확인). 동작은 하지만 경고가 도배되면 소유자가
+   "뭔가 고장났다"고 오해한다. 새 명령어를 추가할 때도 `MessageFlags`를 import 해서 쓸 것.
+
+---
+
+## 5. 상태 모델: `GuildAudio`
+
+서버 ID → `GuildAudio` 인스턴스를 `guild-audio.js`의 모듈 전역 `registry` Map이 들고 있다.
+**서버 재시작하면 전부 사라진다. 큐는 의도적으로 영속화하지 않는다.**
+
+```
+없음 ──getGuildAudio()──► 생성됨 ──connect()──► Ready
+                                                  │
+                            ┌─────────────────────┼──────────────────────┐
+                            │                     │                      │
+                     playNext() 루프         speak() 체인          leaveTimer
+                     (musicPlayer)          (ttsPlayer)          (기본 300초)
+                            │                     │                      │
+                            └─────────────────────┴──────────────────────┘
+                                                  ▼
+                                            destroy() → registry에서 제거
+```
+
+- `destroy()`는 여러 번 불릴 수 있다(`destroyed` 플래그로 방어). 타이머·자식 프로세스·
+  커넥션을 전부 정리한다.
+- `peekGuildAudio()`는 파괴된 인스턴스를 `null`로 걸러준다. **명령어 핸들러는
+  `getGuildAudio()`가 아니라 `peekGuildAudio()`를 써야 한다** — 안 그러면 "재생 중이 없다"고
+  답해야 할 상황에서 빈 인스턴스를 새로 만든다.
+- `killCurrent`는 현재 곡의 yt-dlp + ffmpeg 자식 프로세스를 죽이는 함수다.
+  곡을 넘길 때 반드시 호출해야 좀비 프로세스가 안 쌓인다.
+- TTS는 `ttsChain` 프로미스 체인으로 **직렬화**된다. 동시에 여러 메시지가 와도
+  한 번에 하나씩 순서대로 읽는다. 이걸 없애면 소리가 겹쳐서 뭉개진다.
+- `speak(makeStream, targetChannelId)`의 두 번째 인자는 **줄 서 있는 동안 봇이 다른
+  음성채널로 옮겨갔는지** 확인하기 위한 것이다. `TTS_VOICE_CHANNEL_ID`가 비어 있으면
+  "말한 사람이 있는 음성채널"로 따라가므로, A채널 사용자와 B채널 사용자가 연달아 글을 쓰면
+  커넥션이 옮겨간다. 이때 앞 문장을 그대로 재생하면 **엉뚱한 채널에서 읽고, 음악도 엉뚱한
+  곳에서 재개된다.** 그래서 채널이 바뀌었으면 그 문장은 버린다. 이 가드를 지우지 말 것.
+
+---
+
+## 6. 데이터 형식
+
+### `data/images/_meta.json`
+키는 `"<폴더명>/<파일명>"`.
+```json
+{
+  "2026-08-31/20260831-141900_photo.png": {
+    "folder": "2026-08-31",
+    "file": "20260831-141900_photo.png",
+    "originalName": "photo.png",
+    "size": 184320, "width": 1920, "height": 1080,
+    "author": "someone", "authorId": "123...",
+    "channelId": "222...", "messageId": "333...",
+    "messageUrl": "https://discord.com/channels/...",
+    "uploadedAt": "2026-08-31T14:19:00.000Z"
+  }
+}
+```
+파일이 지워져도 항목이 남을 수 있다. `listFiles()`는 **디스크를 진실의 원천으로 삼고**
+메타데이터는 있으면 붙여주는 방식이라, 불일치가 있어도 갤러리는 정상 동작한다.
+
+쓰기는 `writeChain` 프로미스 체인으로 직렬화한다(동시 저장 시 JSON 깨짐 방지).
+
+### `data/settings.json`
+```json
+{
+  "<길드ID>": {
+    "musicTextChannelId": "<채널ID>",
+    "musicVoiceChannelId": "<채널ID>",
+    "ttsTextChannelId": "<채널ID>",
+    "ttsVoiceChannelId": "<채널ID>",
+    "imageChannelIds": ["<채널ID>", "..."]
+  }
+}
+```
+키 목록은 `settings.js` 의 `KEYS` 가 단일 출처다. 설정을 추가하려면 거기에만 넣으면
+`/채널설정` 선택지와 `/채널확인` 표시가 자동으로 따라온다.
+
+### `data/images/_folders.json`
+```json
+{ "<채널ID>": "<폴더명>" }
+```
+
+### Track 객체 (`ytdlp.js` → `guild-audio.js`)
+```js
+{ title: string, url: string, duration: number|null, uploader: string|null, thumbnail: string|null }
+```
+큐에는 `{ track, requestedBy }` 형태로 들어간다.
+
+---
+
+## 7. 알려진 함정 (Gotchas)
+
+| 증상 | 원인 | 대처 |
+|---|---|---|
+| 음악이 갑자기 전부 안 나옴 | 유튜브가 추출 방식을 바꿈 | `npm run update-ytdlp` |
+| `Sign in to confirm you're not a bot` | 데이터센터 IP 차단 (AWS/GCP/Oracle에서 흔함) | `.env`의 `YTDLP_COOKIES_FILE`에 쿠키 파일 지정 |
+| TTS·링크감지가 에러 없이 무반응 | `MessageContent` 인텐트 꺼짐 | 개발자 포털에서 켜고 재시작 |
+| 슬래시 명령어가 안 보임 | `npm run deploy` 안 함 / 봇이 `applications.commands` 없이 초대됨 | 재초대 후 deploy |
+| 명령어 이름이 옛것으로 보임 | 개명 후 deploy 안 함 | `npm run deploy` |
+| `.env` 를 고쳤는데 반영 안 됨 | `/채널설정` 값이 우선함 | `/채널확인` 으로 출처 보고 `/채널해제` |
+| 일본어 TTS가 무음 | 한국어 전용 목소리 | 다국어 목소리로 변경 (3.4절) |
+| 음성 연결 시 예외 | `libsodium-wrappers` 누락 | `npm install` |
+| 소리가 깨지고 겹침 | 두 플레이어가 동시 구독됨 | 3.3절, `subscribeTo()` 확인 |
+| 갤러리에서 일부만 다운로드됨 | 클릭 간격이 짧음 / 브라우저가 다중 다운로드를 막음 | 350ms 간격 조정, 브라우저 권한 허용 |
+| 이미지 폴더가 `2026 08 31`처럼 깨짐 | `safeFolderName`의 문자 클래스를 잘못 수정함 | 하이픈·공백은 **지우면 안 됨** |
+| 사진이 "어제" 날짜 폴더에 들어감 | 서버 OS 시간대가 UTC | `timedatectl set-timezone Asia/Seoul` (아래 참고) |
+
+**날짜는 현지 시각 기준이다.** `store.js`의 `localDate()` / `localStamp()`가 `getFullYear()` 등
+현지 시각 메서드를 쓴다. `toISOString()`으로 되돌리지 말 것 — UTC가 되어 한국시간 오전 0~9시에
+올린 사진이 전날 폴더로 들어간다. 대신 **서버 OS의 시간대를 Asia/Seoul로 맞춰야** 의도대로 동작한다.
+
+**과거에 실제로 났던 버그**: `safeFolderName`의 정규식이 하이픈까지 치환하도록 잘못 들어가서
+날짜 폴더 `2026-08-31`이 `2026 08 31`이 될 뻔했다. 현재는
+`/[<>:"/\\|?*\x00-\x1f]/g` 로, **Windows 금지문자와 제어문자만** 지운다.
+여기 손대면 `2026-08-31`이 그대로 유지되는지 반드시 다시 확인할 것.
+
+---
+
+## 8. 검증 방법 (토큰 없이 가능한 것들)
+
+디스코드 토큰 없이도 아래는 전부 확인할 수 있다. 큰 변경 후 돌려볼 것.
+
+```bash
+# 문법 검사 (전체 파일)
+node --check src/index.js
+
+# yt-dlp 동작 + 버전
+./bin/yt-dlp.exe --version
+
+# ffmpeg 인코더 확인 (libopus / opus 먹서가 나와야 함)
+node -e "import('ffmpeg-static').then(m=>console.log(m.default))"
+```
+
+그리고 저장소 루트의 **`verify.mjs`** 가 나머지를 자동으로 확인한다. 코드를 고쳤으면 이걸 돌릴 것.
+
+```bash
+npm run verify
+```
+
+더미 `process.env` 값을 채운 뒤 각 모듈을 동적 import 해서 아래를 검사한다.
+(마지막에 Windows에서 `Assertion failed: !(handle->flags & UV_HANDLE_CLOSING)` 이
+찍힐 수 있는데, `process.exit()`와 소켓 종료가 겹쳐서 나는 libuv 잡음이다.
+그 위에 `✅ 전부 통과`가 찍혔으면 정상이다.)
+
+- 슬래시 명령어 20개 전부 `data.toJSON()` 통과, `execute` 존재, 이름 중복 없음, 영문 이름 잔존 없음
+- `/목소리` 선택지가 `listVoices()` 결과에 실재하고, 기본 목소리가 다국어인지
+- 폴더 결정 4순위(스레드 > /폴더 > 채널명 > 날짜)가 순서대로 적용되는지
+- 설정 우선순위: 명령어 지정이 `.env` 를 덮어쓰고, 해제하면 되돌아가는지
+- `index.js`가 import 하는 이름이 각 모듈에 실제로 존재 (index.js는 실행하면 로그인을
+  시도하므로 직접 import 할 수 없어, 소스를 정규식으로 읽어 검사한다)
+- `MessageFlags.` 를 쓰는 파일이 전부 그걸 import 했는가 (누락되면 런타임 ReferenceError)
+- `ephemeral: true` 잔존 없음 (4절 불변조건 7)
+- `"../../Windows"` → `"Windows"`, `"C:\\Windows"` → `"C Windows"` 로 무해화되고
+  최종 경로가 `data/images` 안에 머무름
+- `"2026-08-31"` 이 변형되지 않음
+- `resolveFolder(null, id)` → 날짜, `resolveFolder(스레드, id)` → 스레드 이름
+- TTS 정제: `<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵게** ㅋㅋㅋㅋㅋ`
+  → `누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ`
+- 유튜브 링크 감지 / 일반 문장은 `null`
+- 웹 갤러리: 인증 없이 401, 틀린 암호 401, 맞으면 200, 경로 탈출 요청은 4xx
+
+**검증이 닿지 못하는 곳**: 실제 디스코드 토큰을 쓰는 모든 것.
+인텐트가 실제로 켜졌는지, `npm run deploy` 가 통과하는지, `joinVoiceChannel` 이 Ready 까지
+가는지, 반응(✅) 권한이 있는지는 **봇을 실제로 띄워봐야만 알 수 있다.**
+README의 "잘 되는지 확인하는 순서" 1~7단계가 그 역할을 한다.
+
+---
+
+## 9. 아직 안 한 것 / 다음에 할 만한 것
+
+우선순위 순.
+
+1. **자동 테스트가 없다.** 위 8절의 검증을 `node:test`로 옮기면 좋다.
+2. **큐 영속화 없음.** 재시작하면 재생목록이 날아간다. 개인용이라 의도적이지만,
+   필요하면 `data/queue.json`에 저장.
+3. **다중 서버 미검증.** `registry`는 서버별로 분리되어 있어 구조상 되지만,
+   `.env`의 채널 ID들이 단일 서버 전제다. 여러 서버를 쓰려면 채널 설정을 DB로 옮겨야 한다.
+4. **이미지 중복 저장 방지 없음.** 같은 사진을 두 번 올리면 두 번 저장된다.
+   해시(sha256) 기반 중복 제거를 넣을 수 있다.
+5. **갤러리에 페이지네이션 없음.** 한 폴더에 수천 장이 쌓이면 브라우저가 느려진다.
+6. **웹 갤러리 인증이 Basic Auth 단일 비밀번호.** 외부에 열어둘 거라면
+   HTTPS(리버스 프록시) + 더 나은 인증이 필요하다.
+7. **볼륨 조절 명령어 없음.** `GuildAudio.volume` 필드는 있고 ffmpeg에 전달되지만,
+   곡이 바뀔 때만 반영된다(재생 중 변경 불가). 실시간 조절은 `inlineVolume`이 필요하고
+   그러면 3.2절의 재인코딩 회피가 깨진다. **트레이드오프를 이해하고 결정할 것.**
+
+---
+
+## 10. VPS 이전 시 체크리스트
+
+1. Node 20+ 설치
+2. `git clone` 후 `npm install`
+3. **`npm run update-ytdlp`** — 바이너리는 커밋되지 않으므로 반드시 다시 받아야 하고,
+   리눅스용을 받는다(스크립트가 플랫폼을 자동 판별)
+4. `.env` 생성. 특히 바꿔야 할 것:
+   - `IMAGE_DIR` — 리눅스 절대경로(예: `/home/ubuntu/discord-bot/data/images`)
+   - `WEB_PUBLIC_URL` — `http://<서버IP>:3000`
+   - `WEB_TOKEN` — **외부에 열리므로 반드시 긴 문자열로 설정**
+5. 방화벽/보안그룹에서 웹 포트 개방 (기본 3000)
+6. `npm run deploy` 후 `npm start`
+7. 상시 구동은 `pm2` 또는 systemd 서비스
+8. **유튜브 IP 차단을 각오할 것** — 7절 표 참고. 무료 티어에서 가장 흔한 실패 원인이다.
+
+### 무료 호스팅 현실 평가
+- t3.micro(1GB RAM)면 개인 서버 1개 기준 성능은 충분하다. 3.2절 덕분에 CPU도 여유.
+- 음성 스트리밍 트래픽은 대략 30MB/시간. 프리티어 한도로 문제없다.
+- 진짜 병목은 성능이 아니라 **유튜브의 데이터센터 IP 차단**이다.
+- Oracle Cloud Always Free가 AWS 프리티어보다 조건이 낫다(기간 무제한). 단 IP 문제는 동일하고,
+  **놀고 있으면 인스턴스를 회수해가는 정책**이 있어 조용한 개인 봇에는 오히려 위험하다.
+  구체적인 절차와 대응은 **[ORACLE-CLOUD.md](ORACLE-CLOUD.md)** 에 따로 정리했다.
+  (2026-08-31 확인 기준 ARM Always Free 총량은 2 OCPU / 12GB이고, 이 봇은 1 OCPU / 6GB로 충분하다.
+  linux-arm64용 ffmpeg-static에 `--enable-libopus`가 들어 있음을 바이너리에서 직접 확인했으므로
+  3.2절의 오디오 경로가 ARM에서도 그대로 성립한다.)
+- 이미지 저장은 디스크를 계속 먹는다. 프리티어 스토리지 한도를 주기적으로 볼 것.
