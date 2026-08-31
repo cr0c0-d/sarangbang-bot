@@ -3,7 +3,7 @@ import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio } from '../audio/guild-audio.js';
 import { synthesize, listVoices } from './synth.js';
-import { get as getSetting, ttsEnabled } from '../settings.js';
+import { get as getSetting, ttsEnabled, featureEnabled } from '../settings.js';
 
 // 서버별 on/off 상태. 기본값은 켜짐.
 const enabledByGuild = new Map();
@@ -83,6 +83,7 @@ async function resolveTtsVoiceChannel(guild, member, sourceChannel) {
  * @returns {boolean} 처리했으면 true
  */
 export async function handleTtsMessage(message) {
+  if (!featureEnabled(message.guildId, 'tts')) return false;
   if (!ttsEnabled(message.guildId)) return false;
   if (message.channelId !== getSetting(message.guildId, 'ttsTextChannelId')) return false;
   if (!isEnabled(message.guildId)) return false;

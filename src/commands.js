@@ -10,6 +10,7 @@ import { commands as ttsCommands } from './tts/index.js';
 import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
+import { commands as featureCommands } from './feature-commands.js';
 import { getWithSource } from './settings.js';
 
 const basicCommands = [
@@ -94,13 +95,25 @@ const basicCommands = [
   },
 ];
 
+/**
+ * 명령어에 "어느 기능에 속하는지" 표를 붙입니다.
+ * 모듈 단위로 한 줄씩 붙이므로, 명령어를 추가해도 표를 따로 고칠 일이 없습니다.
+ * (명령어마다 직접 적으면 반드시 빠뜨리는 것이 생깁니다)
+ *
+ * index.js 가 이 값을 보고 꺼진 기능의 명령어를 막습니다.
+ * `/기능` `/채널설정` `/핑` `/도움말` 은 태그가 없어 **항상 동작합니다** —
+ * 다 꺼놓고 다시 켤 방법이 없으면 안 되기 때문입니다.
+ */
+const tag = (feature, cmds) => cmds.map((c) => ({ ...c, feature }));
+
 export const allCommands = [
   ...basicCommands,
+  ...featureCommands,
   ...channelCommands,
-  ...musicCommands,
-  ...ttsCommands,
-  ...timerCommands,
-  ...imageCommands,
+  ...tag('music', musicCommands),
+  ...tag('tts', ttsCommands),
+  ...tag('timer', timerCommands),
+  ...tag('images', imageCommands),
 ];
 
 /** 이름 → 명령어 객체 */

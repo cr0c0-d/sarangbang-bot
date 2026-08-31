@@ -19,6 +19,14 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
+import { handleFeatureComponent } from './feature-commands.js';
+import { featureEnabled, FEATURES } from './settings.js';
+
+/** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
+function featureOffMessage(key) {
+  const f = FEATURES[key];
+  return `${f.emoji} **${f.label}** 기능이 꺼져 있습니다.\n\`/기능\` 에서 켤 수 있습니다.`;
+}
 
 const client = new Client({
   intents: [
@@ -79,9 +87,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isButton() || interaction.isStringSelectMenu()) {
     const isMusic = interaction.customId.startsWith('m:');
     const isTimer = interaction.customId.startsWith('t:');
-    if (!isMusic && !isTimer) return;
+    const isFeature = interaction.customId.startsWith('f:');
+    if (!isMusic && !isTimer && !isFeature) return;
+
+    // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : null;
+    if (needs && !featureEnabled(interaction.guildId, needs)) {
+      return interaction
+        .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
+
     try {
-      if (isTimer) await handleTimerComponent(interaction);
+      if (isFeature) await handleFeatureComponent(interaction);
+      else if (isTimer) await handleTimerComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
       console.error('[버튼]', err);
@@ -98,6 +117,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   const command = commandMap.get(interaction.commandName);
   if (!command) return;
+
+  // 꺼진 기능의 명령어는 여기서 한 번에 막습니다.
+  // 각 명령어 안에서 따로 검사하면 새 명령어를 추가할 때 반드시 빠뜨리게 됩니다.
+  if (command.feature && !featureEnabled(interaction.guildId, command.feature)) {
+    return interaction
+      .reply({ content: featureOffMessage(command.feature), flags: MessageFlags.Ephemeral })
+      .catch(() => {});
+  }
 
   try {
     await command.execute(interaction);

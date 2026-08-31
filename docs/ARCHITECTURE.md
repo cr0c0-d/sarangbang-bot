@@ -54,6 +54,7 @@ src/
   config.js             .env 파싱 + 필수값 검증. 값이 없으면 여기서 프로세스를 죽인다
   commands.js           모든 슬래시 명령어를 모으는 곳 + /핑, /도움말
   channel-commands.js   /채널설정 /채널확인 /채널해제
+  feature-commands.js   /기능 — 기능별 on/off 패널 (버튼)
   settings.js           ★ 명령어로 바꾼 설정을 기억 (data/settings.json). .env 를 덮어씀
   deploy-commands.js    슬래시 명령어를 디스코드에 등록 (npm run deploy)
 
@@ -436,6 +437,36 @@ await handleTtsMessage(message);
 - **`MUSIC_TEXT_CHANNEL_ID`가 비어 있으면 모든 채널에서 링크를 감지한다.**
   그래서 TTS 채팅방에 유튜브 링크를 써도 읽어주지 않고 재생된다.
   의도된 동작이며 `.env.example`에도 적어두었다. 바꾸려면 음악 채널을 명시적으로 지정하면 된다.
+
+### 3.7-1 기능 on/off — 차단은 한 곳에서만
+
+`settings.js` 의 `FEATURES` / `featureEnabled()` / `setFeature()`, 패널은 `feature-commands.js`.
+
+**왜 필요한가**: 소유자 서버에 이미 다른 음악봇·TTS봇이 있어서 같은 링크에 둘이 반응해 겹친다.
+그때 서버에 SSH로 들어가 프로세스를 끄는 것은 현실적이지 않다.
+
+**차단은 세 지점에서만 한다. 명령어마다 검사하지 않는다.**
+
+1. **슬래시 명령어** — `commands.js` 가 모듈 단위로 `tag('music', musicCommands)` 처럼
+   `feature` 를 붙이고, `index.js` 가 `command.feature` 를 보고 한 번에 막는다.
+   명령어를 새로 추가해도 표를 고칠 일이 없다.
+   **명령어 안에서 각자 검사하게 만들지 말 것** — 반드시 빠뜨리는 것이 생긴다.
+2. **버튼** — `customId` 접두(`m:`=음악, `t:`=타이머, `f:`=기능패널)로 판단.
+   `f:` 는 **항상 통과해야 한다.**
+3. **메시지 핸들러** — 각 `handleXxxMessage()` 첫 줄에서 `featureEnabled` 확인.
+
+**`/기능` `/채널설정` `/핑` `/도움말` 에는 태그를 붙이지 않는다.**
+전부 꺼놓은 상태에서 되살릴 방법이 없으면 안 되기 때문이다. 이건 실수로 태그가 붙기 쉬우니
+`verify.mjs` 가 "태그 없음"을 검사한다.
+
+**부수 효과 처리**
+- 음악을 끄면 `peekGuildAudio(g)?.stop()` — 안 하면 껐는데도 계속 흘러나온다.
+- 음악·읽어주기가 **둘 다** 꺼지면 음성채널에서 나간다. 아무것도 안 하면서 앉아 있을 이유가 없다.
+- 이미지를 끄면 **새 저장만** 멈춘다. 웹 갤러리는 이미 모아둔 파일을 보여주는 별개 서비스이므로
+  계속 동작한다 (의도적).
+
+**기본값은 "켜짐"** 이고, 명시적으로 끈 것만 `data/settings.json` 에 `features: {key: false}` 로
+저장한다. 이렇게 하면 새 기능을 추가해도 기존 서버에서 자동으로 켜진다.
 
 ### 3.8 설정은 명령어가 `.env` 를 덮어쓴다
 

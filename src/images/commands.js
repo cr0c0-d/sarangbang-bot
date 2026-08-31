@@ -11,13 +11,16 @@ import {
   isImageAttachment,
   baseDir,
 } from './store.js';
-import { imageChannelAllowed } from '../settings.js';
+import { imageChannelAllowed, featureEnabled } from '../settings.js';
 
 /**
  * 감시 대상 채널에 올라온 이미지를 저장합니다.
  * @returns {boolean} 처리했으면 true
  */
 export async function handleImageMessage(message) {
+  // 기능을 끄면 새 사진만 저장하지 않습니다. 이미 모아둔 갤러리는 계속 볼 수 있습니다.
+  if (!featureEnabled(message.guildId, 'images')) return false;
+
   // 스레드에 올라온 것도 부모 채널이 대상이면 받아줍니다.
   const parentId = message.channel?.isThread?.() ? message.channel.parentId : null;
   if (!imageChannelAllowed(message.guildId, message.channelId, parentId)) return false;

@@ -61,6 +61,44 @@ export const KEYS = {
   },
 };
 
+/**
+ * 기능 on/off. 서버(길드)별로 저장합니다.
+ *
+ * 왜 필요한가: 서버에 이미 다른 음악봇·TTS봇이 있으면 같은 링크에 둘이 반응해 겹칩니다.
+ * 서버에 SSH로 들어가 프로세스를 끄지 않고도 디스코드에서 기능별로 끌 수 있어야 합니다.
+ * (개선하면서 켜고 끄기를 반복할 수 있게)
+ */
+export const FEATURES = {
+  music: { label: '음악', emoji: '🎵', hint: '유튜브 링크 감지 + /재생 등' },
+  tts: { label: '읽어주기', emoji: '🗣️', hint: '채팅을 음성으로 읽어주기' },
+  timer: { label: '타이머', emoji: '⏰', hint: '/타이머 · /알람등록' },
+  images: { label: '이미지 정리', emoji: '🖼️', hint: '사진 자동 저장 (갤러리 열람은 계속 됩니다)' },
+};
+
+/** 기본값은 "켜짐" 입니다. 명시적으로 끈 것만 저장합니다. */
+export function featureEnabled(guildId, key) {
+  return store[guildId]?.features?.[key] !== false;
+}
+
+export function setFeature(guildId, key, on) {
+  store[guildId] ??= {};
+  store[guildId].features ??= {};
+  if (on) delete store[guildId].features[key];
+  else store[guildId].features[key] = false;
+
+  if (Object.keys(store[guildId].features).length === 0) delete store[guildId].features;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+}
+
+export function setAllFeatures(guildId, on) {
+  for (const key of Object.keys(FEATURES)) setFeature(guildId, key, on);
+}
+
+export function featureStates(guildId) {
+  return Object.fromEntries(Object.keys(FEATURES).map((k) => [k, featureEnabled(guildId, k)]));
+}
+
 export async function initSettings() {
   await fs.mkdir(config.dataDir, { recursive: true });
   try {

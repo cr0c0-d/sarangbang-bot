@@ -4,7 +4,7 @@ import { config } from '../config.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { getTracks, formatDuration } from './ytdlp.js';
 import { buildPanel, showPanel } from './panel.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, featureEnabled } from '../settings.js';
 
 // 유튜브 링크인지 판별. (youtube.com, youtu.be, music.youtube.com)
 const YOUTUBE_RE =
@@ -303,6 +303,8 @@ export const commands = [
  * @returns {boolean} 이 메시지를 처리했으면 true
  */
 export async function handleMusicMessage(message) {
+  if (!featureEnabled(message.guildId, 'music')) return false;
+
   const watched = getSetting(message.guildId, 'musicTextChannelId');
   if (watched && message.channelId !== watched) return false;
 

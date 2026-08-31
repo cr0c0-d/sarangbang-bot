@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 27개 로드', allCommands.length === 27, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 28개 로드', allCommands.length === 28, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록']) {
+for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -331,6 +331,59 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   ok('index.js: isAutocomplete 처리', src2.includes('interaction.isAutocomplete()'));
   ok('index.js: 타이머 버튼 라우팅', src2.includes("startsWith('t:')"));
   ok('index.js: 타이머 복구 호출', src2.includes('initTimers('));
+}
+
+// 6o) 기능 on/off
+{
+  const st = await import('./src/settings.js');
+  const G = 'featguild';
+
+  ok('기본값은 전부 켜짐', Object.values(st.featureStates(G)).every(Boolean));
+
+  st.setFeature(G, 'music', false);
+  ok('음악만 끄기', st.featureEnabled(G, 'music') === false && st.featureEnabled(G, 'tts') === true);
+
+  st.setFeature(G, 'music', true);
+  ok('다시 켜기', st.featureEnabled(G, 'music') === true);
+
+  st.setAllFeatures(G, false);
+  ok('전체 끄기', Object.values(st.featureStates(G)).every((v) => v === false));
+  st.setAllFeatures(G, true);
+  ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
+
+  ok('기능 목록 4개', Object.keys(st.FEATURES).length === 4, Object.keys(st.FEATURES).join(','));
+}
+
+// 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
+{
+  const byName = new Map(allCommands.map((c) => [c.data.toJSON().name, c]));
+  const expect = {
+    재생: 'music', 대기열: 'music', 나가기: 'music',
+    읽어주기: 'tts', 목소리: 'tts',
+    타이머: 'timer', 알람등록: 'timer',
+    갤러리: 'images', 폴더: 'images',
+  };
+  for (const [name, feature] of Object.entries(expect)) {
+    ok(`/${name} 은 ${feature} 기능 소속`, byName.get(name)?.feature === feature, String(byName.get(name)?.feature));
+  }
+  // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다
+  for (const name of ['기능', '채널설정', '채널확인', '채널해제', '핑', '도움말']) {
+    ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
+  }
+
+  const idx = fs.readFileSync('./src/index.js', 'utf8');
+  ok('index.js: 명령어 중앙 차단', idx.includes('command.feature && !featureEnabled'));
+  ok('index.js: 버튼 차단', idx.includes("isMusic ? 'music' : isTimer ? 'timer' : null"));
+  ok('index.js: f: 라우팅', idx.includes("startsWith('f:')"));
+
+  for (const [file, key] of [
+    ['./src/music/commands.js', 'music'],
+    ['./src/tts/index.js', 'tts'],
+    ['./src/images/commands.js', 'images'],
+  ]) {
+    ok(`${file} 메시지 처리 차단`, fs.readFileSync(file, 'utf8').includes(`featureEnabled(message.guildId, '${key}')`));
+  }
+
 }
 
 // 7) 유튜브 링크 감지
