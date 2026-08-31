@@ -100,6 +100,27 @@ data/images/              저장된 이미지 + _meta.json + _folders.json (giti
   직접 받는 이유: npm 패키지의 postinstall이 회사 프록시/방화벽에서 자주 실패하고,
   버전을 우리가 원할 때 갱신할 수 없기 때문.
 
+### 3.1-1 yt-dlp 오류 처리: 프로세스 단위 재시도 + 오진 방지
+
+**일시적 오류는 `run()` 안에서 프로세스를 새로 띄워 재시도한다** (25초 × 최대 3회).
+
+- 대표 사례 `The page needs to be reloaded.` 는 유튜브가 간헐적으로 뱉는 거부다.
+  같은 영상이 몇 초 뒤엔 정상 동작한다 (실측 확인).
+- yt-dlp 자체 `--extractor-retries`(기본 3회)로는 안 잡힌다. 이 오류를 재시도 대상으로
+  분류하지 않기 때문이다. **프로세스를 새로 띄워야** 웹페이지와 player JSON을 다시 받는다.
+- 재시도 대상은 `isTransient()` 의 목록으로 판단한다. `Video unavailable` 처럼
+  다시 해도 안 되는 오류는 **재시도하지 않는다** (사용자를 75초 기다리게 하면 안 되므로).
+- 재시도는 **메타데이터 조회(`getTracks`) 경로에만** 있다.
+  스트림(`createStream`)은 이미 ffmpeg에 연결된 뒤라 같은 방식으로 재시도할 수 없다.
+  스트림 단계에서 이 오류가 실제로 문제가 되는 것을 확인하기 전에는 트랙 단위 재시도를 만들지 말 것.
+  (만든다면 `playbackDuration` 같은 추측이 아니라 `skip()`/`stop()` 이 세우는 명시적 플래그로 구분해야 한다)
+
+**`friendlyError()` 에서 짧은 단어로 오류를 분류하지 말 것.**
+예전에 `stderr.includes('bot')` 으로 유튜브 차단을 판별했는데,
+프로젝트 폴더 이름이 `sarangbang-bot` 이라 **경로가 찍힌 아무 오류나 "유튜브 차단" 으로 오진**했다.
+특히 쿠키 파일 경로가 틀렸을 때 "쿠키를 설정하세요" 라고 안내하는 최악의 조합이 된다.
+지금은 `'sign in to confirm'` 전체 문구로만 판별하고, `verify.mjs` 에 회귀 검사가 있다.
+
 ### 3.2 오디오 경로: `yt-dlp → ffmpeg(libopus) → Ogg Opus → discord.js`
 
 ```
@@ -400,6 +421,7 @@ await handleTtsMessage(message);
 | 증상 | 원인 | 대처 |
 |---|---|---|
 | 음악이 갑자기 전부 안 나옴 | 유튜브가 추출 방식을 바꿈 | `npm run update-ytdlp` |
+| `The page needs to be reloaded` | 유튜브의 일시적 거부 | 자동 재시도됨(아래 참고). 계속되면 update-ytdlp |
 | `Sign in to confirm you're not a bot` | 데이터센터 IP 차단 (AWS/GCP/Oracle에서 흔함) | `.env`의 `YTDLP_COOKIES_FILE`에 쿠키 파일 지정 |
 | TTS·링크감지가 에러 없이 무반응 | `MessageContent` 인텐트 꺼짐 | 개발자 포털에서 켜고 재시작 |
 | 슬래시 명령어가 안 보임 | `npm run deploy` 안 함 / 봇이 `applications.commands` 없이 초대됨 | 재초대 후 deploy |

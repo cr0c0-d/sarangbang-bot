@@ -155,6 +155,30 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   ok('TTS: 호출부가 message.channel 을 넘김', src.includes('message.member, message.channel)'));
 }
 
+// 6f) yt-dlp 오류 분류 — 오진 회귀 검사
+// (예전에 stderr.includes('bot') 로 판별해서, 프로젝트 경로에 'bot' 이 들어간
+//  아무 오류나 "유튜브 차단" 으로 오진하는 버그가 있었습니다)
+{
+  const { friendlyError, isTransient } = await import('./src/music/ytdlp.js');
+
+  const cookiePathErr = 'ERROR: unable to open /home/ubuntu/sarangbang-bot/cookies.txt';
+  const got = friendlyError(cookiePathErr);
+  ok('경로에 bot 이 있어도 "차단"으로 오진하지 않음', !got.includes('봇으로 판단'), got);
+
+  ok('실제 차단 메시지는 잡아냄',
+    friendlyError('ERROR: Sign in to confirm you are not a bot').includes('봇으로 판단'));
+
+  ok('일시적 오류를 한국어로 안내',
+    friendlyError('ERROR: [youtube] abc: The page needs to be reloaded.').includes('일시적으로'));
+
+  ok('일시적 오류로 분류됨 (재시도 대상)',
+    isTransient('ERROR: [youtube] abc: The page needs to be reloaded.'));
+  ok('삭제된 영상은 재시도 대상 아님',
+    !isTransient('ERROR: [youtube] abc: Video unavailable'));
+  ok('삭제된 영상 안내 문구',
+    friendlyError('ERROR: Video unavailable').includes('재생할 수 없는 영상'));
+}
+
 // 7) 유튜브 링크 감지
 const { findYoutubeLink } = await import('./src/music/commands.js');
 ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !== null);

@@ -678,6 +678,7 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | SSH 접속 시 `Connection timed out` | 방화벽/라우팅 문제. **3단계의 진단 스크립트**를 돌려보세요 |
 | SSH 접속 시 `Connection refused` | 서버까지는 닿음. 인스턴스가 아직 부팅 중일 수 있으니 1~2분 뒤 재시도 |
 | `npm run verify` 실패 | 파일이 덜 올라갔거나 `npm install` 미실행 |
+| `Access denied` / 비밀번호를 물어봄 | `systemctl` 앞에 **`sudo`** 를 빼먹었습니다. OCI 이미지의 ubuntu 계정은 비밀번호가 없어서 반드시 sudo 로 실행해야 합니다 |
 | 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인. 대개 `.env` 값 문제 |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
 | 갤러리 접속 안 됨 (A안) | SSH 터널 창을 닫았거나, `.env` 의 `WEB_BIND` 가 `127.0.0.1` 인지 확인 |

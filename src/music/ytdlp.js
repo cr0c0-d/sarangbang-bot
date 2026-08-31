@@ -19,33 +19,107 @@ function extraArgs() {
   return args;
 }
 
-function run(args, { timeoutMs = 60_000 } = {}) {
+/**
+ * 유튜브가 간헐적으로 뱉는, 다시 하면 되는 오류들.
+ *
+ * 대표 사례: "The page needs to be reloaded."
+ *   yt-dlp 자체 재시도(--extractor-retries, 기본 3회)로는 안 잡힙니다.
+ *   프로세스를 새로 띄워 웹페이지와 player JSON을 다시 받아야 풀립니다.
+ *   그래서 여기서 프로세스 단위로 재시도합니다. (실측: 재시도하면 정상 동작)
+ */
+const TRANSIENT_PATTERNS = [
+  'the page needs to be reloaded',
+  'temporarily unavailable',
+  'unable to download webpage',
+  'unable to download api page',
+  'failed to extract',
+  'read timed out',
+  'connection reset',
+  'connection aborted',
+  '타임아웃',
+  'http error 5', // 500, 502, 503...
+];
+
+export function isTransient(text) {
+  const s = String(text).toLowerCase();
+  return TRANSIENT_PATTERNS.some((p) => s.includes(p));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function runOnce(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const child = spawn(YTDLP, args, { windowsHide: true });
     let out = '';
     let err = '';
+    let done = false;
+
+    const fail = (message, transient = false) => {
+      if (done) return;
+      done = true;
+      const e = new Error(message);
+      e.transient = transient;
+      reject(e);
+    };
+
     const timer = setTimeout(() => {
       child.kill();
-      reject(new Error('yt-dlp 응답이 너무 오래 걸립니다 (타임아웃).'));
+      fail('yt-dlp 응답이 너무 오래 걸립니다 (타임아웃).', true);
     }, timeoutMs);
 
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     child.on('error', (e) =>
-      reject(new Error(`yt-dlp 실행 실패: ${e.message}\n(npm run update-ytdlp 로 다시 받아보세요)`))
+      fail(`yt-dlp 실행 실패: ${e.message}\n(npm run update-ytdlp 로 다시 받아보세요)`)
     );
     child.on('close', (code) => {
       clearTimeout(timer);
-      if (code === 0) resolve(out);
-      else reject(new Error(friendlyError(err) || `yt-dlp 오류 (코드 ${code})`));
+      if (done) return;
+      if (code === 0) {
+        done = true;
+        resolve(out);
+      } else {
+        fail(friendlyError(err) || `yt-dlp 오류 (코드 ${code})`, isTransient(err));
+      }
     });
   });
 }
 
-function friendlyError(stderr) {
-  const s = stderr.toLowerCase();
-  if (s.includes("sign in to confirm") || s.includes('bot')) {
-    return '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브 차단" 항목 참고)';
+/**
+ * yt-dlp 를 실행합니다. 일시적인 오류면 스스로 다시 시도합니다.
+ * 최악의 경우 25초 × 3회 ≈ 75초. /재생 은 deferReply 를 하므로 안전합니다.
+ */
+async function run(args, { timeoutMs = 25_000, attempts = 3 } = {}) {
+  let lastErr;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await runOnce(args, timeoutMs);
+    } catch (err) {
+      lastErr = err;
+      if (!err.transient || i === attempts) throw err;
+      console.warn(`[music] 일시적 오류로 재시도 (${i}/${attempts - 1}): ${err.message}`);
+      await sleep(1500);
+    }
+  }
+  throw lastErr;
+}
+
+/**
+ * yt-dlp 의 영어 오류 메시지를 한국어 + "다음에 뭘 할지" 로 바꿉니다.
+ * verify.mjs 가 이 함수를 직접 검사하므로 export 합니다.
+ */
+export function friendlyError(stderr) {
+  const s = String(stderr).toLowerCase();
+
+  // ⚠️ 여기서 'bot' 같은 짧은 단어로 판별하지 말 것.
+  //    프로젝트 폴더 이름(sarangbang-bot)에 'bot' 이 들어 있어서,
+  //    경로가 찍힌 아무 오류나 "유튜브 차단" 으로 오진됩니다.
+  //    (실제로 그런 버그가 있었습니다. verify.mjs 에 회귀 검사가 있습니다)
+  if (s.includes('sign in to confirm')) {
+    return '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
+  }
+  if (s.includes('the page needs to be reloaded')) {
+    return '유튜브가 일시적으로 요청을 거부했습니다. 잠시 뒤 다시 시도해보세요. (계속 그러면 `npm run update-ytdlp`)';
   }
   if (s.includes('video unavailable') || s.includes('private video')) {
     return '재생할 수 없는 영상입니다 (비공개이거나 삭제됨).';
@@ -55,6 +129,9 @@ function friendlyError(stderr) {
   }
   if (s.includes('unsupported url')) {
     return '지원하지 않는 링크입니다.';
+  }
+  if (s.includes('cookies') && (s.includes('unable to open') || s.includes('no such file'))) {
+    return '.env 의 YTDLP_COOKIES_FILE 경로에 파일이 없습니다. 경로를 확인해주세요.';
   }
   const line = stderr.split('\n').find((l) => l.includes('ERROR'));
   return line ? line.trim() : '';
