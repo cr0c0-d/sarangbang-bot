@@ -533,9 +533,33 @@ WEB_PUBLIC_URL=http://<서버IP>:3000
 
 **(2) 서버 안쪽** — iptables 에도 구멍을 냅니다
 
-```bash
-sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT && sudo netfilter-persistent save
+OCI 우분투/오라클리눅스 이미지에는 **"나머지 전부 거부"** 규칙이 미리 들어 있습니다.
+
 ```
+5    REJECT     0    --  0.0.0.0/0   0.0.0.0/0   reject-with icmp-host-prohibited
+```
+
+이 규칙 **위에** 허용 규칙을 넣어야 합니다. 아래에 넣으면 절대 적용되지 않습니다.
+그리고 REJECT 가 몇 번째 줄인지는 이미지·버전마다 다르므로 **직접 찾아서** 넣습니다.
+
+```bash
+LINE=$(sudo iptables -L INPUT --line-numbers -n | awk '/REJECT/{print $1; exit}'); if [ -n "$LINE" ]; then sudo iptables -I INPUT "$LINE" -p tcp --dport 3000 -j ACCEPT; else sudo iptables -A INPUT -p tcp --dport 3000 -j ACCEPT; fi
+```
+
+제대로 들어갔는지 확인 — `dpt:3000` 줄이 `REJECT` 줄보다 **위에** 있어야 합니다.
+
+```bash
+sudo iptables -L INPUT -n --line-numbers | grep -E "3000|REJECT"
+```
+
+재부팅해도 유지되도록 저장합니다.
+
+```bash
+sudo netfilter-persistent save || (sudo apt install -y iptables-persistent && sudo netfilter-persistent save)
+```
+
+> 💡 `reject-with icmp-host-prohibited` 때문에 브라우저는 **`ERR_ADDRESS_UNREACHABLE`** 을 띄웁니다.
+> 포트가 그냥 막혀 있을 때 나오는 `ERR_CONNECTION_TIMED_OUT` 과 다르므로 구분에 쓸 수 있습니다.
 
 > ⚠️ **B를 고르면 감수해야 하는 것**
 > - 통신이 HTTPS가 아니라 **평문**입니다. `WEB_TOKEN` 이 인터넷을 그대로 지나갑니다.
@@ -705,8 +729,8 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | SSH 접속 시 `Connection timed out` | 방화벽/라우팅 문제. **3단계의 진단 스크립트**를 돌려보세요 |
 | SSH 접속 시 `Connection refused` | 서버까지는 닿음. 인스턴스가 아직 부팅 중일 수 있으니 1~2분 뒤 재시도 |
 | `npm run verify` 실패 | 파일이 덜 올라갔거나 `npm install` 미실행 |
-| 갤러리 `ERR_ADDRESS_UNREACHABLE` | ① 주소에 **사설 IP(10.x)** 를 넣었을 가능성 — 공인 IP 확인 ② 규칙을 **사설 서브넷** 보안목록에 넣었을 가능성 (8단계 참고) |
-| 갤러리 `ERR_CONNECTION_TIMED_OUT` | 보안목록은 열렸는데 서버 안 `iptables` 를 안 열었을 가능성 |
+| 갤러리 `ERR_ADDRESS_UNREACHABLE` | 서버 안 `iptables` 의 `reject-with icmp-host-prohibited` 에 막힌 것. 8단계 (2) 참고. (주소에 사설 IP(10.x)를 넣은 경우에도 같은 에러) |
+| 갤러리 `ERR_CONNECTION_TIMED_OUT` | 클라우드 쪽 **보안목록**이 안 열린 것. 8단계 (1) 참고 |
 | `Access denied` / 비밀번호를 물어봄 | `systemctl` 앞에 **`sudo`** 를 빼먹었습니다. OCI 이미지의 ubuntu 계정은 비밀번호가 없어서 반드시 sudo 로 실행해야 합니다 |
 | 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인. 대개 `.env` 값 문제 |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
