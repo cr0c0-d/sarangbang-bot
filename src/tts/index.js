@@ -1,5 +1,5 @@
 // TTS 기능: 지정한 채팅방의 메시지를 음성채널에서 읽어줍니다.
-import { SlashCommandBuilder, ChannelType, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio } from '../audio/guild-audio.js';
 import { synthesize, listVoices } from './synth.js';
@@ -59,14 +59,22 @@ export function cleanText(message, maxChars) {
   return text;
 }
 
-/** TTS가 읽을 음성채널을 정합니다. */
-async function resolveTtsVoiceChannel(guild, member) {
+/**
+ * TTS가 읽을 음성채널을 정합니다. 위에서부터 먼저 맞는 것을 씁니다.
+ *
+ * 1. /채널설정 으로 읽어주기 음성채널을 못박아둔 경우 → 그 채널
+ * 2. 글이 올라온 곳이 음성채널 안의 채팅인 경우 → **그 음성채널**
+ *    (음성채널에는 자체 채팅창이 있습니다. 거기에 쓴 글은 그 채널에서 읽어주는 게 자연스럽습니다)
+ * 3. 그 외 → 글 쓴 사람이 들어가 있는 음성채널
+ */
+async function resolveTtsVoiceChannel(guild, member, sourceChannel) {
   const configured = getSetting(guild.id, 'ttsVoiceChannelId');
   if (configured) {
     const ch = await guild.channels.fetch(configured).catch(() => null);
-    if (ch && ch.type === ChannelType.GuildVoice) return ch;
+    if (ch?.isVoiceBased?.()) return ch;
     return null;
   }
+  if (sourceChannel?.isVoiceBased?.()) return sourceChannel;
   return member?.voice?.channel ?? null;
 }
 
@@ -85,7 +93,7 @@ export async function handleTtsMessage(message) {
   const text = cleanText(message, config.tts.maxChars);
   if (!text) return false;
 
-  const voiceChannel = await resolveTtsVoiceChannel(message.guild, message.member);
+  const voiceChannel = await resolveTtsVoiceChannel(message.guild, message.member, message.channel);
   if (!voiceChannel) {
     // 아무도 음성채널에 없으면 조용히 무시합니다. (매번 경고하면 시끄러움)
     return false;

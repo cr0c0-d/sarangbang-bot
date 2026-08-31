@@ -47,7 +47,10 @@ const dataDirRaw = str('DATA_DIR', './data');
 export const config = {
   token: str('DISCORD_TOKEN'),
   clientId: str('CLIENT_ID'),
-  guildId: str('GUILD_ID'),
+  // 여러 서버에서 쓸 수 있습니다. .env 에 쉼표로 나열하세요.
+  //   GUILD_ID=123456789012345678,987654321098765432
+  // 슬래시 명령어는 여기 적힌 서버들에 각각 등록됩니다. (npm run deploy)
+  guildIds: list('GUILD_ID'),
 
   // 봇이 기억해야 하는 것들을 저장하는 폴더 (채널 설정 등)
   dataDir: path.isAbsolute(dataDirRaw) ? dataDirRaw : path.join(ROOT, dataDirRaw),

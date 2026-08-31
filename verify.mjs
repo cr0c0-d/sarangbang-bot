@@ -1,7 +1,7 @@
 // 수정 후 재검증. 토큰 없이 확인할 수 있는 것 전부.
 process.env.DISCORD_TOKEN = 'x'.repeat(59);
 process.env.CLIENT_ID = '123456789012345678';
-process.env.GUILD_ID = '123456789012345678';
+process.env.GUILD_ID = '123456789012345678, 987654321098765432';
 process.env.TTS_TEXT_CHANNEL_ID = '111111111111111111';
 process.env.IMAGE_CHANNEL_ID = '222222222222222222';
 process.env.IMAGE_DIR = './data/verify-images';
@@ -127,6 +127,32 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   const { config } = await import('./src/config.js');
   ok('기본 목소리 실재', real.has(config.tts.voice), config.tts.voice);
   ok('기본 목소리가 다국어', config.tts.voice.includes('Multilingual'), config.tts.voice);
+}
+
+// 6c) GUILD_ID 를 쉼표 목록으로 읽는가 (여러 서버 지원)
+{
+  const { config } = await import('./src/config.js');
+  ok('GUILD_ID 목록 파싱 (2개)', config.guildIds.length === 2, config.guildIds.join(' | '));
+  ok('공백 섞인 항목도 정리됨', config.guildIds[1] === '987654321098765432', config.guildIds[1]);
+}
+
+// 6d) /채널설정 이 음성채널 안의 채팅을 "채팅방"으로 받아들이는가
+// (음성채널은 discord.js 에서 isTextBased() 와 isVoiceBased() 를 둘 다 만족합니다.
+//  예전에 채널 타입 목록으로 검사해서 이걸 거부하는 버그가 있었습니다)
+{
+  const cmd = allCommands.find((c) => c.data.toJSON().name === '채널설정');
+  const src = fs.readFileSync('./src/channel-commands.js', 'utf8');
+  ok('타입 목록 하드코딩 대신 isTextBased 사용', src.includes('isTextBased?.()'));
+  ok('타입 목록 하드코딩 대신 isVoiceBased 사용', src.includes('isVoiceBased?.()'));
+  const types = cmd.data.toJSON().options[1]['channel_types'];
+  ok('채널 선택지에 음성채널 포함', Array.isArray(types) && types.includes(2), JSON.stringify(types));
+}
+
+// 6e) TTS 가 음성채널 자체 채팅에서 그 채널로 읽어주는가
+{
+  const src = fs.readFileSync('./src/tts/index.js', 'utf8');
+  ok('TTS: 글이 올라온 음성채널을 그대로 사용', src.includes('sourceChannel?.isVoiceBased?.()'));
+  ok('TTS: 호출부가 message.channel 을 넘김', src.includes('message.member, message.channel)'));
 }
 
 // 7) 유튜브 링크 감지

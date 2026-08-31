@@ -1,9 +1,9 @@
 {
-  "name": "discord-bot",
+  "name": "sarangbang-bot",
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "음악 스트리밍 + TTS + 이미지 정리 디스코드 봇",
+  "description": "사랑방봇 — 음악 스트리밍 + TTS 낭독 + 이미지 정리 디스코드 봇",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

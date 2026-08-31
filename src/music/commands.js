@@ -1,5 +1,5 @@
 // 음악 기능: 슬래시 명령어 + "채팅방에 유튜브 링크 붙여넣기" 자동 감지
-import { SlashCommandBuilder, EmbedBuilder, ChannelType, PermissionsBitField, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { getTracks, formatDuration } from './ytdlp.js';
@@ -21,7 +21,7 @@ async function resolveVoiceChannel(guild, member) {
   const configured = getSetting(guild.id, 'musicVoiceChannelId');
   if (configured) {
     const ch = await guild.channels.fetch(configured).catch(() => null);
-    if (!ch || ch.type !== ChannelType.GuildVoice) {
+    if (!ch?.isVoiceBased?.()) {
       throw new Error(
         '지정된 음악 음성채널을 찾을 수 없습니다. /채널확인 으로 설정을 보고 /채널설정 으로 다시 지정해주세요.'
       );

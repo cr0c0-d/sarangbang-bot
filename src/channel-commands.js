@@ -9,14 +9,21 @@ const CHOICES = Object.entries(KEYS).map(([key, spec]) => ({ name: spec.label, v
 const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const VOICE_TYPES = [ChannelType.GuildVoice, ChannelType.GuildStageVoice];
 
-/** 고른 종류에 맞는 채널인지 검사합니다. (선택지마다 타입을 강제할 수 없어 여기서 확인) */
+/**
+ * 고른 종류에 맞는 채널인지 검사합니다. (선택지마다 타입을 강제할 수 없어 여기서 확인)
+ *
+ * 중요: 음성채널에도 안에 채팅창이 있습니다. discord.js 에서 음성채널은
+ * isTextBased() 와 isVoiceBased() 를 **둘 다** 만족합니다.
+ * 그래서 채널 타입 목록을 하드코딩하지 않고 이 두 메서드로 판단합니다.
+ * (예전에 타입 목록으로 검사해서, 음성채널 안의 채팅을 읽어주기 채팅방으로 못 고르는 버그가 있었습니다)
+ */
 function checkKind(key, channel) {
   const spec = KEYS[key];
-  if (spec.kind === 'text' && !TEXT_TYPES.includes(channel.type)) {
-    return `**${spec.label}** 에는 채팅 채널을 골라주세요. (${channel.name} 은 음성채널입니다)`;
+  if (spec.kind === 'text' && !channel.isTextBased?.()) {
+    return `**${spec.label}** 에는 채팅을 쓸 수 있는 채널을 골라주세요. (${channel.name} 에는 채팅창이 없습니다)`;
   }
-  if (spec.kind === 'voice' && !VOICE_TYPES.includes(channel.type)) {
-    return `**${spec.label}** 에는 음성채널을 골라주세요. (${channel.name} 은 채팅 채널입니다)`;
+  if (spec.kind === 'voice' && !channel.isVoiceBased?.()) {
+    return `**${spec.label}** 에는 음성채널을 골라주세요. (${channel.name} 은 채팅 전용 채널입니다)`;
   }
   return null;
 }
@@ -49,9 +56,17 @@ export const commands = [
       }
 
       set(interaction.guildId, key, channel.id);
-      const extra = spec.multi ? '\n(이미 지정된 채널이 있으면 함께 유지됩니다)' : '';
+
+      const notes = [];
+      if (spec.multi) notes.push('이미 지정된 채널이 있으면 함께 유지됩니다.');
+      // 음성채널 안의 채팅을 읽어주기 채팅방으로 고르면, 음성채널을 따로 지정할 필요가 없습니다.
+      if (key === 'ttsTextChannelId' && channel.isVoiceBased?.()) {
+        notes.push('음성채널 안의 채팅이므로, **그 음성채널에서 그대로 읽어줍니다.** 따로 지정할 필요 없습니다.');
+      }
+
       await interaction.reply(
-        `✅ **${spec.label}** 을(를) ${mention(channel.id, spec)} 로 지정했습니다.${extra}`
+        `✅ **${spec.label}** 을(를) ${mention(channel.id, spec)} 로 지정했습니다.` +
+          (notes.length ? '\n' + notes.map((n) => `· ${n}`).join('\n') : '')
       );
     },
   },

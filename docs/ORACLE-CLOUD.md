@@ -1,4 +1,4 @@
-# Oracle Cloud Always Free 에 봇 올리기
+# 사랑방봇을 Oracle Cloud Always Free 에 올리기
 
 계정만 만들어둔 상태에서 시작해 봇이 24시간 돌아가기까지의 전체 과정입니다.
 리눅스를 처음 다뤄도 따라올 수 있게 **명령어를 그대로 복사해 붙여넣는 방식**으로 썼습니다.
@@ -112,7 +112,7 @@ while true; do
       --availability-domain "$AD" --compartment-id "$OCI_TENANCY" \
       --shape VM.Standard.A1.Flex --shape-config '{"ocpus":1,"memoryInGBs":6}' \
       --image-id "$IMAGE" --subnet-id "$SUBNET" --assign-public-ip true \
-      --display-name discord-bot \
+      --display-name sarangbang-bot \
       --metadata "{\"ssh_authorized_keys\":\"$(cat ~/.ssh/oci_bot.pub)\"}" \
       > /tmp/ok.json 2>/tmp/err.txt; then
     echo "✅ 성공! ($n번째 시도)"; break
@@ -188,7 +188,7 @@ Oracle 콘솔은 화면이 자주 바뀌므로 클릭 경로 대신 **넣어야 
 
 | 항목 | 값 |
 |---|---|
-| 이름 | `discord-bot` (아무거나) |
+| 이름 | `sarangbang-bot` (아무거나) |
 | 이미지 | **Canonical Ubuntu 24.04** (또는 22.04) |
 | Shape | **VM.Standard.A1.Flex** (ARM) — 안 되면 아래 참고 |
 | OCPU / 메모리 | **1 OCPU / 6 GB** (2/12를 다 쓰지 마세요. 작을수록 잘 생성됩니다) |
@@ -237,7 +237,7 @@ ssh -i ssh-key.key ubuntu@<서버IP>
 ```
 
 `Are you sure you want to continue connecting?` 이 나오면 `yes` 를 입력하세요.
-프롬프트가 `ubuntu@discord-bot:~$` 로 바뀌면 성공입니다.
+프롬프트가 `ubuntu@sarangbang-bot:~$` 로 바뀌면 성공입니다.
 
 **이 시점부터 나오는 명령어는 전부 서버 안에서 실행하는 것입니다.**
 
@@ -383,7 +383,7 @@ sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapf
 > ⚠️ `.env` 는 `.gitignore` 에 들어 있어 올라가지 않습니다. **절대 강제로 올리지 마세요.**
 > 토큰이 노출되면 디스코드가 봇을 즉시 정지시킵니다.
 
-집 PC(`C:\discord-bot`)에서:
+집 PC(`C:\sarangbang-bot`)에서:
 
 ```bash
 git init && git add -A && git commit -m "디스코드 봇 최초 커밋"
@@ -394,7 +394,7 @@ git init && git add -A && git commit -m "디스코드 봇 최초 커밋"
 서버에서 내려받습니다:
 
 ```bash
-git clone https://github.com/<본인계정>/<저장소이름>.git discord-bot && cd discord-bot
+git clone https://github.com/<본인계정>/<저장소이름>.git sarangbang-bot && cd sarangbang-bot
 ```
 
 ### B. 파일 직접 전송 (git이 부담스러우면)
@@ -402,18 +402,18 @@ git clone https://github.com/<본인계정>/<저장소이름>.git discord-bot &&
 집 PC에서 실행합니다. `node_modules` 와 `bin` 은 서버에서 다시 만들 것이므로 보내지 않습니다.
 
 ```bash
-scp -i ssh-key.key -r src scripts docs package.json package-lock.json verify.mjs .env.example ubuntu@<서버IP>:~/discord-bot/
+scp -i ssh-key.key -r src scripts docs package.json package-lock.json verify.mjs .env.example ubuntu@<서버IP>:~/sarangbang-bot/
 ```
 
 ### 공통 — 의존성과 yt-dlp 설치
 
-서버의 `~/discord-bot` 안에서:
+서버의 `~/sarangbang-bot` 안에서:
 
 ```bash
 npm install && npm run update-ytdlp
 ```
 
-`완료: /home/ubuntu/discord-bot/bin/yt-dlp` 가 나오면 정상입니다. (ARM용을 알아서 받습니다)
+`완료: /home/ubuntu/sarangbang-bot/bin/yt-dlp` 가 나오면 정상입니다. (ARM용을 알아서 받습니다)
 
 ---
 
@@ -429,7 +429,7 @@ cp .env.example .env && nano .env
 
 ```ini
 # 리눅스 절대경로로 바꿉니다
-IMAGE_DIR=/home/ubuntu/discord-bot/data/images
+IMAGE_DIR=/home/ubuntu/sarangbang-bot/data/images
 
 # 갤러리를 이 서버 안에서만 열고, SSH 터널로 봅니다 (8단계 A안 — 권장)
 WEB_BIND=127.0.0.1
@@ -535,7 +535,7 @@ sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT && s
 `npm start` 는 SSH를 끊으면 같이 죽습니다. 서버가 재부팅돼도 알아서 살아나도록 등록합니다.
 
 ```bash
-sudo tee /etc/systemd/system/discord-bot.service > /dev/null <<'EOF'
+sudo tee /etc/systemd/system/sarangbang-bot.service > /dev/null <<'EOF'
 [Unit]
 Description=Discord Bot (music + TTS + images)
 After=network-online.target
@@ -544,7 +544,7 @@ Wants=network-online.target
 [Service]
 Type=simple
 User=ubuntu
-WorkingDirectory=/home/ubuntu/discord-bot
+WorkingDirectory=/home/ubuntu/sarangbang-bot
 ExecStart=/usr/bin/node src/index.js
 Restart=always
 RestartSec=10
@@ -559,13 +559,13 @@ EOF
 등록하고 시작합니다.
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now discord-bot
+sudo systemctl daemon-reload && sudo systemctl enable --now sarangbang-bot
 ```
 
 상태 확인:
 
 ```bash
-sudo systemctl status discord-bot
+sudo systemctl status sarangbang-bot
 ```
 
 `active (running)` 이면 성공입니다. 이제 SSH를 끊어도 봇은 계속 돕니다.
@@ -584,19 +584,19 @@ sudo systemctl status discord-bot
 2. 서버로 보냅니다 (집 PC에서 실행):
 
    ```bash
-   scp -i ssh-key.key cookies.txt ubuntu@<서버IP>:~/discord-bot/cookies.txt
+   scp -i ssh-key.key cookies.txt ubuntu@<서버IP>:~/sarangbang-bot/cookies.txt
    ```
 
 3. 서버의 `.env` 에 경로를 적습니다:
 
    ```ini
-   YTDLP_COOKIES_FILE=/home/ubuntu/discord-bot/cookies.txt
+   YTDLP_COOKIES_FILE=/home/ubuntu/sarangbang-bot/cookies.txt
    ```
 
 4. 봇을 재시작합니다:
 
    ```bash
-   sudo systemctl restart discord-bot
+   sudo systemctl restart sarangbang-bot
    ```
 
 > 🔒 **이 파일은 본인 유튜브 계정의 로그인 정보입니다.**
@@ -611,26 +611,26 @@ sudo systemctl status discord-bot
 ### 로그 보기
 
 ```bash
-journalctl -u discord-bot -f
+journalctl -u sarangbang-bot -f
 ```
 
 `-f` 는 실시간으로 계속 보여줍니다. **Ctrl+C** 로 빠져나옵니다.
 최근 100줄만 보려면:
 
 ```bash
-journalctl -u discord-bot -n 100 --no-pager
+journalctl -u sarangbang-bot -n 100 --no-pager
 ```
 
 ### 음악이 안 나올 때 (1순위 조치)
 
 ```bash
-cd ~/discord-bot && npm run update-ytdlp && sudo systemctl restart discord-bot
+cd ~/sarangbang-bot && npm run update-ytdlp && sudo systemctl restart sarangbang-bot
 ```
 
 ### 코드를 고친 뒤 반영하기
 
 ```bash
-cd ~/discord-bot && git pull && npm install && npm run verify && sudo systemctl restart discord-bot
+cd ~/sarangbang-bot && git pull && npm install && npm run verify && sudo systemctl restart sarangbang-bot
 ```
 
 명령어를 추가·수정했다면 `npm run deploy` 도 한 번 실행하세요.
@@ -649,7 +649,7 @@ df -h /
 어느 폴더가 큰지 확인:
 
 ```bash
-du -sh ~/discord-bot/data/images/* | sort -h | tail -20
+du -sh ~/sarangbang-bot/data/images/* | sort -h | tail -20
 ```
 
 ### 백업해둘 것
@@ -663,7 +663,7 @@ du -sh ~/discord-bot/data/images/* | sort -h | tail -20
 집 PC로 사진과 설정을 통째로 가져오려면 (집 PC에서 실행):
 
 ```bash
-scp -i ssh-key.key -r ubuntu@<서버IP>:~/discord-bot/data ./data-backup
+scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 ```
 
 ---
@@ -678,7 +678,7 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/discord-bot/data ./data-backup
 | SSH 접속 시 `Connection timed out` | 방화벽/라우팅 문제. **3단계의 진단 스크립트**를 돌려보세요 |
 | SSH 접속 시 `Connection refused` | 서버까지는 닿음. 인스턴스가 아직 부팅 중일 수 있으니 1~2분 뒤 재시도 |
 | `npm run verify` 실패 | 파일이 덜 올라갔거나 `npm install` 미실행 |
-| 봇이 켜지자마자 죽음 | `journalctl -u discord-bot -n 50` 확인. 대개 `.env` 값 문제 |
+| 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인. 대개 `.env` 값 문제 |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
 | 갤러리 접속 안 됨 (A안) | SSH 터널 창을 닫았거나, `.env` 의 `WEB_BIND` 가 `127.0.0.1` 인지 확인 |
 | 사진이 어제 날짜 폴더에 들어감 | 서버 시간대가 UTC. `sudo timedatectl set-timezone Asia/Seoul` 후 재시작 |
