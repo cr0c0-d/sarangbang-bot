@@ -507,13 +507,29 @@ WEB_PUBLIC_URL=http://<서버IP>:3000
 
 그리고 **방화벽 두 겹을 다 열어야 합니다** (함정 3).
 
-**(1) 클라우드 쪽** — 콘솔에서 인스턴스의 VCN → Security List 에 수신 규칙 추가
+**(1) 클라우드 쪽** — 수신 규칙(Ingress Rule) 추가
+
+> 🔴 **보안목록이 여러 개입니다. 인스턴스가 실제로 들어있는 서브넷의 것에 넣어야 합니다.**
+> VCN 마법사는 **공용(Public)** 과 **사설(Private)** 서브넷을 둘 다 만들고,
+> 보안목록도 각각 따로 만듭니다. 사설 쪽에 규칙을 넣으면 **아무 효과가 없습니다.**
+>
+> 헷갈리지 않는 방법: **VCN 메뉴가 아니라 인스턴스에서 출발하세요.**
+> Compute → Instances → 해당 인스턴스 → 아래 **Attached VNICs** →
+> **Subnet** 링크 클릭 → 그 서브넷 화면의 **Security Lists** 에 있는 것을 고릅니다.
+> SSH가 되고 있다면 그 서브넷이 공용 서브넷입니다.
+
+고른 보안목록에서 **Add Ingress Rule**:
 
 | 항목 | 값 |
 |---|---|
+| Stateless | 체크 안 함 (기본값) |
+| Source Type | CIDR |
 | Source CIDR | `0.0.0.0/0` (또는 내 집 IP만 넣으면 더 안전) |
 | IP Protocol | TCP |
+| Source Port Range | 비워둠 |
 | Destination Port Range | `3000` |
+
+> ⚠️ **Destination Port Range** 에 넣어야 합니다. Source Port 에 넣으면 동작하지 않습니다.
 
 **(2) 서버 안쪽** — iptables 에도 구멍을 냅니다
 
@@ -689,6 +705,8 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | SSH 접속 시 `Connection timed out` | 방화벽/라우팅 문제. **3단계의 진단 스크립트**를 돌려보세요 |
 | SSH 접속 시 `Connection refused` | 서버까지는 닿음. 인스턴스가 아직 부팅 중일 수 있으니 1~2분 뒤 재시도 |
 | `npm run verify` 실패 | 파일이 덜 올라갔거나 `npm install` 미실행 |
+| 갤러리 `ERR_ADDRESS_UNREACHABLE` | ① 주소에 **사설 IP(10.x)** 를 넣었을 가능성 — 공인 IP 확인 ② 규칙을 **사설 서브넷** 보안목록에 넣었을 가능성 (8단계 참고) |
+| 갤러리 `ERR_CONNECTION_TIMED_OUT` | 보안목록은 열렸는데 서버 안 `iptables` 를 안 열었을 가능성 |
 | `Access denied` / 비밀번호를 물어봄 | `systemctl` 앞에 **`sudo`** 를 빼먹었습니다. OCI 이미지의 ubuntu 계정은 비밀번호가 없어서 반드시 sudo 로 실행해야 합니다 |
 | 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인. 대개 `.env` 값 문제 |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
