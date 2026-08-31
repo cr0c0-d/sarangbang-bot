@@ -115,6 +115,17 @@ data/images/              저장된 이미지 + _meta.json + _folders.json (giti
   스트림 단계에서 이 오류가 실제로 문제가 되는 것을 확인하기 전에는 트랙 단위 재시도를 만들지 말 것.
   (만든다면 `playbackDuration` 같은 추측이 아니라 `skip()`/`stop()` 이 세우는 명시적 플래그로 구분해야 한다)
 
+**"일시적" 분류는 확정이 아니다.** `The page needs to be reloaded` 는 진짜 일시적 딸꾹질일 때도 있고,
+**클라우드 IP 차단의 다른 얼굴**일 때도 있다(실측 확인: 같은 서버에서 재시도 3회 후에도 실패,
+verbose 로 보면 `playability status: LOGIN_REQUIRED`). 그래서 재시도를 다 쓰고 실패하면
+`run()` 이 "일시적이 아닐 수 있다 + IP 차단 가능성 + 진단 명령" 을 메시지에 덧붙인다.
+"잠시 뒤 다시 시도하세요" 만 남기면 소유자가 원인을 영원히 못 찾는다.
+
+**yt-dlp 에 JS 런타임을 항상 넘긴다.** `extraArgs()` 가 `--js-runtimes node:${process.execPath}` 를 붙인다.
+yt-dlp 는 유튜브 추출에 JS 런타임이 필요한데 기본으로 찾는 건 `deno` 뿐이고 보통 안 깔려 있다
+(서버에서 `JS runtimes: none` + deprecation 경고 확인). 이 봇은 Node 로 돌아가므로
+`process.execPath` 가 항상 유효한 node 경로다 — 어느 OS에서도 추가 설치가 필요 없다.
+
 **`friendlyError()` 에서 짧은 단어로 오류를 분류하지 말 것.**
 예전에 `stderr.includes('bot')` 으로 유튜브 차단을 판별했는데,
 프로젝트 폴더 이름이 `sarangbang-bot` 이라 **경로가 찍힌 아무 오류나 "유튜브 차단" 으로 오진**했다.

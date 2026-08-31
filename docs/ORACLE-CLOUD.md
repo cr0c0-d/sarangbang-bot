@@ -574,8 +574,19 @@ sudo systemctl status sarangbang-bot
 
 ## 10. 유튜브가 "봇 아니냐"고 막을 때
 
-**Oracle은 데이터센터 IP라서 집 PC보다 훨씬 자주 막힙니다.**
-증상은 음악 재생 시 `유튜브가 이 서버를 봇으로 판단해 차단했습니다` 메시지입니다.
+**Oracle은 데이터센터 IP라서 거의 반드시 막힙니다.** 실제로 이 프로젝트에서 확인했습니다.
+
+증상이 여러 얼굴로 나타나므로 헷갈리기 쉽습니다 — 아래는 **전부 같은 원인**입니다.
+
+- `유튜브가 이 서버를 봇으로 판단해 차단했습니다`
+- `유튜브가 일시적으로 요청을 거부했습니다` 가 **반복될 때**
+- verbose 로 보면 `playability status: LOGIN_REQUIRED`
+
+**확인 명령**
+
+```bash
+cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch?v=wp43OdtAAkM" 2>&1 | grep -E "LOGIN_REQUIRED|Sign in|ERROR"
+```
 
 **해결: 브라우저 쿠키를 서버에 넣어줍니다.**
 

@@ -317,17 +317,45 @@ GUILD_ID=123456789012345678,987654321098765432
 
 ### 유튜브가 막힐 때
 
-클라우드 서버(AWS, GCP 등)에서 돌리면 유튜브가 "봇 아니냐"며 차단할 수 있습니다.
-집 PC에서는 거의 안 생깁니다.
+**클라우드 서버(Oracle, AWS, GCP 등)에서 돌리면 거의 반드시 겪습니다.** 집 PC에서는 거의 안 생깁니다.
+유튜브가 데이터센터 IP를 봇으로 판단해 막기 때문입니다.
 
-해결: 브라우저에서 유튜브 쿠키를 파일로 뽑아 `.env` 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
-(브라우저 확장 프로그램 "Get cookies.txt" 계열로 `cookies.txt` 를 저장하면 됩니다)
+증상이 여러 얼굴로 나타납니다 — 아래는 **전부 같은 원인**입니다.
+
+- `Sign in to confirm you're not a bot`
+- `The page needs to be reloaded` (몇 번 재시도해도 계속될 때)
+- `playability status: LOGIN_REQUIRED`
+
+**확인 방법** — 서버에서 실행하면 원인이 바로 보입니다.
+
+```bash
+cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch?v=wp43OdtAAkM" 2>&1 | grep -E "LOGIN_REQUIRED|Sign in|ERROR"
+```
+
+`LOGIN_REQUIRED` 가 보이면 IP 차단이 확정입니다.
+
+**해결: 쿠키 넣기**
+
+브라우저에서 유튜브 쿠키를 파일로 뽑아 `.env` 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
+(브라우저 확장 프로그램 "Get cookies.txt LOCALLY" 계열로 `cookies.txt` 를 저장하면 됩니다)
+
+> 🔴 **본인 주계정을 쓰지 마세요.** 데이터센터 IP에서 쿠키를 쓰다가
+> 유튜브가 계정을 제한하는 사례가 있습니다. **따로 만든 계정**을 쓰세요.
+> 이 파일은 그 계정의 로그인 정보 그 자체입니다 — 공유·커밋 금지 (`.gitignore` 에 이미 있습니다).
+
+> 쿠키는 시간이 지나면 만료됩니다. 다시 막히면 새로 뽑아서 교체하세요.
+
+**대안** — 계정을 걸고 싶지 않다면
+
+| 방법 | 장단점 |
+|---|---|
+| **PO Token 제공자 설치** (`bgutil-ytdlp-pot-provider` 플러그인) | 계정 위험 없음. 설정이 더 복잡하고 별도 서비스를 띄워야 함 |
+| **음악만 집 PC에서 돌리기** | 가장 확실. 가정용 IP는 차단되지 않음. 대신 PC를 켜둬야 함 |
+| **주거용 프록시** (`YTDLP_PROXY`) | 동작하지만 유료이고 느림 |
 
 ```
 YTDLP_COOKIES_FILE=C:\sarangbang-bot\cookies.txt
 ```
-
-> 이 파일에는 **본인 유튜브 계정의 로그인 정보가 들어 있습니다.** 남에게 주지 마세요.
 
 ---
 

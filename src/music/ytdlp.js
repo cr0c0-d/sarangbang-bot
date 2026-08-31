@@ -10,6 +10,15 @@ const YTDLP = path.join(ROOT, 'bin', process.platform === 'win32' ? 'yt-dlp.exe'
 // 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다. (.env 로 설정)
 function extraArgs() {
   const args = [];
+
+  // yt-dlp 는 유튜브 추출에 자바스크립트 런타임이 필요합니다.
+  // 없으면 "No supported JavaScript runtime could be found" 경고가 뜨고
+  // 일부 포맷을 못 가져옵니다. 기본으로 찾는 건 deno 뿐인데 보통 안 깔려 있습니다.
+  //
+  // 이 봇은 Node 로 돌아가므로 process.execPath 가 항상 유효한 node 경로입니다.
+  // 그걸 그대로 넘겨주면 어느 OS에서도 추가 설치 없이 해결됩니다.
+  args.push('--js-runtimes', `node:${process.execPath}`);
+
   const cookies = (process.env.YTDLP_COOKIES_FILE ?? '').trim();
   if (cookies) args.push('--cookies', cookies);
   const proxy = (process.env.YTDLP_PROXY ?? '').trim();
@@ -96,7 +105,19 @@ async function run(args, { timeoutMs = 25_000, attempts = 3 } = {}) {
       return await runOnce(args, timeoutMs);
     } catch (err) {
       lastErr = err;
-      if (!err.transient || i === attempts) throw err;
+      if (!err.transient) throw err;
+      if (i === attempts) {
+        // 재시도를 다 써도 안 되면 "일시적"이 아니었던 것입니다.
+        // 실제 사례: 클라우드 서버에서 IP가 차단되면 유튜브가
+        // "The page needs to be reloaded" 를 뱉기도 합니다 — 겉보기만 일시적입니다.
+        // 그래서 "잠시 뒤 다시" 라고만 안내하면 원인을 영원히 못 찾습니다.
+        err.message +=
+          `\n\n${attempts}번 다시 시도했지만 계속 실패했습니다. 일시적 문제가 아닐 수 있습니다.` +
+          '\n· 클라우드 서버(Oracle·AWS 등)에서 돌리고 있다면 **유튜브가 그 서버 IP를 차단**한 것일 수 있습니다.' +
+          '\n· `.env` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
+          '\n· 진단: 서버에서 `./bin/yt-dlp --simulate -v <링크>` 를 실행해 `LOGIN_REQUIRED` 가 있는지 보세요.';
+        throw err;
+      }
       console.warn(`[music] 일시적 오류로 재시도 (${i}/${attempts - 1}): ${err.message}`);
       await sleep(1500);
     }
