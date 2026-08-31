@@ -13,10 +13,21 @@ import ffmpegPath from 'ffmpeg-static';
  * @returns {{ stream: import('node:stream').Readable, kill: () => void }}
  */
 export function toOggOpus(input, opts = {}) {
-  const { volume = 1, seekSec = 0 } = opts;
+  const { volume = 1, seekSec = 0, remote = false } = opts;
   const isStream = typeof input !== 'string';
 
   const args = ['-hide_banner', '-loglevel', 'error'];
+
+  // 인터넷 주소를 직접 받을 때는 중간에 끊겨도 스스로 다시 붙게 해둡니다.
+  // (유튜브 CDN 은 긴 곡에서 간헐적으로 연결을 끊습니다)
+  if (remote) {
+    args.push(
+      '-reconnect', '1',
+      '-reconnect_streamed', '1',
+      '-reconnect_on_network_error', '1',
+      '-reconnect_delay_max', '5'
+    );
+  }
 
   if (seekSec > 0) args.push('-ss', String(seekSec));
   args.push('-i', isStream ? 'pipe:0' : input);

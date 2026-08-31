@@ -43,8 +43,9 @@
 3. 아래 **Default Install Settings** → **Guild Install** 에서
    - **Scopes**: `bot` 과 `applications.commands` 를 **둘 다** 추가
    - **Permissions**: 아래 항목들을 체크
-     `Send Messages` `Read Message History` `Add Reactions` `Attach Files`
-     `Embed Links` `Connect` `Speak` `View Channels`
+     `View Channels` `Send Messages` `Read Message History` `Add Reactions`
+     `Attach Files` `Embed Links` `Connect` `Speak`
+     **`Manage Messages`** ← 음악 링크 메시지를 자동으로 지우는 데 필요합니다
 4. 맨 아래 **Save Changes**
 
 #### 2-2. 초대하기
@@ -55,11 +56,11 @@
 직접 만들고 싶으면 아래 주소의 `여기에_CLIENT_ID` 자리에 1단계에서 복사한 APPLICATION ID를 넣으세요.
 
 ```
-https://discord.com/api/oauth2/authorize?client_id=여기에_CLIENT_ID&permissions=3263552&scope=bot%20applications.commands&integration_type=0
+https://discord.com/api/oauth2/authorize?client_id=여기에_CLIENT_ID&permissions=3271744&scope=bot%20applications.commands&integration_type=0
 ```
 
 서버를 고르고 승인하면 끝입니다.
-(`permissions=3263552` = 메시지 보내기, 반응 달기, 파일 첨부, 음성채널 연결·말하기.
+(`permissions=3271744` = 메시지 보내기·관리, 반응 달기, 파일 첨부, 음성채널 연결·말하기.
 `integration_type=0` 은 "사용자가 아니라 서버에 설치" 라는 뜻입니다)
 
 ### 3단계 — 채널 ID 알아내기
@@ -144,7 +145,14 @@ npm start
 **친구들에게 알려줄 건 두 가지뿐입니다.**
 
 1. 채팅방에 **유튜브 링크를 붙여넣기** (여러 개를 한꺼번에 붙여도 됩니다)
-2. 조작은 **`/대기열` 을 치면 나오는 버튼**으로
+2. 조작은 **제어판 버튼**으로 (`/대기열` 로 띄웁니다)
+
+> 💡 링크를 붙여넣으면 **그 메시지는 자동으로 지워지고**, 제어판이 항상 채팅방
+> **맨 아래**에 남습니다. 곡을 추가해도 제어판이 위로 밀려나지 않습니다.
+> 제어판이 갱신될 때 **푸시 알림은 울리지 않습니다.**
+>
+> 링크 메시지가 안 지워지면 봇에게 **메시지 관리(Manage Messages)** 권한이 없는 것입니다.
+> 서버 설정 → 역할 → 봇 역할에서 켜주세요. (권한이 없어도 재생은 정상 동작하고 ✅ 반응만 붙습니다)
 
 ### 버튼으로 조작하기 (추천)
 
@@ -403,6 +411,8 @@ GUILD_ID=123456789012345678,987654321098765432
 | **갤러리 링크가 localhost 로 나옴** | `.env` 의 `WEB_PUBLIC_URL` 을 서버 IP로 바꾸고 재시작 |
 | **삭제·이동에서 암호를 물어봄** | 정상입니다. `.env` 의 `WEB_TOKEN` 값을 넣으세요 |
 | **제어판 버튼이 반응 없음** | 명령어를 새로 등록해야 합니다. `npm run deploy` 후 봇 재시작 |
+| **링크 메시지가 안 지워짐** | 봇 역할에 **메시지 관리** 권한을 켜주세요 |
+| **제어판이 위로 밀려남** | 위와 같은 원인입니다 (링크가 안 지워져서) |
 | **`.env` 를 고쳤는데 안 바뀜** | `/채널설정` 으로 지정한 값이 우선합니다. `/채널확인` 으로 출처를 보고 `/채널해제` 하세요 |
 | **일본어가 소리 없이 넘어감** | 한국어 전용 목소리입니다. `/목소리` 로 **현수(다국어)** 를 고르세요 |
 | **명령어가 아직 영어(`/play`)로 보임** | `npm run deploy` 를 다시 실행하세요. 등록해야 새 이름이 반영됩니다 |

@@ -130,29 +130,58 @@ function buildComponents(audio) {
   return rows;
 }
 
+/** 이 메시지가 채팅방의 가장 마지막 메시지인지 확인합니다. */
+async function isAtBottom(channel, messageId) {
+  try {
+    const last = await channel.messages.fetch({ limit: 1 });
+    return last.first()?.id === messageId;
+  } catch {
+    return false; // 확인 못 하면 안전하게 "아니다" 로 봅니다
+  }
+}
+
 /**
- * 제어판을 보여줍니다. 이미 띄워둔 제어판이 있으면 **새로 쌓지 않고 수정**합니다.
- * 곡이 바뀔 때마다 호출되므로, 이게 없으면 채팅방이 "재생 중" 메시지로 도배됩니다.
+ * 제어판을 **항상 채팅방의 가장 아래**에 보여줍니다.
+ *
+ * 규칙:
+ *   - 제어판이 이미 맨 아래면 → 그 메시지를 **수정**만 합니다 (채팅방이 안 더러워짐)
+ *   - 다른 메시지에 밀려 위로 올라갔으면 → **지우고 맨 아래에 다시** 띄웁니다
+ *   - 새로 보낼 때는 SuppressNotifications 를 붙여 **알림이 울리지 않게** 합니다
+ *
+ * 동시에 여러 번 불릴 수 있어(곡 추가 + 곡 전환이 겹칠 때) 서버별로 줄을 세웁니다.
+ * 안 그러면 제어판이 두 개 생깁니다.
  */
-export async function showPanel(audio, channel) {
-  if (!channel) return;
-  const body = buildPanel(audio);
+export function showPanel(audio, channel) {
+  if (!channel || !audio) return Promise.resolve();
+  audio.panelChain = (audio.panelChain ?? Promise.resolve())
+    .then(() => showPanelNow(audio, channel))
+    .catch((err) => console.error('[music] 제어판 표시 실패:', err.message));
+  return audio.panelChain;
+}
+
+async function showPanelNow(audio, channel) {
+  if (audio.destroyed) return;
 
   if (audio.panelMessage) {
-    try {
-      await audio.panelMessage.edit(body);
-      return;
-    } catch {
-      // 메시지가 지워졌거나 너무 오래됐습니다. 아래에서 새로 보냅니다.
+    if (await isAtBottom(channel, audio.panelMessage.id)) {
+      try {
+        await audio.panelMessage.edit(buildPanel(audio));
+        return;
+      } catch {
+        audio.panelMessage = null; // 지워졌거나 수정 불가 → 아래에서 새로 보냅니다
+      }
+    } else {
+      // 위로 밀려났습니다. 옛 제어판을 지우고 맨 아래에 다시 띄웁니다.
+      await audio.panelMessage.delete().catch(() => {});
       audio.panelMessage = null;
     }
   }
 
-  try {
-    audio.panelMessage = await channel.send(body);
-  } catch (err) {
-    console.error('[music] 제어판 표시 실패:', err.message);
-  }
+  audio.panelMessage = await channel.send({
+    ...buildPanel(audio),
+    // @silent 메시지 — 채팅방에 나타나지만 푸시 알림은 울리지 않습니다.
+    flags: MessageFlags.SuppressNotifications,
+  });
 }
 
 /** 버튼·드롭다운 클릭 처리. customId 가 `m:` 으로 시작하는 것만 옵니다. */

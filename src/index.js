@@ -10,6 +10,8 @@ import { config } from './config.js';
 import { commandMap } from './commands.js';
 import { handleMusicMessage } from './music/commands.js';
 import { handleTtsMessage } from './tts/index.js';
+import { prewarm as prewarmTts } from './tts/synth.js';
+import { ttsEnabled } from './settings.js';
 import { handleImageMessage, } from './images/commands.js';
 import { initStore } from './images/store.js';
 import { initSettings, getWithSource } from './settings.js';
@@ -43,6 +45,14 @@ client.once(Events.ClientReady, (c) => {
   }
   console.log('   설정을 바꾸려면 디스코드에서 /채널설정 을 쓰세요.');
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
+
+  // TTS 연결을 미리 데워둡니다.
+  // 식은 연결에서 첫 발화는 약 1초, 따뜻하면 50~80ms 입니다 (실측).
+  if ([...c.guilds.cache.keys()].some((id) => ttsEnabled(id))) {
+    prewarmTts(config.tts.voice).then((ok) =>
+      console.log(ok ? '   TTS 예열 완료 (첫 발화도 빠릅니다)' : '   TTS 예열 실패 (첫 발화만 조금 느립니다)')
+    );
+  }
 });
 
 // ── 슬래시 명령어 ───────────────────────────────────────────
@@ -104,7 +114,13 @@ client.on(Events.MessageCreate, async (message) => {
 
 // ── 아무도 없는 음성채널에 혼자 남으면 나가기 ────────────────
 
-client.on(Events.VoiceStateUpdate, (oldState) => {
+client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  // 누군가 음성채널에 들어오면 곧 읽어주기를 쓸 가능성이 높습니다.
+  // 그때 미리 데워두면 첫 메시지도 즉시 나옵니다.
+  if (newState?.channel && !newState.member?.user?.bot && ttsEnabled(newState.guild.id)) {
+    prewarmTts(config.tts.voice).catch(() => {});
+  }
+
   const channel = oldState.channel;
   if (!channel) return;
 

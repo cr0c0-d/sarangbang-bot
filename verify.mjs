@@ -253,6 +253,34 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   a.destroy();
 }
 
+// 6k) 속도 개선 + 제어판 동작이 코드에 실제로 들어갔는가
+{
+  const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+  ok('추출 1회로 재생주소까지 받음 (--print 사용)', yt.includes("'--print'"));
+  ok('재생주소 재사용 판정 함수 존재', yt.includes('export function hasFreshStreamUrl'));
+  const { hasFreshStreamUrl } = await import('./src/music/ytdlp.js');
+  ok('신선한 주소는 재사용', hasFreshStreamUrl({ streamUrl: 'http://x', extractedAt: Date.now() }));
+  ok('오래된 주소는 재추출', !hasFreshStreamUrl({ streamUrl: 'http://x', extractedAt: 0 }));
+  ok('주소 없으면 재추출', !hasFreshStreamUrl({ streamUrl: null, extractedAt: Date.now() }));
+
+  const ff = fs.readFileSync('./src/audio/ffmpeg.js', 'utf8');
+  ok('원격 주소 재접속 옵션 있음', ff.includes("'-reconnect'"));
+
+  const syn = fs.readFileSync('./src/tts/synth.js', 'utf8');
+  ok('TTS 예열 함수 존재', syn.includes('export async function prewarm'));
+  ok('TTS 연결 유지 타이머 존재', syn.includes('startKeepalive'));
+
+  const pn = fs.readFileSync('./src/music/panel.js', 'utf8');
+  ok('제어판: 알림 억제 플래그 사용', pn.includes('MessageFlags.SuppressNotifications'));
+  ok('제어판: 맨 아래인지 확인', pn.includes('isAtBottom'));
+  ok('제어판: 밀려나면 지우고 다시 띄움', pn.includes('panelMessage.delete()'));
+  ok('제어판: 동시 호출 직렬화', pn.includes('panelChain'));
+
+  const mc = fs.readFileSync('./src/music/commands.js', 'utf8');
+  ok('링크 메시지 자동 삭제', mc.includes('message.delete()'));
+  ok('삭제 실패 시 반응으로 대체', mc.includes("message.react('✅')"));
+}
+
 // 7) 유튜브 링크 감지
 const { findYoutubeLink } = await import('./src/music/commands.js');
 ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !== null);

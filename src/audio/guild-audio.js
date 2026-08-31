@@ -16,7 +16,7 @@ import {
   NoSubscriberBehavior,
 } from '@discordjs/voice';
 import { config } from '../config.js';
-import { createStream } from '../music/ytdlp.js';
+import { createSource } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel } from '../music/panel.js';
 
@@ -208,9 +208,13 @@ export class GuildAudio {
     this.current = item;
 
     try {
-      const ytStream = createStream(item.track.url);
-      const { stream, kill } = toOggOpus(ytStream, { volume: this.volume });
-      this.killCurrent = kill;
+      // 이미 뽑아둔 재생 주소가 살아 있으면 ffmpeg 이 직접 받습니다 (yt-dlp 재추출 생략).
+      const src = createSource(item.track);
+      const { stream, kill } = toOggOpus(src.input, { volume: this.volume, remote: src.remote });
+      this.killCurrent = () => {
+        kill();
+        src.kill();
+      };
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
       this.musicPlayer.play(resource);

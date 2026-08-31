@@ -330,21 +330,36 @@ export async function handleMusicMessage(message) {
     }
 
     if (added.length === 0) {
+      // 실패했을 때는 원본 메시지를 남겨둡니다. 뭘 보냈는지 봐야 하므로.
       await message.reply(`⚠️ ${failed[0] ?? '재생할 수 없습니다.'}`).catch(() => {});
       return;
     }
 
-    // 링크 하나만 보낸 흔한 경우는 제어판이 어차피 뜨므로 조용히 반응만 남깁니다.
-    if (links.length === 1 && failed.length === 0) {
-      await message.react('✅').catch(() => {});
+    // 일부만 실패했으면 그것만 알려줍니다. (성공한 건 제어판에 이미 보입니다)
+    if (failed.length > 0) {
+      await message
+        .reply(`⚠️ ${links.length}개 중 ${failed.length}개는 실패했습니다: ${failed[0]}`)
+        .catch(() => {});
       return;
     }
 
-    const lines = [`➕ **${added.length}곡**을 대기열에 넣었습니다 (보낸 순서대로).`];
-    if (failed.length > 0) {
-      lines.push(`⚠️ ${failed.length}개는 실패했습니다: ${failed[0]}`);
+    // 전부 성공: **링크 메시지를 지웁니다.**
+    // 이게 쌓이면 제어판이 위로 밀려나서, 소유자가 "항상 제어판이 최신으로 보였으면 좋겠다" 고 요청했습니다.
+    // 지울 권한이 없으면(메시지 관리 권한 없음) 조용히 반응만 남깁니다.
+    const deleted = await message.delete().then(
+      () => true,
+      () => false
+    );
+    if (!deleted) {
+      await message.react('✅').catch(() => {});
+      console.warn(
+        '[music] 링크 메시지를 지우지 못했습니다. 봇에게 "메시지 관리(Manage Messages)" 권한이 필요합니다.'
+      );
     }
-    await message.reply(lines.join('\n')).catch(() => {});
+
+    // 제어판을 맨 아래로 다시 올립니다. (이미 재생 중이던 경우에도 대기열이 바뀌었으므로)
+    const audio = peekGuildAudio(message.guildId);
+    if (audio) showPanel(audio, message.channel);
   });
 
   return true;

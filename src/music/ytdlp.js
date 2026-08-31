@@ -160,50 +160,109 @@ export function friendlyError(stderr) {
 
 const URL_RE = /^https?:\/\//i;
 
+// 오디오만 있는 포맷을 하나만 고릅니다.
+// 하나만 고르는 게 중요합니다 — 여러 개가 뽑히면 아래 --print 의 줄 수가 어긋납니다.
+const AUDIO_FORMAT = 'bestaudio[acodec=opus]/bestaudio/best';
+
+// 재생 주소는 시간이 지나면 만료됩니다. 이 시간이 지나면 다시 추출합니다.
+const STREAM_URL_TTL_MS = 90 * 60 * 1000; // 90분
+
 /**
  * 링크 또는 검색어 → 재생 목록.
  * 재생목록 링크면 안에 있는 곡을 전부 담아옵니다.
+ *
+ * ⚡ 속도에 대해: 유튜브 추출은 무엇을 요청하든 약 2.8초가 걸립니다(응답 대기).
+ *    그래서 **한 번의 추출로 제목과 재생 주소를 같이 받아옵니다.**
+ *    예전에는 메타데이터에서 한 번, 재생할 때 또 한 번 추출해서 5.5초가 걸렸습니다.
+ *    주소를 재사용하면 재생 시작은 ffmpeg 몫(약 150ms)만 남습니다.
  */
 export async function getTracks(input) {
   const isUrl = URL_RE.test(input);
   const target = isUrl ? input : `ytsearch1:${input}`;
   const isPlaylist = isUrl && /[?&]list=/.test(input);
 
-  const args = [
-    '--dump-single-json',
+  // 재생목록은 곡이 수십 개일 수 있어 주소를 전부 뽑으면 오히려 느립니다.
+  // 목록만 가볍게 가져오고, 재생 주소는 각 곡을 틀 때 그때 뽑습니다.
+  if (isPlaylist) {
+    const json = JSON.parse(
+      await run(['--dump-single-json', '--no-warnings', '--ignore-config', '--flat-playlist', ...extraArgs(), target])
+    );
+    const entries = Array.isArray(json.entries) ? json.entries.filter(Boolean) : [];
+    return entries
+      .map((e) => ({
+        title: e.title ?? '제목 없음',
+        url: e.webpage_url ?? e.url ?? (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
+        duration: typeof e.duration === 'number' ? e.duration : null,
+        uploader: e.uploader ?? e.channel ?? null,
+        thumbnail: e.thumbnail ?? null,
+        streamUrl: null,
+        extractedAt: 0,
+      }))
+      .filter((t) => t.url);
+  }
+
+  // 단일 영상 / 검색: --print 로 필요한 값만 받습니다. 한 줄에 하나씩 순서대로 나옵니다.
+  // %(urls)s 를 마지막에 두는 이유: 혹시 여러 줄이 나와도 앞의 항목들이 밀리지 않게.
+  const fields = ['%(title)s', '%(duration)s', '%(thumbnail)s', '%(uploader)s', '%(webpage_url)s', '%(urls)s'];
+  const out = await run([
+    '-f', AUDIO_FORMAT,
     '--no-warnings',
     '--ignore-config',
-    ...(isPlaylist ? ['--flat-playlist'] : ['--no-playlist']),
+    '--no-playlist',
+    ...fields.flatMap((f) => ['--print', f]),
     ...extraArgs(),
     target,
+  ]);
+
+  const lines = out.split('\n').map((l) => l.trim());
+  const na = (v) => (!v || v === 'NA' ? null : v);
+  const url = na(lines[4]);
+  if (!url) throw new Error('영상 정보를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+
+  return [
+    {
+      title: na(lines[0]) ?? '제목 없음',
+      duration: Number.isFinite(Number(lines[1])) ? Number(lines[1]) : null,
+      thumbnail: na(lines[2]),
+      uploader: na(lines[3]),
+      url,
+      streamUrl: na(lines[5]),
+      extractedAt: Date.now(),
+    },
   ];
+}
 
-  const json = JSON.parse(await run(args));
-
-  const toTrack = (e) => ({
-    title: e.title ?? '제목 없음',
-    url: e.webpage_url ?? e.url ?? (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
-    duration: typeof e.duration === 'number' ? e.duration : null,
-    uploader: e.uploader ?? e.channel ?? null,
-    thumbnail: e.thumbnail ?? null,
-  });
-
-  if (Array.isArray(json.entries)) {
-    return json.entries.filter(Boolean).map(toTrack).filter((t) => t.url);
-  }
-  const t = toTrack(json);
-  return t.url ? [t] : [];
+/** 저장된 재생 주소를 아직 써도 되는지. */
+export function hasFreshStreamUrl(track) {
+  return Boolean(track?.streamUrl) && Date.now() - (track.extractedAt ?? 0) < STREAM_URL_TTL_MS;
 }
 
 /**
- * 곡 하나의 오디오를 stdout 스트림으로 뽑아냅니다.
- * 반환된 stream 은 그대로 createAudioResource 에 넣으면 됩니다.
+ * 곡 하나의 오디오 원본을 준비합니다.
+ *
+ * @param {object} track getTracks() 가 돌려준 곡 객체
+ * @returns {{ input: import('node:stream').Readable | string, remote: boolean, kill: () => void }}
+ *   input 이 문자열이면 ffmpeg 이 그 주소를 직접 받으면 됩니다 (yt-dlp 재추출 없음 = 빠름).
+ *   Readable 이면 yt-dlp 가 흘려보내는 스트림입니다 (주소가 만료됐거나 없을 때).
+ */
+export function createSource(track) {
+  if (hasFreshStreamUrl(track)) {
+    // 이미 뽑아둔 주소를 그대로 씁니다. 추출을 한 번 건너뛰므로 약 2.8초가 절약됩니다.
+    return { input: track.streamUrl, remote: true, kill: () => {} };
+  }
+  const stream = createStream(track.url);
+  return { input: stream, remote: false, kill: () => stream.destroy?.() };
+}
+
+/**
+ * yt-dlp 로 오디오를 stdout 스트림으로 뽑아냅니다.
+ * 재생 주소가 없거나 만료됐을 때만 씁니다 (재생목록에서 꺼낸 곡 등).
  */
 export function createStream(url) {
   const child = spawn(
     YTDLP,
     [
-      '-f', 'bestaudio[acodec=opus]/bestaudio/best',
+      '-f', AUDIO_FORMAT,
       '--no-playlist',
       '--no-warnings',
       '--ignore-config',
