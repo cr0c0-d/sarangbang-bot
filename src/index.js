@@ -18,6 +18,7 @@ import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
+import { initTimers, handleTimerComponent } from './timer/index.js';
 
 const client = new Client({
   intents: [
@@ -44,6 +45,9 @@ client.once(Events.ClientReady, (c) => {
     console.log(`     이미지 채널  : ${s('imageChannelIds')}`);
   }
   console.log('   설정을 바꾸려면 디스코드에서 /채널설정 을 쓰세요.');
+
+  // 저장된 타이머를 되살립니다. (배포로 재시작해도 타이머가 사라지지 않게)
+  initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
   // TTS 연결을 미리 데워둡니다.
@@ -58,13 +62,29 @@ client.once(Events.ClientReady, (c) => {
 // ── 슬래시 명령어 ───────────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
-  // 음악 제어판의 버튼·드롭다운. customId 가 'm:' 으로 시작합니다.
+  // 자동완성 (/타이머 의 시간 칸 등)
+  if (interaction.isAutocomplete()) {
+    const cmd = commandMap.get(interaction.commandName);
+    if (cmd?.autocomplete) {
+      try {
+        await cmd.autocomplete(interaction);
+      } catch (err) {
+        console.error(`[자동완성 ${interaction.commandName}]`, err.message);
+      }
+    }
+    return;
+  }
+
+  // 버튼·드롭다운. customId 앞머리로 어느 기능인지 구분합니다.
   if (interaction.isButton() || interaction.isStringSelectMenu()) {
-    if (!interaction.customId.startsWith('m:')) return;
+    const isMusic = interaction.customId.startsWith('m:');
+    const isTimer = interaction.customId.startsWith('t:');
+    if (!isMusic && !isTimer) return;
     try {
-      await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
+      if (isTimer) await handleTimerComponent(interaction);
+      else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
-      console.error('[제어판]', err);
+      console.error('[버튼]', err);
       if (!interaction.replied && !interaction.deferred) {
         await interaction
           .reply({ content: `⚠️ ${err.message}`, flags: MessageFlags.Ephemeral })

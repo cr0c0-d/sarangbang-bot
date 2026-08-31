@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 24개 로드', allCommands.length === 24, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 27개 로드', allCommands.length === 27, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기']) {
+for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -286,6 +286,51 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   const ic = fs.readFileSync('./src/images/commands.js', 'utf8');
   ok('/갤러리 기본값 = 이 채널 폴더', ic.includes('resolveFolder(interaction.channel, interaction.channelId)'));
   ok('/갤러리 가 폴더 목록으로 보내지 않음', !ic.includes('config.images.webPublicUrl;'));
+}
+
+// 6m) 타이머: 시간 해석과 저장 동작
+{
+  const T = await import('./src/timer/index.js');
+  const cases = [
+    ['15', 15], ['15분', 15], ['60', 60], ['1시간', 60],
+    ['1시간 30분', 90], ['90m', 90], ['1h30m', 90], ['30초', 0.5],
+  ];
+  for (const [input, want] of cases) {
+    const got = T.parseMinutes(input);
+    ok(`시간해석 "${input}" = ${want}분`, Math.abs((got ?? -1) - want) < 0.001, String(got));
+  }
+  for (const bad of ['라면', '', 'abc', '0', '-5']) {
+    ok(`시간해석 거부 ${JSON.stringify(bad)}`, T.parseMinutes(bad) === null);
+  }
+  ok('시간표시 90분 → 1시간 30분', T.formatMinutes(90) === '1시간 30분', T.formatMinutes(90));
+  ok('시간표시 0.5분 → 30초', T.formatMinutes(0.5) === '30초', T.formatMinutes(0.5));
+
+  // 단어 등록/삭제
+  const G = 'timerguild';
+  T.setWord(G, '라면', 3);
+  ok('단어 등록', T.words(G)['라면'] === 3);
+  ok('단어 삭제', T.removeWord(G, '라면') === true && T.words(G)['라면'] === undefined);
+  ok('없는 단어 삭제는 false', T.removeWord(G, '없음') === false);
+
+  // 타이머 추가/취소
+  const t = T.addTimer({ guildId: G, channelId: 'c', userId: 'u', minutes: 60, label: '테스트' });
+  ok('타이머 추가', T.running(G).length === 1 && T.running(G)[0].label === '테스트');
+  ok('발동 시각이 미래', t.fireAt > Date.now() + 59 * 60_000);
+  ok('타이머 취소', T.cancelTimer(t.id)?.label === '테스트' && T.running(G).length === 0);
+  ok('없는 타이머 취소는 null', T.cancelTimer('nope') === null);
+
+  // 자동완성 존재
+  const cmd = allCommands.find((c) => c.data.toJSON().name === '타이머');
+  ok('/타이머 에 자동완성 있음', typeof cmd.autocomplete === 'function');
+  ok('/타이머 시간칸이 autocomplete 로 선언됨', cmd.data.toJSON().options[0].autocomplete === true);
+}
+
+// 6n) 자동완성 라우팅이 진입점에 연결됐는가
+{
+  const src2 = fs.readFileSync('./src/index.js', 'utf8');
+  ok('index.js: isAutocomplete 처리', src2.includes('interaction.isAutocomplete()'));
+  ok('index.js: 타이머 버튼 라우팅', src2.includes("startsWith('t:')"));
+  ok('index.js: 타이머 복구 호출', src2.includes('initTimers('));
 }
 
 // 7) 유튜브 링크 감지

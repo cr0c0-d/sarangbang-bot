@@ -9,6 +9,7 @@ import { commands as musicCommands } from './music/commands.js';
 import { commands as ttsCommands } from './tts/index.js';
 import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
+import { commands as timerCommands } from './timer/index.js';
 import { getWithSource } from './settings.js';
 
 const basicCommands = [
@@ -60,6 +61,15 @@ const basicCommands = [
                   ].join('\n'),
           },
           {
+            name: '⏰ 타이머',
+            value: [
+              '`/타이머 15분` — 시간이 되면 음성으로 알려줍니다',
+              '`1시간 30분`, `90m` 처럼 써도 되고, 칸을 비우면 자주 쓰는 시간이 목록으로 나옵니다.',
+              '`/알람등록 라면 3분` — 단어로 등록해두면 `/타이머 라면` 으로 바로 쓸 수 있습니다',
+              '`/타이머목록` — 진행 중인 타이머 보기 + 버튼으로 취소',
+            ].join('\n'),
+          },
+          {
             name: '🖼️ 이미지 정리',
             value:
               imageCh.source === 'none'
@@ -89,6 +99,7 @@ export const allCommands = [
   ...channelCommands,
   ...musicCommands,
   ...ttsCommands,
+  ...timerCommands,
   ...imageCommands,
 ];
 

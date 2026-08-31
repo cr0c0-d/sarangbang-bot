@@ -65,8 +65,11 @@ src/
     ytdlp.js            yt-dlp 프로세스 래퍼. 메타데이터 조회 + 오디오 스트림 생성
     commands.js         /재생 등 음악 명령어 + 채팅방 유튜브 링크 자동 감지
 
+  timer/
+    index.js            TTS 타이머 + 단어 등록 (data/timers.json 에 저장)
+
   tts/
-    synth.js            텍스트 → mp3 스트림 (msedge-tts)
+    synth.js            텍스트 → mp3 스트림 (msedge-tts) + 연결 예열
     index.js            메시지 정제(멘션/이모지/링크 처리) + TTS 명령어
 
   images/
@@ -79,6 +82,7 @@ src/
 scripts/update-ytdlp.mjs  yt-dlp 바이너리 다운로더
 bin/                      yt-dlp 바이너리 (gitignore)
 data/settings.json        /채널설정 으로 바꾼 값 (gitignore)
+data/timers.json          진행 중인 타이머 + 등록한 알람 단어 (gitignore)
 data/images/              저장된 이미지 + _meta.json + _folders.json (gitignore)
 ```
 
@@ -252,6 +256,27 @@ yt-dlp -o -            ffmpeg -c:a libopus -f opus       @discordjs/voice
 - `resolveTtsVoiceChannel()` 은 **글이 올라온 곳이 음성채널이면 그 채널에서 읽어준다.**
   음성채널 채팅에 쓴 글을 다른 채널에서 읽는 건 말이 안 되기 때문이다.
   우선순위: 명시 설정 > 글이 올라온 음성채널 > 글쓴이가 들어가 있는 음성채널.
+
+### 3.4-2 TTS 타이머: 재시작을 견뎌야 한다
+
+`src/timer/index.js`. 시간이 되면 TTS로 음성채널에 알리고 채팅으로 멘션한다.
+
+**`data/timers.json` 에 저장한다.** 진행 중인 타이머를 메모리에만 두면
+배포로 재시작할 때마다 사라진다 — 60분 타이머를 걸어놓고 배포하면 그냥 없어진다.
+`initTimers()` 가 시작 시 되살리고, **이미 지난 것은 3초 뒤 발동시키며
+"몇 분 늦었다"고 밝힌다**(조용히 삼키면 사용자는 알람이 안 왔다고만 생각한다).
+
+- `setTimeout` 은 약 24.8일이 한계다. 최대 24시간으로 제한해 그 근처에 가지 않는다.
+- 등록 단어(`words`)는 서버별로 저장한다. `/타이머` 의 **자동완성**이
+  프리셋과 등록 단어를 함께 보여주므로 사용자가 외울 것이 없다.
+  자동완성은 `interaction.isAutocomplete()` 로 `index.js` 에서 분기한다.
+- `/타이머` 는 **등록 단어를 시간 해석보다 먼저** 확인한다.
+  "라면" 처럼 시간으로 읽히지 않는 값을 받으려면 이 순서여야 한다.
+- `parseMinutes()` 는 `15` `15분` `1시간 30분` `90m` `1h30m` `30초` 를 받는다.
+  `0` 과 음수는 거부한다(즉시 발동하는 타이머는 사용자 의도가 아니다).
+- **알람은 멘션으로 알린다.** 음악 제어판은 `SuppressNotifications` 로 조용히 갱신하지만,
+  알람은 알림이 울리지 않으면 존재 이유가 없다. 이 차이는 의도적이다.
+- 버튼 `customId` 는 `t:` 로 시작한다 (음악은 `m:`). `index.js` 가 앞머리로 분기한다.
 
 ### 3.5 이미지 일괄 다운로드: ZIP이 아니라 **웹 갤러리**
 
