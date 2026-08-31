@@ -49,23 +49,53 @@ export function createWebServer() {
   // 다만 **삭제·이동·폴더생성은 되돌릴 수 없으므로** WEB_TOKEN 으로 막습니다.
   // 공개 포트는 자동 스캐너에 금방 발견되는데, 그때 사진이 통째로 지워지면 답이 없습니다.
   // 친구들은 이 기능을 쓸 일이 없고, 소유자만 한 번 암호를 넣으면 됩니다.
-  const requireToken = (req, res, next) => {
-    if (!config.images.webToken) return next(); // 암호를 안 걸었으면 그대로 통과
+  const checkToken = (req) => {
     const header = req.headers.authorization ?? '';
     const [scheme, value] = header.split(' ');
-    if (scheme === 'Basic' && value) {
-      const decoded = Buffer.from(value, 'base64').toString('utf8');
-      const pass = decoded.slice(decoded.indexOf(':') + 1);
-      if (safeCompare(pass, config.images.webToken)) return next();
-    }
+    if (scheme !== 'Basic' || !value) return false;
+    const decoded = Buffer.from(value, 'base64').toString('utf8');
+    const pass = decoded.slice(decoded.indexOf(':') + 1);
+    return safeCompare(pass, config.images.webToken);
+  };
+
+  /** 삭제·이동 같은 되돌릴 수 없는 작업용. JSON 으로 401 을 돌려줍니다. */
+  const requireToken = (req, res, next) => {
+    if (!config.images.webToken) return next(); // 암호를 안 걸었으면 그대로 통과
+    if (checkToken(req)) return next();
     res.status(401).json({ error: '관리 암호가 필요합니다. (.env 의 WEB_TOKEN)' });
   };
 
-  // ── 폴더 목록 ──
-  app.get('/', async (req, res, next) => {
+  /** 폴더 목록처럼 **소유자만 볼 페이지**용. 브라우저 로그인창을 띄웁니다. */
+  const requireTokenPage = (req, res, next) => {
+    if (!config.images.webToken) return next();
+    if (checkToken(req)) return next();
+    res
+      .set('WWW-Authenticate', 'Basic realm="Gallery Admin", charset="UTF-8"')
+      .status(401)
+      .type('html')
+      .send(
+        layout(
+          '관리자 전용',
+          '<main style="padding:40px;text-align:center">' +
+            '<h2>관리자 전용 페이지입니다</h2>' +
+            '<p class="muted">비밀번호 칸에 봇 설정의 <code>WEB_TOKEN</code> 값을 넣으세요. 아이디는 아무거나 됩니다.</p>' +
+            '</main>'
+        )
+      );
+  };
+
+  // ── 루트: 안내만 (폴더 이름을 노출하지 않음) ──
+  // 친구들은 /갤러리 명령이 준 /f/<폴더> 링크로 바로 들어옵니다.
+  // 루트에 폴더 목록을 두면 자기 채널이 아닌 폴더까지 다 보이므로 여기서는 감춥니다.
+  app.get('/', (req, res) => {
+    res.type('html').send(layout('이미지 갤러리', landingPage()));
+  });
+
+  // ── 폴더 목록: 소유자 전용 ──
+  app.get('/folders', requireTokenPage, async (req, res, next) => {
     try {
       const folders = await listFolders();
-      res.type('html').send(layout('이미지 갤러리', foldersPage(folders)));
+      res.type('html').send(layout('폴더 목록', foldersPage(folders)));
     } catch (e) {
       next(e);
     }
@@ -76,8 +106,7 @@ export function createWebServer() {
     try {
       const folder = req.params.folder;
       const files = await listFiles(folder);
-      const folders = await listFolders();
-      res.type('html').send(layout(folder, galleryPage(folder, files, folders)));
+      res.type('html').send(layout(folder, galleryPage(folder, files)));
     } catch (e) {
       next(e);
     }
@@ -266,6 +295,16 @@ function layout(title, body) {
 </html>`;
 }
 
+/** 루트에 오는 사람에게 보여줄 안내. 폴더 이름은 일부러 노출하지 않습니다. */
+function landingPage() {
+  return `<header><h1>🖼️ 이미지 갤러리</h1></header>
+<main>
+  <p>사진은 디스코드 채널별로 정리되어 있습니다.</p>
+  <p class="muted">보려는 채널에서 <code>/갤러리</code> 를 입력하면 그 채널의 사진 링크가 나옵니다.</p>
+  <p style="margin-top:28px"><a class="btn" href="/folders">폴더 목록 보기 (관리자)</a></p>
+</main>`;
+}
+
 function foldersPage(folders) {
   const total = folders.reduce((a, f) => a + f.count, 0);
   const cards = folders
@@ -277,11 +316,11 @@ function foldersPage(folders) {
     )
     .join('');
 
-  return `<header><h1>📁 이미지 갤러리</h1><span class="muted">${folders.length}개 폴더 · 총 ${total}장</span></header>
+  return `<header><h1>📁 폴더 목록</h1><span class="muted">${folders.length}개 폴더 · 총 ${total}장</span></header>
 <main>${cards ? `<div class="folders">${cards}</div>` : '<p class="empty">아직 저장된 이미지가 없습니다.<br>디스코드에서 지정한 채널에 이미지를 올려보세요.</p>'}</main>`;
 }
 
-function galleryPage(folder, files, allFolders) {
+function galleryPage(folder, files) {
   const cells = files
     .map((f) => {
       const src = `/img/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
@@ -295,13 +334,9 @@ function galleryPage(folder, files, allFolders) {
     })
     .join('');
 
-  const options = allFolders
-    .filter((f) => f.name !== folder)
-    .map((f) => `<option value="${esc(f.name)}">`)
-    .join('');
-
+  // 뒤로가기(폴더 목록) 버튼은 일부러 없습니다.
+  // 폴더 목록은 소유자 전용이고, 친구들은 자기 채널 폴더만 보면 되기 때문입니다.
   return `<header>
-  <a href="/" class="btn">← 폴더 목록</a>
   <h1>${esc(folder)}</h1>
   <span class="muted">${files.length}장</span>
 </header>
@@ -314,8 +349,7 @@ function galleryPage(folder, files, allFolders) {
   <button class="btn" id="none">선택 해제</button>
   <span class="count" id="count">0장 선택</span>
   <button class="btn primary" id="dl" disabled>⬇️ 선택한 사진 받기</button>
-  <input type="text" id="dest" list="folders" placeholder="옮길 폴더 이름" style="width:150px">
-  <datalist id="folders">${options}</datalist>
+  <input type="text" id="dest" placeholder="옮길 폴더 이름" style="width:150px">
   <button class="btn" id="move" disabled>📂 옮기기</button>
   <button class="btn danger" id="del" disabled>🗑️ 삭제</button>
 </div>

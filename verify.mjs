@@ -281,6 +281,13 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   ok('삭제 실패 시 반응으로 대체', mc.includes("message.react('✅')"));
 }
 
+// 6l) /갤러리 가 이 채널의 폴더를 기본값으로 쓰는가
+{
+  const ic = fs.readFileSync('./src/images/commands.js', 'utf8');
+  ok('/갤러리 기본값 = 이 채널 폴더', ic.includes('resolveFolder(interaction.channel, interaction.channelId)'));
+  ok('/갤러리 가 폴더 목록으로 보내지 않음', !ic.includes('config.images.webPublicUrl;'));
+}
+
 // 7) 유튜브 링크 감지
 const { findYoutubeLink } = await import('./src/music/commands.js');
 ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !== null);
@@ -291,10 +298,34 @@ const { startWebServer } = await import('./src/web/server.js');
 const server = await startWebServer();
 const base = 'http://127.0.0.1:38473';
 const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
-// 보기·내려받기는 누구나 (친구들이 링크만 열면 되도록)
-const r = await fetch(base);
-ok('암호 없이 열람 가능 (200)', r.status === 200, String(r.status));
-ok('갤러리 HTML 렌더', (await r.text()).includes('이미지 갤러리'));
+// 루트: 안내만. 폴더 이름이 새어나가면 안 됩니다.
+{
+  const r = await fetch(base);
+  ok('루트는 암호 없이 열림 (200)', r.status === 200, String(r.status));
+  const html = await r.text();
+  ok('루트에 안내 문구', html.includes('/갤러리'));
+  ok('루트에 폴더 이름 노출 없음', !html.includes('/f/'), '폴더 링크가 보이면 실패');
+}
+
+// 폴더 목록: 소유자 전용 (브라우저 로그인창을 띄우는 401)
+{
+  const noAuth = await fetch(base + '/folders');
+  ok('폴더 목록: 암호 없으면 401', noAuth.status === 401, String(noAuth.status));
+  ok('폴더 목록: 로그인창 유도 헤더 있음', Boolean(noAuth.headers.get('www-authenticate')));
+  const withAuth = await fetch(base + '/folders', { headers: { Authorization: auth } });
+  ok('폴더 목록: 맞는 암호면 200', withAuth.status === 200, String(withAuth.status));
+  ok('폴더 목록 페이지 렌더', (await withAuth.text()).includes('폴더 목록'));
+}
+
+// 폴더 안 갤러리: 누구나 (친구들이 링크만 열면 되도록)
+{
+  const g = await fetch(base + '/f/' + encodeURIComponent('테스트폴더'));
+  ok('폴더 갤러리는 암호 없이 200', g.status === 200, String(g.status));
+  const html = await g.text();
+  ok('갤러리에 뒤로가기 버튼 없음', !html.includes('← 폴더 목록'));
+  ok('갤러리에 다른 폴더 이름 목록 없음', !html.includes('<datalist'));
+}
+
 ok('경로탈출 요청 차단', (await fetch(base + '/img/..%2f..%2f/etc')).status >= 400);
 
 // 되돌릴 수 없는 작업(삭제·이동)은 암호로 막힘

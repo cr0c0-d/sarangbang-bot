@@ -98,20 +98,23 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('갤러리')
-      .setDescription('사진을 여러 장 골라서 한 번에 받을 수 있는 웹페이지 주소를 알려줍니다')
+      .setDescription('이 채널의 사진을 여러 장 골라 한 번에 받을 수 있는 주소를 알려줍니다')
       .addStringOption((o) =>
-        o.setName('폴더').setDescription('바로 열 폴더 이름 (비우면 폴더 목록)').setRequired(false)
+        o.setName('폴더').setDescription('다른 폴더를 보려면 이름 입력 (비우면 이 채널)').setRequired(false)
       ),
     async execute(interaction) {
-      const folder = interaction.options.getString('폴더');
-      const url = folder
-        ? `${config.images.webPublicUrl}/f/${encodeURIComponent(folder)}`
-        : config.images.webPublicUrl;
+      // 기본은 **이 채널의 폴더**입니다.
+      // 폴더 목록은 소유자 전용이라, 여기서 목록 링크를 주면 친구들이 막힌 페이지로 갑니다.
+      const folder =
+        interaction.options.getString('폴더') ??
+        resolveFolder(interaction.channel, interaction.channelId);
+      const url = `${config.images.webPublicUrl}/f/${encodeURIComponent(folder)}`;
+
       // 보기·내려받기는 암호가 없습니다. 링크만 있으면 친구들도 바로 열 수 있습니다.
-      // 삭제·이동만 암호를 물어보므로 그건 굳이 안내하지 않습니다.
       await interaction.reply({
         content: [
-          `🖼️ ${url}`,
+          `🖼️ **${folder}** 폴더`,
+          url,
           '사진을 클릭해 여러 장 고르고 **⬇️ 선택한 사진 받기** 를 누르면 한 장씩 전부 저장됩니다.',
           '(Shift+클릭 으로 범위 선택, **전체 선택** 버튼도 있습니다)',
         ].join('\n'),
