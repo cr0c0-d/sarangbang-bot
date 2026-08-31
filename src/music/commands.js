@@ -1,16 +1,49 @@
 // 음악 기능: 슬래시 명령어 + "채팅방에 유튜브 링크 붙여넣기" 자동 감지
-import { SlashCommandBuilder, EmbedBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
+import { SlashCommandBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { getTracks, formatDuration } from './ytdlp.js';
+import { buildPanel, showPanel } from './panel.js';
 import { get as getSetting } from '../settings.js';
 
 // 유튜브 링크인지 판별. (youtube.com, youtu.be, music.youtube.com)
 const YOUTUBE_RE =
-  /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?|playlist\?|shorts\/|live\/)|youtu\.be\/)\S+/i;
+  /https?:\/\/(?:www\.|m\.|music\.)?(?:youtube\.com\/(?:watch\?|playlist\?|shorts\/|live\/)|youtu\.be\/)\S+/gi;
 
 export function findYoutubeLink(text) {
-  return text.match(YOUTUBE_RE)?.[0] ?? null;
+  return findYoutubeLinks(text)[0] ?? null;
+}
+
+/**
+ * 메시지 안의 유튜브 링크를 **전부** 찾습니다.
+ * 한 번에 여러 곡을 붙여넣는 경우가 많아서, 첫 번째만 보면 나머지가 조용히 무시됩니다.
+ */
+export function findYoutubeLinks(text) {
+  // /g 플래그가 붙은 정규식은 lastIndex 를 들고 다니므로 매번 초기화합니다.
+  YOUTUBE_RE.lastIndex = 0;
+  const found = String(text ?? '').match(YOUTUBE_RE) ?? [];
+  // 같은 링크를 두 번 붙여넣은 경우는 한 번만 넣습니다.
+  return [...new Set(found)];
+}
+
+/**
+ * 서버별로 작업을 한 줄로 세웁니다.
+ *
+ * 왜 필요한가: 링크 3개를 연달아 붙여넣으면 handleMusicMessage 가 3번 동시에 돌고,
+ * 각자 getTracks(수 초 소요)를 하느라 **먼저 보낸 링크가 나중에 대기열에 들어갈 수 있습니다.**
+ * 사용자는 보낸 순서대로 재생되기를 기대하므로 순서를 보장해야 합니다.
+ */
+const guildChains = new Map();
+
+function serialize(guildId, fn) {
+  const prev = guildChains.get(guildId) ?? Promise.resolve();
+  // 앞 작업이 실패해도 뒤 작업은 실행되어야 하므로 양쪽 핸들러에 같은 fn 을 답니다.
+  const next = prev.then(fn, fn);
+  guildChains.set(
+    guildId,
+    next.catch(() => {})
+  );
+  return next;
 }
 
 /**
@@ -54,7 +87,7 @@ function assertCanJoin(voiceChannel, guild) {
  * 슬래시 명령과 링크 자동감지 양쪽에서 같이 씁니다.
  * @returns {Promise<string>} 사용자에게 보여줄 결과 메시지
  */
-export async function playRequest({ query, guild, member, textChannel }) {
+export async function enqueue({ query, guild, member, textChannel }) {
   const voiceChannel = await resolveVoiceChannel(guild, member);
   assertCanJoin(voiceChannel, guild);
 
@@ -68,6 +101,13 @@ export async function playRequest({ query, guild, member, textChannel }) {
   const wasIdle = !audio.isPlaying;
   audio.add(tracks, member?.user?.tag ?? '알 수 없음');
   audio.playIfIdle();
+
+  return { tracks, wasIdle, audio };
+}
+
+/** 한 건을 넣고 사용자에게 보여줄 문구를 돌려줍니다. (/재생 명령용) */
+export async function playRequest(opts) {
+  const { tracks, wasIdle, audio } = await enqueue(opts);
 
   if (tracks.length > 1) {
     return `📃 재생목록에서 **${tracks.length}곡**을 대기열에 넣었습니다.`;
@@ -159,33 +199,91 @@ export const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName('대기열').setDescription('대기열을 봅니다'),
+    data: new SlashCommandBuilder()
+      .setName('대기열')
+      .setDescription('재생 목록을 보고 버튼으로 조작합니다'),
     async execute(interaction) {
       const audio = peekGuildAudio(interaction.guildId);
-      if (!audio || (!audio.current && audio.queue.length === 0)) {
-        return interaction.reply({ content: '대기열이 비어 있습니다.', flags: MessageFlags.Ephemeral });
+      if (audio) audio.textChannel = interaction.channel;
+      // 버튼이 달린 제어판을 새로 띄웁니다. 이후 곡이 바뀌면 이 메시지가 수정됩니다.
+      const sent = await interaction.reply({ ...buildPanel(audio), withResponse: true });
+      if (audio) {
+        audio.panelMessage = sent?.resource?.message ?? (await interaction.fetchReply().catch(() => null));
       }
+    },
+  },
 
-      const lines = [];
-      if (audio.current) {
-        lines.push(
-          `**지금 재생 중**\n${audio.current.track.title} (${formatDuration(audio.current.track.duration)})`
-        );
+  {
+    data: new SlashCommandBuilder().setName('이전곡').setDescription('직전에 재생한 곡으로 돌아갑니다'),
+    async execute(interaction) {
+      const audio = peekGuildAudio(interaction.guildId);
+      if (!audio || !audio.previous()) {
+        return interaction.reply({
+          content: '되돌아갈 이전 곡이 없습니다.',
+          flags: MessageFlags.Ephemeral,
+        });
       }
-      if (audio.queue.length > 0) {
-        const shown = audio.queue
-          .slice(0, 10)
-          .map((it, i) => `${i + 1}. ${it.track.title} (${formatDuration(it.track.duration)})`)
-          .join('\n');
-        const more = audio.queue.length > 10 ? `\n… 외 ${audio.queue.length - 10}곡` : '';
-        lines.push(`**대기열 (${audio.queue.length}곡)**\n${shown}${more}`);
-      }
+      await interaction.reply('⏮️ 이전 곡으로 돌아갑니다.');
+    },
+  },
 
-      const embed = new EmbedBuilder()
-        .setTitle('🎶 재생 대기열')
-        .setDescription(lines.join('\n\n'))
-        .setColor(0x5865f2);
-      await interaction.reply({ embeds: [embed] });
+  {
+    data: new SlashCommandBuilder()
+      .setName('대기열제거')
+      .setDescription('대기열에서 곡 하나를 뺍니다')
+      .addIntegerOption((o) =>
+        o.setName('번호').setDescription('/대기열 에 보이는 번호').setRequired(true).setMinValue(1)
+      ),
+    async execute(interaction) {
+      const audio = peekGuildAudio(interaction.guildId);
+      const item = audio?.removeAt(interaction.options.getInteger('번호'));
+      if (!item) {
+        return interaction.reply({
+          content: '그 번호의 곡이 없습니다. `/대기열` 로 번호를 확인해주세요.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      await interaction.reply(`🗑️ 대기열에서 뺐습니다: **${item.track.title}**`);
+      showPanel(audio, audio.textChannel);
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName('순서이동')
+      .setDescription('대기열에서 곡의 순번을 바꿉니다')
+      .addIntegerOption((o) =>
+        o.setName('번호').setDescription('옮길 곡의 현재 번호').setRequired(true).setMinValue(1)
+      )
+      .addIntegerOption((o) =>
+        o.setName('새번호').setDescription('옮길 위치 (1이면 맨 앞)').setRequired(true).setMinValue(1)
+      ),
+    async execute(interaction) {
+      const audio = peekGuildAudio(interaction.guildId);
+      const from = interaction.options.getInteger('번호');
+      const to = interaction.options.getInteger('새번호');
+      const item = audio?.moveTo(from, to);
+      if (!item) {
+        return interaction.reply({
+          content: '그 번호의 곡이 없습니다. `/대기열` 로 번호를 확인해주세요.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      const now = audio.queue.indexOf(item) + 1;
+      await interaction.reply(`↕️ **${item.track.title}** 을(를) ${now}번으로 옮겼습니다.`);
+      showPanel(audio, audio.textChannel);
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName('대기열비우기')
+      .setDescription('재생 중인 곡은 두고 대기열만 비웁니다'),
+    async execute(interaction) {
+      const audio = peekGuildAudio(interaction.guildId);
+      const n = audio?.clearQueue() ?? 0;
+      await interaction.reply(n > 0 ? `🧹 대기열 ${n}곡을 비웠습니다.` : '대기열이 이미 비어 있습니다.');
+      if (audio) showPanel(audio, audio.textChannel);
     },
   },
 
@@ -208,19 +306,46 @@ export async function handleMusicMessage(message) {
   const watched = getSetting(message.guildId, 'musicTextChannelId');
   if (watched && message.channelId !== watched) return false;
 
-  const link = findYoutubeLink(message.content);
-  if (!link) return false;
+  const links = findYoutubeLinks(message.content);
+  if (links.length === 0) return false;
 
-  try {
-    const msg = await playRequest({
-      query: link,
-      guild: message.guild,
-      member: message.member,
-      textChannel: message.channel,
-    });
-    await message.reply(msg);
-  } catch (err) {
-    await message.reply(`⚠️ ${err.message}`).catch(() => {});
-  }
+  // 이 메시지의 처리를 통째로 줄 세웁니다.
+  // 링크 여러 개를 연달아 보내도 **보낸 순서대로** 대기열에 들어갑니다.
+  serialize(message.guildId, async () => {
+    const added = [];
+    const failed = [];
+
+    for (const link of links) {
+      try {
+        const { tracks } = await enqueue({
+          query: link,
+          guild: message.guild,
+          member: message.member,
+          textChannel: message.channel,
+        });
+        added.push(...tracks);
+      } catch (err) {
+        failed.push(err.message);
+      }
+    }
+
+    if (added.length === 0) {
+      await message.reply(`⚠️ ${failed[0] ?? '재생할 수 없습니다.'}`).catch(() => {});
+      return;
+    }
+
+    // 링크 하나만 보낸 흔한 경우는 제어판이 어차피 뜨므로 조용히 반응만 남깁니다.
+    if (links.length === 1 && failed.length === 0) {
+      await message.react('✅').catch(() => {});
+      return;
+    }
+
+    const lines = [`➕ **${added.length}곡**을 대기열에 넣었습니다 (보낸 순서대로).`];
+    if (failed.length > 0) {
+      lines.push(`⚠️ ${failed.length}개는 실패했습니다: ${failed[0]}`);
+    }
+    await message.reply(lines.join('\n')).catch(() => {});
+  });
+
   return true;
 }

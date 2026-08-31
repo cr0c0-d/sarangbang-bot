@@ -18,6 +18,7 @@ import {
 import { config } from '../config.js';
 import { createStream } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
+import { showPanel } from '../music/panel.js';
 
 /** @type {Map<string, GuildAudio>} */
 const registry = new Map();
@@ -51,11 +52,16 @@ export class GuildAudio {
 
     /** @type {{track: object, requestedBy: string}[]} */
     this.queue = [];
+    /** 이전곡 기능을 위한 재생 기록 (최근 30곡) */
+    this.history = [];
+    /** 다음 곡으로 넘어갈 때의 의도. requestPlay() 참고 */
+    this.nextIntent = null;
     this.current = null;
     this.killCurrent = null;
     this.loop = false;
     this.volume = 1;
-    this.textChannel = null; // "지금 재생 중" 같은 알림을 보낼 곳
+    this.textChannel = null; // 제어판을 띄울 곳
+    this.panelMessage = null; // 띄워둔 제어판 메시지 (곡이 바뀌면 이걸 수정해서 재사용)
     this.leaveTimer = null;
     this.ttsChain = Promise.resolve(); // TTS를 한 번에 하나씩만 말하도록 줄 세우기
     this.destroyed = false;
@@ -127,6 +133,10 @@ export class GuildAudio {
     this.cancelLeaveTimer();
   }
 
+  get isPaused() {
+    return this.musicPlayer.state.status === AudioPlayerStatus.Paused;
+  }
+
   get isPlaying() {
     const s = this.musicPlayer.state.status;
     return (
@@ -140,17 +150,57 @@ export class GuildAudio {
     if (this.musicPlayer.state.status === AudioPlayerStatus.Idle) this.playNext();
   }
 
-  playNext() {
+  /**
+   * 곡을 넘길 때의 "의도"를 명시적으로 전달합니다.
+   *
+   * 왜 필요한가: 곡이 끝나는 것과, 사용자가 /다음 을 누른 것과, /이전곡 을 누른 것은
+   * 전부 musicPlayer 를 Idle 로 만들어 같은 경로를 타지만, 해야 할 일이 다릅니다.
+   *   auto     — 자연 종료. 반복재생이 켜져 있으면 같은 곡을 다시
+   *   next     — 사용자가 건너뜀. 반복재생이라도 다음 곡으로 가야 함
+   *   previous — 현재 곡은 대기열 앞으로 되돌리고, 기록에서 이전 곡을 꺼냄
+   * 추측(재생 시간 같은 것)으로 구분하면 반드시 어긋납니다.
+   */
+  requestPlay(intent) {
+    this.nextIntent = intent;
+    if (this.musicPlayer.state.status === AudioPlayerStatus.Idle) {
+      this.nextIntent = null;
+      this.playNext(intent);
+    } else {
+      // stop() → Idle 이벤트 → onTrackEnd() 가 nextIntent 를 읽어 갑니다.
+      this.musicPlayer.stop(true);
+    }
+  }
+
+  pushHistory(item) {
+    this.history.push(item);
+    if (this.history.length > 30) this.history.shift();
+  }
+
+  playNext(intent = 'auto') {
     this.killCurrent?.();
     this.killCurrent = null;
 
-    if (this.loop && this.current) {
-      this.queue.unshift(this.current);
+    const outgoing = this.current;
+    this.current = null;
+
+    if (outgoing) {
+      if (intent === 'previous') {
+        // 이전 곡으로 돌아가므로 현재 곡은 대기열 맨 앞으로 되돌립니다.
+        this.queue.unshift(outgoing);
+      } else if (this.loop && intent === 'auto') {
+        this.queue.unshift(outgoing);
+      } else {
+        this.pushHistory(outgoing);
+      }
+    }
+
+    if (intent === 'previous') {
+      const prev = this.history.pop();
+      if (prev) this.queue.unshift(prev);
     }
 
     const item = this.queue.shift();
     if (!item) {
-      this.current = null;
       this.scheduleLeave();
       return;
     }
@@ -164,7 +214,8 @@ export class GuildAudio {
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
       this.musicPlayer.play(resource);
-      this.notify('▶️ 재생 중: **' + item.track.title + '**');
+      // 텍스트 알림 대신 버튼이 달린 제어판을 보여줍니다. (기존 제어판이 있으면 수정)
+      showPanel(this, this.textChannel);
     } catch (err) {
       console.error('[music] 스트림 생성 실패:', err);
       this.notify('⚠️ **' + item.track.title + '** 을(를) 재생할 수 없어 건너뜁니다.\n' + err.message);
@@ -174,34 +225,76 @@ export class GuildAudio {
 
   onTrackEnd() {
     if (this.destroyed) return;
-    if (this.queue.length > 0 || this.loop) this.playNext();
-    else {
+    const intent = this.nextIntent ?? 'auto';
+    this.nextIntent = null;
+
+    // 이전곡 요청은 대기열이 비어 있어도 처리해야 합니다 (기록에서 꺼내오므로).
+    if (intent === 'previous' || this.queue.length > 0 || (this.loop && this.current)) {
+      this.playNext(intent);
+    } else {
       this.killCurrent?.();
       this.killCurrent = null;
+      if (this.current) this.pushHistory(this.current);
       this.current = null;
       this.scheduleLeave();
     }
   }
 
+  /** 다음 곡으로. 반복재생이 켜져 있어도 넘어갑니다. */
   skip() {
     const skipped = this.current;
-    // stop()을 부르면 Idle 이벤트가 떠서 다음 곡으로 자동으로 넘어갑니다.
-    // 반복재생 중이면 "건너뛰기"가 같은 곡을 또 트는 게 되므로 잠깐 꺼둡니다.
-    const wasLoop = this.loop;
-    this.loop = false;
-    this.current = null;
-    this.musicPlayer.stop(true);
-    this.loop = wasLoop;
+    this.requestPlay('next');
     return skipped;
+  }
+
+  /** 이전 곡으로. 되돌아갈 기록이 없으면 아무것도 하지 않고 false 를 돌려줍니다. */
+  previous() {
+    if (this.history.length === 0) return false;
+    this.requestPlay('previous');
+    return true;
   }
 
   stop() {
     this.queue = [];
     this.loop = false;
+    if (this.current) this.pushHistory(this.current);
     this.current = null;
+    this.nextIntent = null;
     this.musicPlayer.stop(true);
     this.killCurrent?.();
     this.killCurrent = null;
+  }
+
+  // ── 대기열 편집 ──────────────────────────────────────────
+  // 사용자에게 보이는 번호는 1부터 시작합니다. 여기서 0-based 로 바꿉니다.
+
+  /** @returns {object|null} 지운 항목 */
+  removeAt(pos) {
+    const i = pos - 1;
+    if (i < 0 || i >= this.queue.length) return null;
+    return this.queue.splice(i, 1)[0];
+  }
+
+  /** 곡을 다른 순번으로 옮깁니다. @returns {object|null} 옮긴 항목 */
+  moveTo(from, to) {
+    const fi = from - 1;
+    if (fi < 0 || fi >= this.queue.length) return null;
+    const [item] = this.queue.splice(fi, 1);
+    // 범위를 벗어난 목표 위치는 양 끝으로 붙입니다. (사용자가 큰 숫자를 넣어도 동작)
+    const ti = Math.max(0, Math.min(this.queue.length, to - 1));
+    this.queue.splice(ti, 0, item);
+    return item;
+  }
+
+  /** 이 곡을 바로 다음에 재생하도록 맨 앞으로 올립니다. */
+  bringToFront(pos) {
+    return this.moveTo(pos, 1);
+  }
+
+  clearQueue() {
+    const n = this.queue.length;
+    this.queue = [];
+    return n;
   }
 
   pause() {
@@ -287,7 +380,10 @@ export class GuildAudio {
     this.destroyed = true;
     this.cancelLeaveTimer();
     this.queue = [];
+    this.history = [];
+    this.nextIntent = null;
     this.current = null;
+    this.panelMessage = null;
     this.killCurrent?.();
     this.killCurrent = null;
     this.musicPlayer.stop(true);

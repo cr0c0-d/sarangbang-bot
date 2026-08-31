@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 20개 로드', allCommands.length === 20, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 24개 로드', allCommands.length === 24, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기']) {
+for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -179,6 +179,80 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
     friendlyError('ERROR: Video unavailable').includes('재생할 수 없는 영상'));
 }
 
+// 6g) 한 메시지의 여러 링크를 전부 찾는가
+{
+  const { findYoutubeLinks } = await import('./src/music/commands.js');
+  const many = findYoutubeLinks('첫곡 https://youtu.be/aaaaaaaaaaa 둘째 https://www.youtube.com/watch?v=bbbbbbbbbbb 끝');
+  ok('여러 링크 전부 감지 (2개)', many.length === 2, many.join(' | '));
+  const dup = findYoutubeLinks('https://youtu.be/aaa https://youtu.be/aaa');
+  ok('같은 링크 중복 제거', dup.length === 1);
+  ok('링크 없으면 빈 배열', findYoutubeLinks('링크 없음').length === 0);
+}
+
+// 6h) 제어판 구성 (버튼/드롭다운)
+{
+  const { buildPanel } = await import('./src/music/panel.js');
+  const fake = {
+    current: { track: { title: '지금곡', duration: 200, thumbnail: null } },
+    queue: [
+      { track: { title: '다음곡A', duration: 100 } },
+      { track: { title: '다음곡B', duration: 150 } },
+    ],
+    history: [{ track: { title: '지난곡' } }],
+    loop: false,
+    isPaused: false,
+  };
+  const panel = buildPanel(fake);
+  const json = JSON.stringify(panel.components.map((r) => r.toJSON()));
+  for (const id of ['m:prev', 'm:toggle', 'm:next', 'm:loop', 'm:stop', 'm:top', 'm:del', 'm:refresh']) {
+    ok(`제어판 ${id} 있음`, json.includes(id));
+  }
+  ok('대기열이 임베드에 표시됨', JSON.stringify(panel.embeds[0].toJSON()).includes('다음곡A'));
+
+  const empty = buildPanel(null);
+  ok('재생 중 없을 때도 제어판 생성', empty.components.length >= 1);
+}
+
+// 6i) 이미지: 채널 지정이 없으면 전부 저장 (기본값 반전)
+{
+  const st = await import('./src/settings.js');
+  const G = 'imgguild';
+  // .env 에 IMAGE_CHANNEL_ID 가 있으므로 그 채널만 허용됩니다
+  ok('.env 지정 채널은 허용', st.imageChannelAllowed(G, '222222222222222222'));
+  ok('.env 지정 밖의 채널은 거부', !st.imageChannelAllowed(G, '999999999999999999'));
+  ok('imagesEnabled 는 항상 true', st.imagesEnabled() === true);
+}
+
+// 6j) 대기열 편집 로직 (제거 / 순서이동 / 비우기)
+{
+  const { GuildAudio } = await import('./src/audio/guild-audio.js');
+  const a = new GuildAudio({ id: 'qtest' });
+  const T = (n) => ({ track: { title: n, duration: 100 }, requestedBy: 'me' });
+  a.queue = [T('1곡'), T('2곡'), T('3곡'), T('4곡')];
+
+  const removed = a.removeAt(2);
+  ok('removeAt(2) 가 2번째를 뺌', removed.track.title === '2곡', removed.track.title);
+  ok('제거 후 3곡 남음', a.queue.length === 3);
+
+  const moved = a.moveTo(3, 1);
+  ok('moveTo(3,1) 로 맨 앞으로', a.queue[0].track.title === '4곡' && moved.track.title === '4곡',
+    a.queue.map((x) => x.track.title).join(','));
+
+  ok('범위 밖 번호는 null', a.removeAt(99) === null && a.moveTo(99, 1) === null);
+  ok('큰 새번호는 맨 뒤로 붙음',
+    a.moveTo(1, 999) !== null && a.queue[a.queue.length - 1].track.title === '4곡',
+    a.queue.map((x) => x.track.title).join(','));
+
+  ok('bringToFront 는 moveTo(pos,1) 과 같음', a.bringToFront(2) !== null);
+  ok('clearQueue 가 개수를 돌려주고 비움', a.clearQueue() === 3 && a.queue.length === 0);
+
+  // 이전곡: 기록이 없으면 아무것도 하지 않아야 함
+  ok('기록 없으면 previous() 가 false', a.previous() === false);
+  a.history.push(T('지난곡'));
+  ok('기록 있으면 previous() 가 true', a.previous() === true);
+  a.destroy();
+}
+
 // 7) 유튜브 링크 감지
 const { findYoutubeLink } = await import('./src/music/commands.js');
 ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !== null);
@@ -189,12 +263,21 @@ const { startWebServer } = await import('./src/web/server.js');
 const server = await startWebServer();
 const base = 'http://127.0.0.1:38473';
 const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
-ok('인증 없이 401', (await fetch(base)).status === 401);
-ok('틀린 암호 401', (await fetch(base, { headers: { Authorization: 'Basic ' + Buffer.from('u:wrong').toString('base64') } })).status === 401);
-const r = await fetch(base, { headers: { Authorization: auth } });
-ok('인증 후 200', r.status === 200);
+// 보기·내려받기는 누구나 (친구들이 링크만 열면 되도록)
+const r = await fetch(base);
+ok('암호 없이 열람 가능 (200)', r.status === 200, String(r.status));
 ok('갤러리 HTML 렌더', (await r.text()).includes('이미지 갤러리'));
-ok('경로탈출 요청 차단', (await fetch(base + '/img/..%2f..%2f/etc', { headers: { Authorization: auth } })).status >= 400);
+ok('경로탈출 요청 차단', (await fetch(base + '/img/..%2f..%2f/etc')).status >= 400);
+
+// 되돌릴 수 없는 작업(삭제·이동)은 암호로 막힘
+const delBody = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ folder: '기타', files: ['x.png'] }) };
+ok('삭제: 암호 없으면 401', (await fetch(base + '/api/delete', delBody)).status === 401);
+ok('삭제: 틀린 암호 401',
+  (await fetch(base + '/api/delete', { ...delBody, headers: { ...delBody.headers, Authorization: 'Basic ' + Buffer.from('u:wrong').toString('base64') } })).status === 401);
+ok('삭제: 맞는 암호는 통과 (401 아님)',
+  (await fetch(base + '/api/delete', { ...delBody, headers: { ...delBody.headers, Authorization: auth } })).status !== 401);
+ok('이동: 암호 없으면 401',
+  (await fetch(base + '/api/move', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ from: 'a', files: ['x.png'], to: 'b' }) })).status === 401);
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 

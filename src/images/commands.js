@@ -11,21 +11,16 @@ import {
   isImageAttachment,
   baseDir,
 } from './store.js';
-import { includesChannel, imagesEnabled } from '../settings.js';
+import { imageChannelAllowed } from '../settings.js';
 
 /**
  * 감시 대상 채널에 올라온 이미지를 저장합니다.
  * @returns {boolean} 처리했으면 true
  */
 export async function handleImageMessage(message) {
-  if (!imagesEnabled(message.guildId)) return false;
-
   // 스레드에 올라온 것도 부모 채널이 대상이면 받아줍니다.
   const parentId = message.channel?.isThread?.() ? message.channel.parentId : null;
-  const watched =
-    includesChannel(message.guildId, 'imageChannelIds', message.channelId) ||
-    (parentId && includesChannel(message.guildId, 'imageChannelIds', parentId));
-  if (!watched) return false;
+  if (!imageChannelAllowed(message.guildId, message.channelId, parentId)) return false;
 
   if (message.attachments.size === 0) return false;
   if (![...message.attachments.values()].some(isImageAttachment)) return false;
@@ -112,11 +107,14 @@ export const commands = [
       const url = folder
         ? `${config.images.webPublicUrl}/f/${encodeURIComponent(folder)}`
         : config.images.webPublicUrl;
-      const authNote = config.images.webToken
-        ? '\n로그인 창이 뜨면 **아이디는 아무거나**, 비밀번호에 `.env` 의 `WEB_TOKEN` 값을 넣으세요.'
-        : '';
+      // 보기·내려받기는 암호가 없습니다. 링크만 있으면 친구들도 바로 열 수 있습니다.
+      // 삭제·이동만 암호를 물어보므로 그건 굳이 안내하지 않습니다.
       await interaction.reply({
-        content: `🖼️ ${url}\n사진을 여러 장 고르고 **선택한 사진 받기**를 누르면 한 장씩 전부 저장됩니다.${authNote}`,
+        content: [
+          `🖼️ ${url}`,
+          '사진을 클릭해 여러 장 고르고 **⬇️ 선택한 사진 받기** 를 누르면 한 장씩 전부 저장됩니다.',
+          '(Shift+클릭 으로 범위 선택, **전체 선택** 버튼도 있습니다)',
+        ].join('\n'),
         flags: MessageFlags.Ephemeral,
       });
     },

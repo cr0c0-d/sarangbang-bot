@@ -53,7 +53,7 @@ export const KEYS = {
   },
   imageChannelIds: {
     label: '이미지 채널',
-    hint: '여기에 올린 사진을 폴더로 정리합니다 (여러 개 지정 가능)',
+    hint: '비워두면 봇이 볼 수 있는 모든 채널. 지정하면 그 채널들만',
     kind: 'text',
     multi: true,
     envValue: () => config.images.channelIds,
@@ -149,6 +149,21 @@ export function ttsEnabled(guildId) {
   return getWithSource(guildId, 'ttsTextChannelId').source !== 'none';
 }
 
-export function imagesEnabled(guildId) {
-  return getWithSource(guildId, 'imageChannelIds').source !== 'none';
+/**
+ * 이미지 정리는 **항상 켜져 있습니다.**
+ * 채널 목록은 "켜기/끄기"가 아니라 **필터**입니다.
+ *   목록이 비어 있으면  → 봇이 볼 수 있는 모든 채널의 이미지를 저장 (기본값)
+ *   목록이 있으면        → 그 채널들만 저장
+ * 소유자가 "기본적으로 다 업로드" 를 원했고, 봇이 볼 수 있는 채널은
+ * 디스코드 권한으로 이미 제한되므로 그게 자연스러운 경계입니다.
+ */
+export function imagesEnabled() {
+  return true;
+}
+
+/** 이 채널의 이미지를 저장해야 하는지. 목록이 비어 있으면 전부 저장합니다. */
+export function imageChannelAllowed(guildId, channelId, parentId = null) {
+  const { value, source } = getWithSource(guildId, 'imageChannelIds');
+  if (source === 'none') return true; // 지정 없음 = 전부
+  return value.includes(channelId) || (parentId ? value.includes(parentId) : false);
 }

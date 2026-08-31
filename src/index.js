@@ -15,6 +15,7 @@ import { initStore } from './images/store.js';
 import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
+import { handleMusicComponent } from './music/panel.js';
 
 const client = new Client({
   intents: [
@@ -47,6 +48,22 @@ client.once(Events.ClientReady, (c) => {
 // ── 슬래시 명령어 ───────────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  // 음악 제어판의 버튼·드롭다운. customId 가 'm:' 으로 시작합니다.
+  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+    if (!interaction.customId.startsWith('m:')) return;
+    try {
+      await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
+    } catch (err) {
+      console.error('[제어판]', err);
+      if (!interaction.replied && !interaction.deferred) {
+        await interaction
+          .reply({ content: `⚠️ ${err.message}`, flags: MessageFlags.Ephemeral })
+          .catch(() => {});
+      }
+    }
+    return;
+  }
+
   if (!interaction.isChatInputCommand()) return;
 
   const command = commandMap.get(interaction.commandName);

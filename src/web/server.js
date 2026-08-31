@@ -43,10 +43,14 @@ export function createWebServer() {
   app.disable('x-powered-by');
 
   // ── 인증 ──
-  // WEB_TOKEN 이 있으면 브라우저 기본 로그인 창으로 막습니다.
-  // 아이디는 아무거나, 비밀번호에 WEB_TOKEN 을 넣으면 됩니다.
-  app.use((req, res, next) => {
-    if (!config.images.webToken) return next();
+  // 보기·내려받기는 **누구나** 가능합니다. 링크를 아는 사람이면 그대로 열립니다.
+  // (소유자 요청: 친구들이 비개발자라서 로그인·암호 단계를 두면 아무도 안 씀)
+  //
+  // 다만 **삭제·이동·폴더생성은 되돌릴 수 없으므로** WEB_TOKEN 으로 막습니다.
+  // 공개 포트는 자동 스캐너에 금방 발견되는데, 그때 사진이 통째로 지워지면 답이 없습니다.
+  // 친구들은 이 기능을 쓸 일이 없고, 소유자만 한 번 암호를 넣으면 됩니다.
+  const requireToken = (req, res, next) => {
+    if (!config.images.webToken) return next(); // 암호를 안 걸었으면 그대로 통과
     const header = req.headers.authorization ?? '';
     const [scheme, value] = header.split(' ');
     if (scheme === 'Basic' && value) {
@@ -54,11 +58,8 @@ export function createWebServer() {
       const pass = decoded.slice(decoded.indexOf(':') + 1);
       if (safeCompare(pass, config.images.webToken)) return next();
     }
-    res
-      .set('WWW-Authenticate', 'Basic realm="Image Gallery", charset="UTF-8"')
-      .status(401)
-      .send('인증이 필요합니다. 비밀번호 칸에 .env 의 WEB_TOKEN 값을 입력하세요.');
-  });
+    res.status(401).json({ error: '관리 암호가 필요합니다. (.env 의 WEB_TOKEN)' });
+  };
 
   // ── 폴더 목록 ──
   app.get('/', async (req, res, next) => {
@@ -103,7 +104,7 @@ export function createWebServer() {
   });
 
   // ── 관리 API ──
-  app.post('/api/move', async (req, res, next) => {
+  app.post('/api/move', requireToken, async (req, res, next) => {
     try {
       const { from, files, to } = req.body ?? {};
       if (!Array.isArray(files) || files.length === 0) return res.status(400).json({ error: '파일이 없습니다.' });
@@ -115,7 +116,7 @@ export function createWebServer() {
     }
   });
 
-  app.post('/api/delete', async (req, res, next) => {
+  app.post('/api/delete', requireToken, async (req, res, next) => {
     try {
       const { folder, files } = req.body ?? {};
       if (!Array.isArray(files) || files.length === 0) return res.status(400).json({ error: '파일이 없습니다.' });
@@ -126,7 +127,7 @@ export function createWebServer() {
     }
   });
 
-  app.post('/api/folder', async (req, res, next) => {
+  app.post('/api/folder', requireToken, async (req, res, next) => {
     try {
       const name = await createFolder(req.body?.name);
       res.json({ name });
@@ -153,7 +154,21 @@ export function startWebServer() {
       );
       if (!config.images.webToken && config.images.webBind !== '127.0.0.1') {
         console.warn(
-          '[web] 경고: WEB_TOKEN 이 비어 있고 외부 접속이 열려 있습니다. 누구나 갤러리를 볼 수 있습니다.'
+          '[web] 경고: WEB_TOKEN 이 비어 있습니다. 사진 삭제·이동도 누구나 할 수 있습니다.'
+        );
+      }
+      // 외부에 열어놨는데 주소가 localhost 면 친구들은 그 링크를 열 수 없습니다.
+      // /갤러리 가 알려주는 주소가 곧 친구들이 받는 링크이므로, 여기서 미리 알려줍니다.
+      if (
+        config.images.webBind === '0.0.0.0' &&
+        /localhost|127\.0\.0\.1/.test(config.images.webPublicUrl)
+      ) {
+        console.warn(
+          [
+            '[web] 경고: 외부 접속은 열려 있는데 WEB_PUBLIC_URL 이 localhost 입니다.',
+            '      /갤러리 가 알려주는 주소를 친구들이 열 수 없습니다.',
+            `      .env 의 WEB_PUBLIC_URL 을 http://<서버IP>:${config.images.webPort} 로 바꿔주세요.`,
+          ].join('\n')
         );
       }
       resolve(server);
@@ -392,12 +407,36 @@ function galleryPage(folder, files, allFolders) {
     post('/api/delete', { folder: folder, files: Array.from(selected) });
   });
 
-  function post(url, body) {
+  // 보기·내려받기는 암호가 없습니다. 삭제·이동만 관리 암호를 요구합니다.
+  // 한 번 넣으면 이 브라우저 탭에서는 다시 묻지 않습니다.
+  function adminAuth(forget) {
+    if (forget) sessionStorage.removeItem('galleryToken');
+    var t = null;
+    try { t = sessionStorage.getItem('galleryToken'); } catch (e) {}
+    if (!t) {
+      t = window.prompt('관리 암호를 입력하세요 (봇 설정의 WEB_TOKEN)');
+      if (!t) return null;
+      try { sessionStorage.setItem('galleryToken', t); } catch (e) {}
+    }
+    return 'Basic ' + btoa('admin:' + t);
+  }
+
+  function post(url, body, retried) {
+    var auth = adminAuth(false);
+    if (!auth) return;
     fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: { 'Content-Type': 'application/json', 'Authorization': auth },
       body: JSON.stringify(body)
-    }).then(function (r) { return r.json(); }).then(function (j) {
+    }).then(function (r) {
+      if (r.status === 401) {
+        if (retried) { alert('암호가 틀렸습니다.'); return null; }
+        adminAuth(true);              // 저장된 암호를 버리고 다시 묻습니다
+        return post(url, body, true);
+      }
+      return r.json();
+    }).then(function (j) {
+      if (!j) return;
       if (j.error) alert(j.error); else location.reload();
     }).catch(function (e) { alert(e.message); });
   }
