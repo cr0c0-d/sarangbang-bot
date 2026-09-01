@@ -15,16 +15,6 @@ import { getWithSource } from './settings.js';
 
 const basicCommands = [
   {
-    data: new SlashCommandBuilder().setName('핑').setDescription('봇이 살아있는지 확인합니다'),
-    async execute(interaction) {
-      await interaction.reply({
-        content: `🏓 살아있습니다. 응답속도 ${Math.round(interaction.client.ws.ping)}ms`,
-        flags: MessageFlags.Ephemeral,
-      });
-    },
-  },
-
-  {
     data: new SlashCommandBuilder().setName('도움말').setDescription('쓸 수 있는 기능을 봅니다'),
     async execute(interaction) {
       const g = interaction.guildId;
@@ -35,7 +25,7 @@ const basicCommands = [
       const embed = new EmbedBuilder()
         .setTitle('🤖 봇 사용법')
         .setColor(0x5865f2)
-        .setDescription('채널은 `/채널설정` 으로 바꾸고, `/채널확인` 으로 지금 설정을 볼 수 있습니다.')
+        .setDescription('설정은 `/기능` 으로 켜고 끄고, `/채널설정` 으로 채널을 정합니다.')
         .addFields(
           {
             name: '🎵 음악',
@@ -45,9 +35,8 @@ const basicCommands = [
                 ? '아무 채팅방에 유튜브 링크를 붙여넣어도 재생됩니다.'
                 : `<#${musicText.value}> 에 유튜브 링크만 붙여넣어도 재생됩니다.`,
               '여러 링크를 한꺼번에 붙여넣어도 **보낸 순서대로** 대기열에 들어갑니다.',
-              '**`/대기열`** — 버튼으로 이전·다음·반복·정지, 드롭다운으로 순서변경·빼기 (추천)',
-              '`/다음` `/이전곡` `/정지` `/일시정지` `/이어재생` `/반복` `/나가기`',
-              '`/대기열제거 <번호>` `/순서이동 <번호> <새번호>` `/대기열비우기`',
+              '**`/대기열`** — 이전·다음·일시정지·반복·정지, 순서변경·빼기 **전부 버튼**입니다',
+              '`/순서이동 <번호> <새번호>` — 정밀 조작 · `/나가기` — 음성채널에서 나가기',
             ].join('\n'),
           },
           {
@@ -58,7 +47,8 @@ const basicCommands = [
                 : [
                     `<#${ttsText.value}> 에 글을 쓰면 음성채널에서 읽어줍니다.`,
                     '맨 앞에 `//` 를 붙이면 읽지 않습니다.',
-                    '`/읽어주기 켜기:false` — 끄기 · `/목소리` — 목소리 변경',
+                    '`/내목소리` — **사람마다 다른 목소리** (14종) · `/목소리` — 서버 기본값',
+                    '`/읽어주기 켜기:false` — 끄기',
                   ].join('\n'),
           },
           {
@@ -79,14 +69,14 @@ const basicCommands = [
                     '폴더 이름은 **채널 이름**을 그대로 씁니다.',
                     '특정 채널만 원하면 `/채널설정` 에서 "이미지 채널"을 지정하세요.',
                     '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
-                    '`/폴더목록` `/폴더확인` `/폴더 <이름>`',
+                    '`/폴더` — 이 채널의 저장 폴더 보기·바꾸기 · `/폴더목록` · `/정리` — 용량 관리',
                   ].join('\n')
                 : [
                     `${imageCh.value.map((id) => `<#${id}>`).join(' ')} 에 올린 사진만 정리합니다.`,
                     '폴더 이름은 기본적으로 **채널 이름**을 씁니다. (스레드면 스레드 이름)',
                     '`/폴더 <이름>` — 이 채널의 폴더를 다른 이름으로 바꾸기',
                     '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
-                    '`/폴더목록` `/폴더확인`',
+                    '`/폴더` `/폴더목록` `/정리`',
                   ].join('\n'),
           }
         );
@@ -101,7 +91,7 @@ const basicCommands = [
  * (명령어마다 직접 적으면 반드시 빠뜨리는 것이 생깁니다)
  *
  * index.js 가 이 값을 보고 꺼진 기능의 명령어를 막습니다.
- * `/기능` `/채널설정` `/핑` `/도움말` 은 태그가 없어 **항상 동작합니다** —
+ * `/기능` `/채널설정` `/도움말` 은 태그가 없어 **항상 동작합니다** —
  * 다 꺼놓고 다시 켤 방법이 없으면 안 되기 때문입니다.
  */
 const tag = (feature, cmds) => cmds.map((c) => ({ ...c, feature }));

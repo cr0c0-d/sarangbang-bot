@@ -197,30 +197,6 @@ export const commands = [
     },
   },
 
-  {
-    data: new SlashCommandBuilder()
-      .setName('목소리목록')
-      .setDescription('쓸 수 있는 목소리와 지금 내 설정을 봅니다'),
-    async execute(interaction) {
-      const mine = userVoice(interaction.guildId, interaction.user.id);
-      const server = guildVoice(interaction.guildId) ?? config.tts.voice;
-
-      const lines = VOICES.map((v) => {
-        const marks = [];
-        if (v.value === mine) marks.push('👤 내 목소리');
-        if (v.value === server) marks.push('🏠 서버 기본');
-        return `• **${v.label}** — ${v.note}${marks.length ? `  ← ${marks.join(', ')}` : ''}`;
-      }).join('\n');
-
-      await interaction.reply({
-        content:
-          `**쓸 수 있는 목소리 ${VOICES.length}종**\n${lines}\n\n` +
-          '`/내목소리` 로 내 목소리만 바꿀 수 있습니다. 비우고 실행하면 서버 기본값으로 돌아갑니다.\n' +
-          '"다국어" 목소리는 영어·일본어가 섞여도 자연스럽게 읽습니다.',
-        flags: MessageFlags.Ephemeral,
-      });
-    },
-  },
 ];
 
 /** 한국어 전용 목소리를 골랐을 때만 붙이는 경고. */

@@ -22,14 +22,19 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 30개 로드', allCommands.length === 30, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 17개 로드', allCommands.length === 17, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '정리']) {
+for (const need of ['채널설정', '재생', '대기열', '순서이동', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
+// 버튼으로 대체해 없앤 명령어들이 되살아나지 않았는지 (명령어 수 줄이기의 회귀 검사)
+for (const gone of ['핑', '다음', '정지', '일시정지', '이어재생', '반복', '이전곡',
+                    '대기열제거', '대기열비우기', '목소리목록', '폴더확인', '채널확인', '채널해제']) {
+  ok(`/${gone} 제거됨`, !names.includes(gone));
+}
 for (const c of allCommands) {
   const j = c.data.toJSON();
   if (typeof c.execute !== 'function') ok(`/${j.name} execute`, false);
@@ -380,13 +385,14 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
     ok(`/${name} 은 ${feature} 기능 소속`, byName.get(name)?.feature === feature, String(byName.get(name)?.feature));
   }
   // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다
-  for (const name of ['기능', '채널설정', '채널확인', '채널해제', '핑', '도움말']) {
+  for (const name of ['기능', '채널설정', '도움말']) {
     ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
   }
 
   const idx = fs.readFileSync('./src/index.js', 'utf8');
   ok('index.js: 명령어 중앙 차단', idx.includes('command.feature && !featureEnabled'));
   ok('index.js: 버튼 차단', idx.includes("isMusic ? 'music' : isTimer ? 'timer' :"));
+  ok('index.js: 채널 패널 라우팅', idx.includes("startsWith('c:')"));
   ok('index.js: f: 라우팅', idx.includes("startsWith('f:')"));
 
   for (const [file, key] of [

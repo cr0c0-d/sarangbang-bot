@@ -58,34 +58,43 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('폴더')
-      .setDescription('이 채널에 올라오는 이미지를 저장할 폴더를 지정합니다')
+      .setDescription('이 채널의 사진이 어느 폴더에 저장되는지 보고, 바꿉니다')
       .addStringOption((o) =>
-        o.setName('이름').setDescription('폴더 이름 (비우면 지정 해제)').setRequired(false)
+        o.setName('이름').setDescription('바꿀 폴더 이름 (비우면 현재 상태만 봅니다)').setRequired(false)
+      )
+      .addBooleanOption((o) =>
+        o
+          .setName('해제')
+          .setDescription('직접 지정한 폴더를 없애고 채널 이름으로 되돌립니다')
+          .setRequired(false)
       ),
     async execute(interaction) {
       const name = interaction.options.getString('이름');
-      if (!name) {
+      const reset = interaction.options.getBoolean('해제') ?? false;
+
+      if (reset) {
         clearChannelFolder(interaction.channelId);
-        return interaction.reply(
-          '📂 폴더 지정을 해제했습니다. 이제 채널 이름을 폴더로 씁니다.'
-        );
+        return interaction.reply('📂 폴더 지정을 해제했습니다. 이제 채널 이름을 폴더로 씁니다.');
       }
+
+      // 인자 없이 실행하면 지금 상태만 보여줍니다. (예전 /폴더확인 을 흡수)
+      if (!name) {
+        const now = resolveFolder(interaction.channel, interaction.channelId);
+        const how = explainFolder(interaction.channel, interaction.channelId);
+        return interaction.reply({
+          content: [
+            `현재 저장 폴더: **${now}**`,
+            `(${how})`,
+            `저장 위치: \`${baseDir()}\``,
+            '',
+            '바꾸려면 `/폴더 이름:<새이름>` · 되돌리려면 `/폴더 해제:true`',
+          ].join('\n'),
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
       const safe = setChannelFolder(interaction.channelId, name);
       await interaction.reply(`📂 이 채널의 이미지는 이제 **${safe}** 폴더에 저장됩니다.`);
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder()
-      .setName('폴더확인')
-      .setDescription('지금 이 채널의 이미지가 어디에 저장되는지 봅니다'),
-    async execute(interaction) {
-      const now = resolveFolder(interaction.channel, interaction.channelId);
-      const how = explainFolder(interaction.channel, interaction.channelId);
-      await interaction.reply({
-        content: `현재 저장 폴더: **${now}**\n(${how})\n저장 위치: \`${baseDir()}\``,
-        flags: MessageFlags.Ephemeral,
-      });
     },
   },
 

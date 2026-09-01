@@ -56,7 +56,7 @@ async function resolveVoiceChannel(guild, member) {
     const ch = await guild.channels.fetch(configured).catch(() => null);
     if (!ch?.isVoiceBased?.()) {
       throw new Error(
-        '지정된 음악 음성채널을 찾을 수 없습니다. /채널확인 으로 설정을 보고 /채널설정 으로 다시 지정해주세요.'
+        '지정된 음악 음성채널을 찾을 수 없습니다. /채널설정 으로 다시 지정해주세요.'
       );
     }
     return ch;
@@ -119,14 +119,6 @@ export async function playRequest(opts) {
 
 // ── 슬래시 명령어들 ─────────────────────────────────────────
 
-function requireAudio(interaction) {
-  const audio = peekGuildAudio(interaction.guildId);
-  if (!audio || (!audio.isPlaying && audio.queue.length === 0)) {
-    return null;
-  }
-  return audio;
-}
-
 export const commands = [
   {
     data: new SlashCommandBuilder()
@@ -149,56 +141,6 @@ export const commands = [
   },
 
   {
-    data: new SlashCommandBuilder().setName('다음').setDescription('현재 곡을 건너뜁니다'),
-    async execute(interaction) {
-      const audio = requireAudio(interaction);
-      if (!audio) return interaction.reply({ content: '재생 중인 곡이 없습니다.', flags: MessageFlags.Ephemeral });
-      const skipped = audio.skip();
-      await interaction.reply(`⏭️ 건너뜀: **${skipped?.track?.title ?? '알 수 없음'}**`);
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder().setName('정지').setDescription('재생을 멈추고 대기열을 비웁니다'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      if (!audio) return interaction.reply({ content: '재생 중인 곡이 없습니다.', flags: MessageFlags.Ephemeral });
-      audio.stop();
-      await interaction.reply('⏹️ 재생을 멈추고 대기열을 비웠습니다.');
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder().setName('일시정지').setDescription('일시정지'),
-    async execute(interaction) {
-      const audio = requireAudio(interaction);
-      if (!audio) return interaction.reply({ content: '재생 중인 곡이 없습니다.', flags: MessageFlags.Ephemeral });
-      audio.pause();
-      await interaction.reply('⏸️ 일시정지했습니다.');
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder().setName('이어재생').setDescription('일시정지 해제'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      if (!audio) return interaction.reply({ content: '재생 중인 곡이 없습니다.', flags: MessageFlags.Ephemeral });
-      audio.resume();
-      await interaction.reply('▶️ 다시 재생합니다.');
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder().setName('반복').setDescription('현재 곡 반복재생을 켜고 끕니다'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      if (!audio) return interaction.reply({ content: '재생 중인 곡이 없습니다.', flags: MessageFlags.Ephemeral });
-      audio.loop = !audio.loop;
-      await interaction.reply(audio.loop ? '🔁 반복재생 켜짐' : '➡️ 반복재생 꺼짐');
-    },
-  },
-
-  {
     data: new SlashCommandBuilder()
       .setName('대기열')
       .setDescription('재생 목록을 보고 버튼으로 조작합니다'),
@@ -210,41 +152,6 @@ export const commands = [
       if (audio) {
         audio.panelMessage = sent?.resource?.message ?? (await interaction.fetchReply().catch(() => null));
       }
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder().setName('이전곡').setDescription('직전에 재생한 곡으로 돌아갑니다'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      if (!audio || !audio.previous()) {
-        return interaction.reply({
-          content: '되돌아갈 이전 곡이 없습니다.',
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      await interaction.reply('⏮️ 이전 곡으로 돌아갑니다.');
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder()
-      .setName('대기열제거')
-      .setDescription('대기열에서 곡 하나를 뺍니다')
-      .addIntegerOption((o) =>
-        o.setName('번호').setDescription('/대기열 에 보이는 번호').setRequired(true).setMinValue(1)
-      ),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      const item = audio?.removeAt(interaction.options.getInteger('번호'));
-      if (!item) {
-        return interaction.reply({
-          content: '그 번호의 곡이 없습니다. `/대기열` 로 번호를 확인해주세요.',
-          flags: MessageFlags.Ephemeral,
-        });
-      }
-      await interaction.reply(`🗑️ 대기열에서 뺐습니다: **${item.track.title}**`);
-      showPanel(audio, audio.textChannel);
     },
   },
 
@@ -272,18 +179,6 @@ export const commands = [
       const now = audio.queue.indexOf(item) + 1;
       await interaction.reply(`↕️ **${item.track.title}** 을(를) ${now}번으로 옮겼습니다.`);
       showPanel(audio, audio.textChannel);
-    },
-  },
-
-  {
-    data: new SlashCommandBuilder()
-      .setName('대기열비우기')
-      .setDescription('재생 중인 곡은 두고 대기열만 비웁니다'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      const n = audio?.clearQueue() ?? 0;
-      await interaction.reply(n > 0 ? `🧹 대기열 ${n}곡을 비웠습니다.` : '대기열이 이미 비어 있습니다.');
-      if (audio) showPanel(audio, audio.textChannel);
     },
   },
 

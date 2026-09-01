@@ -21,6 +21,7 @@ import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
 import { handleFeatureComponent } from './feature-commands.js';
+import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES } from './settings.js';
 
 /** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
@@ -90,7 +91,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isTimer = interaction.customId.startsWith('t:');
     const isFeature = interaction.customId.startsWith('f:');
     const isImage = interaction.customId.startsWith('g:');
-    if (!isMusic && !isTimer && !isFeature && !isImage) return;
+    const isChannel = interaction.customId.startsWith('c:');
+    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel) return;
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
     const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : null;
@@ -102,6 +104,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
       if (isFeature) await handleFeatureComponent(interaction);
+      else if (isChannel) await handleChannelComponent(interaction);
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
