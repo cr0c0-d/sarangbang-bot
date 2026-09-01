@@ -25,6 +25,8 @@ import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
 import { initPolls, handlePollComponent, handlePollModal, restorePollDeadlines, flushPolls } from './poll/index.js';
+import { handleMovieComponent } from './movie/index.js';
+import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES, inRole } from './settings.js';
@@ -68,6 +70,8 @@ client.once(Events.ClientReady, (c) => {
   // 자동 마감 예약을 되살립니다. setTimeout 은 재시작하면 사라지므로,
   // 저장해둔 마감 시각을 보고 다시 겁니다. 이미 지난 것은 바로 닫힙니다.
   if (inRole('poll')) restorePollDeadlines(c);
+  // TMDB 의 OTT 번호가 바뀌었는지 한 번 대조합니다. 조용히 틀리는 것보다 낫습니다.
+  if (inRole('movie') && hasTmdbKey()) checkProviders();
   // 재시작 전에 띄워둔 제어판을 정리합니다.
   //   음악 제어판 → 지웁니다 (재시작하면 음악이 이어지지 않으므로 "재생 중" 이 거짓말)
   //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)
@@ -126,20 +130,22 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isImage = interaction.customId.startsWith('g:');
     const isChannel = interaction.customId.startsWith('c:');
     const isPoll = interaction.customId.startsWith('v:');
-    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel && !isPoll) return;
+    const isMovie = interaction.customId.startsWith('mv:');
+    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel && !isPoll && !isMovie) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (
       (isMusic && !inRole('music')) ||
       (isTimer && !inRole('timer')) ||
       (isImage && !inRole('images')) ||
-      (isPoll && !inRole('poll'))
+      (isPoll && !inRole('poll')) ||
+      (isMovie && !inRole('movie'))
     ) {
       return;
     }
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : isPoll ? 'poll' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -151,6 +157,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (isChannel) await handleChannelComponent(interaction);
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
+      else if (isMovie) await handleMovieComponent(interaction);
       else if (isPoll) await handlePollComponent(interaction);
       // 지난 곡 보기·담기는 **재생 중이 아니어도** 되어야 하므로 먼저 가로챕니다.
       // handleMusicComponent 는 재생 중이 아니면 바로 되돌려보냅니다.

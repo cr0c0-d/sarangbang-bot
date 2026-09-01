@@ -98,6 +98,7 @@ export const FEATURES = {
   timer: { label: '타이머', emoji: '⏰', hint: '/타이머 · /알람등록' },
   images: { label: '이미지 정리', emoji: '🖼️', hint: '사진 자동 저장 (갤러리 열람은 계속 됩니다)' },
   poll: { label: '투표', emoji: '🗳️', hint: '/투표 로 선택지를 만들고 버튼으로 고르기' },
+  movie: { label: '영화 고르기', emoji: '🎬', hint: '/영화 로 한 편 뽑기 · 투표 만들기 (TMDB)' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */
@@ -195,6 +196,26 @@ export function setVolume(guildId, kind, percent) {
   if (Object.keys(store[guildId]).length === 0) delete store[guildId];
   save();
   return v;
+}
+
+// ── 영화: 이 서버에서 쓰는 OTT ─────────────────────────────
+//
+// 안 보는 OTT 를 보여주면 "볼 수 없는 작품" 만 나옵니다. 그렇다고 코드에 박아두면
+// 구독을 바꿀 때마다 배포해야 합니다. 그래서 서버별로 저장합니다.
+// **아무것도 안 고른 서버는 전체**로 봅니다 (설정 전에도 동작해야 합니다).
+
+export function movieProviders(guildId) {
+  return store[guildId]?.movieProviders ?? [];
+}
+
+export function setMovieProviders(guildId, ids) {
+  const clean = [...new Set(ids.map(Number).filter((n) => Number.isFinite(n)))];
+  store[guildId] ??= {};
+  if (clean.length === 0) delete store[guildId].movieProviders;
+  else store[guildId].movieProviders = clean;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return clean;
 }
 
 export async function initSettings() {

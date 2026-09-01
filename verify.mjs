@@ -24,11 +24,11 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 14개 로드', allCommands.length === 14, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 15개 로드', allCommands.length === 15, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -438,7 +438,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 5개', Object.keys(st.FEATURES).length === 5, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 6개', Object.keys(st.FEATURES).length === 6, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -797,6 +797,65 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   fs.rmSync('./data/verify-data/polls.json', { force: true });
 }
 
+// 6v) 영화 고르기
+{
+  const tmdb = await import('./src/movie/tmdb.js');
+  const mv = fs.readFileSync('./src/movie/index.js', 'utf8');
+
+  // ★ provider ID 는 추측하면 안 됩니다. 기획안은 쿠팡플레이를 356 으로 적었는데
+  //   356 은 실제로 wavve 입니다. 아래는 2026-09-01 실측값입니다.
+  const byName = Object.fromEntries(tmdb.PROVIDERS.map((p) => [p.name, p.id]));
+  ok('넷플릭스 = 8', byName['넷플릭스'] === 8);
+  ok('쿠팡플레이 = 1881 (356 아님)', byName['쿠팡플레이'] === 1881, String(byName['쿠팡플레이']));
+  ok('356 은 wavve', byName['wavve'] === 356);
+  ok('TVING = 1883', byName['TVING'] === 1883);
+  ok('쿠팡플레이는 자료 없음 표시', tmdb.PROVIDERS.find((p) => p.id === 1881)?.sparse === true);
+
+  // 영화와 드라마는 장르 번호가 다릅니다. 섞어 뽑으므로 둘 다 들고 있어야 합니다.
+  const action = tmdb.genreByKey('action');
+  ok('액션은 영화·드라마 번호가 다름', action.movie === '28' && action.tv === '10759');
+  ok('드라마에 없는 장르는 tv 가 null', tmdb.genreByKey('horror').tv === null);
+  ok('장르 12개', tmdb.GENRES.length === 12, String(tmdb.GENRES.length));
+  ok('장르 키 중복 없음', new Set(tmdb.GENRES.map((g) => g.key)).size === tmdb.GENRES.length);
+
+  ok('포스터 주소 조립', tmdb.posterUrl('/a.jpg') === 'https://image.tmdb.org/t/p/w500/a.jpg');
+  ok('포스터 없으면 null', tmdb.posterUrl(null) === null);
+  ok('키 없으면 꺼둠 (봇 전체가 죽으면 안 됨)', typeof tmdb.hasKey === 'function' && mv.includes('if (!hasKey())'));
+  ok('키 오류는 무엇을 할지까지 안내', tmdb.friendlyError(401).includes('TMDB_READ_TOKEN'));
+  ok('요청 과다·서버 오류도 구분', tmdb.friendlyError(429).includes('잠시') && tmdb.friendlyError(503).includes('TMDB'));
+
+  // ★ 명령어는 하나뿐이어야 합니다. 기획안의 /영화뽑기 + /영화투표 로 되돌리지 말 것.
+  const movieCmds = (await import('./src/movie/index.js')).commands;
+  ok('명령어는 /영화 하나뿐', movieCmds.length === 1 && movieCmds[0].data.toJSON().name === '영화');
+  ok('/영화 는 칸이 없음 (전부 버튼)', (movieCmds[0].data.toJSON().options ?? []).length === 0);
+
+  // 고른 값은 customId 에 싣습니다. 메모리 Map 에 두면 재시작에 날아갑니다.
+  ok('고른 값을 customId 에 실음', mv.includes('mv:draw:${gk}:${gp}') && mv.includes('function parseId('));
+  ok('상태를 메모리에 두지 않음', !/new Map\(\)/.test(mv));
+  ok('customId 가 100자 제한 안에 들어감',
+    `mv:again:documentary:${tmdb.PROVIDERS.map((p) => p.id).join(',')}:tv-999999`.length < 100);
+
+  ok('다시 뽑기는 직전 것만 제외', mv.includes('it.id !== extra'));
+  ok('포스터는 크게 (모바일에서 확대 가능)', mv.includes('embed.setImage(item.poster)'));
+  ok('투표는 기존 것을 재사용', mv.includes('createPoll(') && !mv.includes('votes: {}'));
+  ok('포스터 없는 후보는 투표에서 제외', mv.includes('list.filter((it) => it.poster)'));
+  ok('결과 0건이면 무엇을 바꿀지 안내', mv.includes('조건에 맞는 작품이 없어요') && mv.includes('자료가 거의 없습니다'));
+
+  // 서버마다 쓰는 OTT 를 고릅니다. 안 고르면 전체.
+  const st2 = await import('./src/settings.js');
+  const G = 'movieguild';
+  ok('설정 전에는 전체', st2.movieProviders(G).length === 0);
+  st2.setMovieProviders(G, [8, 1883, 8]);
+  ok('중복은 걸러짐', JSON.stringify(st2.movieProviders(G)) === JSON.stringify([8, 1883]));
+  st2.setMovieProviders(G, []);
+  ok('비우면 전체로 되돌아감', st2.movieProviders(G).length === 0);
+  ok('/기능 으로 끌 수 있음', st2.FEATURES.movie !== undefined);
+
+  const ix2 = fs.readFileSync('./src/index.js', 'utf8');
+  ok('버튼 앞머리 mv: 등록', ix2.includes("startsWith('mv:')") && ix2.includes('handleMovieComponent'));
+  ok('시작할 때 OTT 번호 대조', ix2.includes('checkProviders()'));
+}
+
 // 6t) 봇 나눠 돌리기 (BOT_ROLE)
 //
 // 역할마다 **실제로 프로세스를 띄워** 확인합니다. config.js 가 import 시점에 한 번만
@@ -817,7 +876,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 18개', union.length === 18, `${union.length}개`);
+  ok('둘을 합쳐 19개', union.length === 19, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

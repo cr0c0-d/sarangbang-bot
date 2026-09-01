@@ -11,6 +11,7 @@ import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as pollCommands } from './poll/index.js';
+import { commands as movieCommands } from './movie/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
@@ -77,6 +78,16 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'movie',
+            name: '🎬 영화 고르기',
+            value: [
+              '**`/영화`** — 이것만 치면 고르기 판이 뜹니다. (나만 보임)',
+              '장르와 OTT 를 고르고 **🎲 한 편 뽑기** 또는 **🗳️ 투표 만들기** 를 누르세요.',
+              '장르는 **안 골라도 됩니다.** OTT 는 여러 개 고를 수 있습니다.',
+              '`⚙️ 쓰는 OTT 설정` 으로 **구독 중인 것만** 목록에 뜨게 할 수 있습니다.',
+            ].join('\n'),
+          },
+          {
             feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
@@ -128,6 +139,7 @@ const taggedCommands = [
   ...tag('timer', timerCommands),
   ...tag('images', imageCommands),
   ...tag('poll', pollCommands),
+  ...tag('movie', movieCommands),
 ];
 
 /**
