@@ -1,10 +1,17 @@
 // 음악 기능: 슬래시 명령어 + "채팅방에 유튜브 링크 붙여넣기" 자동 감지
-import { SlashCommandBuilder, PermissionsBitField, MessageFlags } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  PermissionsBitField,
+  MessageFlags,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+} from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { getTracks, formatDuration } from './ytdlp.js';
 import { buildPanel, showPanel } from './panel.js';
 import { get as getSetting, featureEnabled } from '../settings.js';
+import { recent as recentHistory, timeAgo } from './history.js';
 
 // 유튜브 링크인지 판별. (youtube.com, youtu.be, music.youtube.com)
 const YOUTUBE_RE =
@@ -118,19 +125,116 @@ export async function playRequest(opts) {
   return `➕ 대기열에 추가: **${t.title}** (${formatDuration(t.duration)}) — 대기열 ${audio.queue.length}번째`;
 }
 
+// ── 지난 재생 목록 ──────────────────────────────────────────
+//
+// "며칠 전에 듣던 그 노래" 를 링크 없이 다시 트는 길입니다.
+// 명령어를 새로 만들지 않았습니다(3.6-6). 대신 두 곳에서 같은 화면이 열립니다.
+//   · 제어판의 🕐 지난 곡 버튼
+//   · /재생 을 **검색어 없이** 실행했을 때
+// 나만 보이는 메시지라 채팅방이 더러워지지 않습니다.
+
+const cutLabel = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
+
+/** 지난 곡 고르기 화면. 드롭다운은 디스코드 규격상 25개까지입니다. */
+export function buildHistoryPicker(guildId) {
+  const list = recentHistory(guildId, 25);
+  if (list.length === 0) {
+    return {
+      content:
+        '🕐 아직 들은 곡이 없습니다.\n유튜브 링크를 채팅방에 붙여넣거나 `/재생 <검색어>` 로 한 곡 틀어보세요.',
+      flags: MessageFlags.Ephemeral,
+    };
+  }
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId('m:hist:add')
+    .setPlaceholder('다시 들을 곡을 고르세요 (여러 곡 가능)')
+    .setMinValues(1)
+    .setMaxValues(list.length)
+    .addOptions(
+      list.map((e) => ({
+        label: cutLabel(e.title, 100),
+        value: e.url, // 드롭다운 값은 100자 제한. history.js 에서 걸러 넣습니다.
+        description: `${formatDuration(e.duration)} · ${timeAgo(e.at)}`,
+      }))
+    );
+
+  return {
+    content: `🕐 최근에 들은 **${list.length}곡** 입니다. 고르면 대기열 맨 뒤에 담깁니다.`,
+    components: [new ActionRowBuilder().addComponents(menu)],
+    flags: MessageFlags.Ephemeral,
+  };
+}
+
+/** 제어판의 🕐 버튼과 그 드롭다운을 처리합니다. (`m:hist` 로 시작하는 것) */
+export async function handleHistoryComponent(interaction) {
+  if (interaction.customId === 'm:hist') {
+    return interaction.reply(buildHistoryPicker(interaction.guildId));
+  }
+  if (interaction.customId !== 'm:hist:add') return;
+
+  // 곡마다 유튜브 추출이 있어 수 초씩 걸립니다. 먼저 응답부터 잡아둡니다.
+  await interaction.deferUpdate();
+
+  const urls = interaction.values;
+  const added = [];
+  const failed = [];
+
+  // 붙여넣기로 들어온 곡들과 순서가 뒤엉키지 않게 서버별 줄에 세웁니다.
+  await serialize(interaction.guildId, async () => {
+    for (const url of urls) {
+      try {
+        const { tracks } = await enqueue({
+          query: url,
+          guild: interaction.guild,
+          member: interaction.member,
+          textChannel: interaction.channel,
+        });
+        added.push(tracks[0]?.title ?? url);
+      } catch (err) {
+        failed.push(err.message);
+      }
+    }
+  });
+
+  const lines = [];
+  if (added.length > 0) {
+    lines.push(`➕ **${added.length}곡**을 대기열에 담았습니다.`);
+    lines.push(...added.slice(0, 10).map((t) => `• ${cutLabel(t, 80)}`));
+    if (added.length > 10) lines.push(`… 외 ${added.length - 10}곡`);
+  }
+  // 실패 사유는 곡마다 같은 경우가 많아(음성채널 미입장 등) 한 번만 보여줍니다.
+  for (const msg of [...new Set(failed)]) lines.push(`⚠️ ${msg}`);
+
+  // 고르기 화면은 역할을 다했으므로 결과로 바꿉니다 (드롭다운 제거).
+  await interaction.editReply({ content: lines.join('\n'), components: [] });
+
+  if (added.length > 0) {
+    const audio = peekGuildAudio(interaction.guildId);
+    if (audio) showPanel(audio, audio.textChannel ?? interaction.channel);
+  }
+}
+
 // ── 슬래시 명령어들 ─────────────────────────────────────────
 
 export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('재생')
-      .setDescription('유튜브 링크나 검색어로 음악을 재생합니다')
+      .setDescription('유튜브 링크나 검색어로 재생합니다 (비우면 지난 곡 목록에서 고릅니다)')
       .addStringOption((o) =>
-        o.setName('검색어').setDescription('유튜브 링크 또는 검색할 노래 제목').setRequired(true)
+        o.setName('검색어').setDescription('유튜브 링크 또는 검색할 노래 제목').setRequired(false)
       ),
     async execute(interaction) {
-      await interaction.deferReply();
       const query = interaction.options.getString('검색어');
+
+      // 검색어 없이 실행하면 지난 곡 목록을 보여줍니다.
+      // 이걸 위해 명령어를 따로 만들지 않습니다 (명령어가 또 늘어납니다).
+      if (!query) {
+        return interaction.reply(buildHistoryPicker(interaction.guildId));
+      }
+
+      await interaction.deferReply();
       const msg = await playRequest({
         query,
         guild: interaction.guild,

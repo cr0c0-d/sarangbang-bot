@@ -21,6 +21,7 @@ import { createSource, hasFreshStreamUrl, getTracks } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel, buildPanel } from '../music/panel.js';
 import { forgetPanel, MUSIC } from '../panel-registry.js';
+import { record as recordHistory } from '../music/history.js';
 
 /** @type {Map<string, GuildAudio>} */
 const registry = new Map();
@@ -60,6 +61,8 @@ export class GuildAudio {
     this.nextIntent = null;
     this.current = null;
     this.currentResource = null;   // 실제로 얼마나 재생됐는지 확인용
+    this.currentOffsetSec = 0;     // 이번 리소스가 몇 초 지점부터 시작했는지 (positionSec 참고)
+    this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
     this.usedDirect = false;       // 이번 곡을 "직접 수신" 으로 틀었는지
     this.lastStreamError = null;   // ffmpeg 이 남긴 마지막 오류
     this.killCurrent = null;
@@ -71,6 +74,11 @@ export class GuildAudio {
     this.destroyed = false;
 
     this.musicPlayer.on(AudioPlayerStatus.Idle, () => this.onTrackEnd());
+    // 지난 재생 기록은 **소리가 실제로 나기 시작한 순간**에만 남깁니다.
+    // 대기열에 넣을 때 남기면 재생에 실패한 곡까지 쌓여서, 다시 골라도 또 실패합니다.
+    this.musicPlayer.on(AudioPlayerStatus.Playing, () => {
+      if (this.current) recordHistory(this.guild.id, this.current.track);
+    });
     this.musicPlayer.on('error', (err) => {
       console.error('[music] 재생 오류:', err.message);
       this.notify('⚠️ 재생 중 오류가 났습니다: ' + err.message);
@@ -192,6 +200,9 @@ export class GuildAudio {
   }
 
   playNext(intent = 'auto') {
+    // 곡이 바뀌므로 대기 중이던 음량 반영은 의미가 없습니다.
+    clearTimeout(this.volumeTimer);
+    this.volumeTimer = null;
     this.killCurrent?.();
     this.killCurrent = null;
 
@@ -246,6 +257,7 @@ export class GuildAudio {
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
       this.currentResource = resource;
+      this.currentOffsetSec = item.resumeAt ?? 0;
       this.musicPlayer.play(resource);
       // 텍스트 알림 대신 버튼이 달린 제어판을 보여줍니다. (기존 제어판이 있으면 수정)
       showPanel(this, this.textChannel);
@@ -270,9 +282,29 @@ export class GuildAudio {
   reapplyVolume() {
     if (!this.current || !this.isPlaying) return false;
 
+    // 🔉 🔊 버튼은 연달아 누르게 됩니다(+10 +10 +10). 누를 때마다 다시 틀면
+    // 그때마다 끊기고, 심하면 다시 트는 중에 또 눌러서 엉킵니다.
+    // 손을 뗀 뒤 한 번만 반영합니다.
+    const item = this.current;
+    clearTimeout(this.volumeTimer);
+    this.volumeTimer = setTimeout(() => {
+      this.volumeTimer = null;
+      if (this.destroyed || this.current !== item) return; // 그 사이 곡이 바뀌었습니다
+      this.restartAtCurrentPosition();
+    }, 700);
+    return true;
+  }
+
+  /** 듣던 지점부터 다시 틉니다. 새 음량이 여기서 적용됩니다. */
+  restartAtCurrentPosition() {
+    if (!this.current || !this.isPlaying) return false;
+
     // 지금까지 재생된 지점부터 이어서 틉니다.
-    const playedMs = this.currentResource?.playbackDuration ?? 0;
-    const resumeAt = Math.max(0, playedMs / 1000 - 0.3); // 살짝 앞에서 시작해 끊김을 덜 느끼게
+    //
+    // ★ playbackDuration 은 **지금 리소스**가 재생한 시간만 셉니다.
+    //   한 번 다시 틀면 새 리소스는 0 부터 세므로, 건너뛴 만큼(currentOffsetSec)을
+    //   더하지 않으면 **두 번째 조절부터 곡이 처음으로 되돌아갑니다.** (실제로 겪은 버그)
+    const resumeAt = Math.max(0, this.positionSec() - 0.3); // 살짝 앞에서 시작해 끊김을 덜 느끼게
 
     this.killCurrent?.();
     this.killCurrent = null;
@@ -297,12 +329,23 @@ export class GuildAudio {
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
       this.currentResource = resource;
+      this.currentOffsetSec = resumeAt; // 다음 번에 위치를 제대로 계산하기 위해 꼭 남깁니다
       this.musicPlayer.play(resource);
       return true;
     } catch (err) {
       console.error('[music] 음량 반영 실패:', err.message);
       return false;
     }
+  }
+
+  /**
+   * 지금 곡의 재생 위치(초).
+   *
+   * 건너뛰고 시작한 만큼(currentOffsetSec) + 이번 리소스가 재생한 시간.
+   * 음량을 바꿀 때마다 리소스가 새로 생기므로 이 둘을 반드시 같이 봐야 합니다.
+   */
+  positionSec() {
+    return this.currentOffsetSec + (this.currentResource?.playbackDuration ?? 0) / 1000;
   }
 
   /**
@@ -343,7 +386,10 @@ export class GuildAudio {
    * (2) 그것도 실패하면 **디스코드에 이유를 알립니다.**
    */
   playedNothing() {
-    const played = this.currentResource?.playbackDuration ?? 0;
+    // 음량을 바꾸면 리소스가 새로 생겨 playbackDuration 이 0 부터 다시 셉니다.
+    // 건너뛴 만큼을 더하지 않으면, 곡 끝 무렵에 음량을 바꿨을 때
+    // 멀쩡히 다 들은 곡을 "재생 실패" 로 잘못 알립니다.
+    const played = this.positionSec() * 1000;
     const trackLen = this.current?.track?.duration ?? 0;
     // 3초 미만만 재생됐는데 원곡이 그보다 길면 실패로 봅니다.
     return played < 3000 && (trackLen === 0 || trackLen > 5);
@@ -546,6 +592,8 @@ export class GuildAudio {
     if (this.destroyed) return;
     this.destroyed = true;
     this.cancelLeaveTimer();
+    clearTimeout(this.volumeTimer);
+    this.volumeTimer = null;
     this.queue = [];
     this.history = [];
     this.nextIntent = null;

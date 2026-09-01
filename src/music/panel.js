@@ -125,6 +125,11 @@ function buildComponents(audio) {
       new ButtonBuilder().setCustomId('m:vol-').setEmoji('🔉').setLabel('소리 -10').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('m:vol+').setEmoji('🔊').setLabel('소리 +10').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
+        .setCustomId('m:hist')
+        .setEmoji('🕐')
+        .setLabel('지난 곡')
+        .setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder()
         .setCustomId('m:refresh')
         .setEmoji('🔄')
         .setLabel('새로고침')

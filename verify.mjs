@@ -604,6 +604,73 @@ ok('이동: 암호 없으면 401',
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 
+// 6r) 지난 재생 목록
+{
+  const h = await import('./src/music/history.js');
+  await h.initHistory();
+  const T = (n, u, d) => ({ title: n, url: u, duration: d });
+
+  h.record('hg1', T('A곡', 'https://youtu.be/aaa', 200), 1000);
+  h.record('hg1', T('B곡', 'https://youtu.be/bbb', 100), 2000);
+  ok('최근에 들은 순서로', h.recent('hg1')[0].title === 'B곡');
+
+  h.record('hg1', T('A곡', 'https://youtu.be/aaa', 200), 3000);
+  ok('같은 곡을 또 들으면 맨 앞으로', h.recent('hg1')[0].title === 'A곡');
+  ok('중복으로 쌓이지 않음', h.count('hg1') === 2);
+
+  h.record('hg2', T('타서버곡', 'https://youtu.be/zzz', 10), 1000);
+  ok('서버끼리 섞이지 않음', h.recent('hg1').every((e) => e.title !== '타서버곡'));
+
+  // 드롭다운 값은 100자 제한이라, 넘으면 다시 고를 수 없습니다
+  h.record('hg1', T('긴주소', 'https://youtu.be/' + 'x'.repeat(120), 10));
+  ok('100자 넘는 주소는 넣지 않음', h.count('hg1') === 2);
+  h.record('hg1', { title: '주소없음', url: null });
+  ok('주소 없으면 넣지 않음', h.count('hg1') === 2);
+
+  for (let i = 0; i < 80; i++) h.record('hg3', T('곡' + i, 'https://youtu.be/v' + i, 10), i);
+  ok('상한을 넘지 않음 (60곡)', h.count('hg3') === 60);
+  ok('넘치면 오래된 것부터 밀려남', !h.recent('hg3', 60).some((e) => e.title === '곡0'));
+
+  const t0 = 1_000_000_000_000;
+  ok('시간 표시', h.timeAgo(t0 - 30_000, t0) === '방금' && h.timeAgo(t0 - 5 * 60e3, t0) === '5분 전' &&
+    h.timeAgo(t0 - 26 * 3600e3, t0) === '어제' && h.timeAgo(t0 - 5 * 86400e3, t0) === '5일 전');
+
+  // 재시작을 견디는가
+  await new Promise((r) => setTimeout(r, 150));
+  const h2 = await import('./src/music/history.js?reload=1');
+  await h2.initHistory();
+  ok('재시작해도 목록이 남음', h2.recent('hg1').length === 2);
+
+  const mc = fs.readFileSync('./src/music/commands.js', 'utf8');
+  const pn3 = fs.readFileSync('./src/music/panel.js', 'utf8');
+  const ga2 = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  ok('제어판에 지난 곡 버튼', pn3.includes("'m:hist'"));
+  ok('/재생 을 비우면 지난 곡 목록', mc.includes("setRequired(false)") && mc.includes('buildHistoryPicker(interaction.guildId)'));
+  ok('지난 곡은 재생 중이 아니어도 열림', fs.readFileSync('./src/index.js', 'utf8').includes("startsWith('m:hist')"));
+  ok('기록은 실제 재생이 시작될 때만', ga2.includes('AudioPlayerStatus.Playing, () => {') && ga2.includes('recordHistory('));
+  ok('여러 곡을 한 번에 담기', mc.includes('setMaxValues(list.length)'));
+
+  const picker = (await import('./src/music/commands.js')).buildHistoryPicker('hg1');
+  ok('고르기 화면은 나만 보임', picker.flags === (await import('discord.js')).MessageFlags.Ephemeral);
+  ok('고른 값은 곡 주소', JSON.stringify(picker.components[0].toJSON()).includes('youtu.be/aaa'));
+  const emptyPicker = (await import('./src/music/commands.js')).buildHistoryPicker('없는서버');
+  ok('기록이 없으면 다음에 뭘 할지 안내', emptyPicker.content.includes('/재생') && !emptyPicker.components);
+}
+
+// 6s) 음량을 두 번 이상 바꿔도 곡이 처음으로 돌아가지 않는가
+{
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  ok('재생 위치 = 건너뛴 만큼 + 이번에 재생한 만큼',
+    ga.includes('this.currentOffsetSec + (this.currentResource?.playbackDuration ?? 0) / 1000'));
+  ok('다시 틀 때 기준점을 남김', ga.includes('this.currentOffsetSec = resumeAt;'));
+  ok('새 곡에서도 기준점 설정', ga.includes('this.currentOffsetSec = item.resumeAt ?? 0;'));
+  ok('이어서 틀 위치는 positionSec 으로', ga.includes('Math.max(0, this.positionSec() - 0.3)'));
+  ok('재생 실패 판정도 건너뛴 만큼 포함', ga.includes('const played = this.positionSec() * 1000;'));
+  ok('음량 버튼 연타는 모아서 한 번만', ga.includes('clearTimeout(this.volumeTimer)') && ga.includes('this.restartAtCurrentPosition()'));
+  ok('곡이 바뀌면 대기 중인 반영 취소', ga.includes("playNext(intent = 'auto') {\n    // 곡이 바뀌므로"));
+  ok('끝난 뒤 곡이 바뀌었으면 무시', ga.includes('this.current !== item) return;'));
+}
+
 // 6q) 제어판이 재시작·곡 종료 후에 남지 않는가
 {
   const reg = fs.readFileSync('./src/panel-registry.js', 'utf8');

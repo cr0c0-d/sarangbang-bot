@@ -19,6 +19,8 @@ import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
+import { handleHistoryComponent } from './music/commands.js';
+import { initHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
@@ -113,6 +115,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (isChannel) await handleChannelComponent(interaction);
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
+      // 지난 곡 보기·담기는 **재생 중이 아니어도** 되어야 하므로 먼저 가로챕니다.
+      // handleMusicComponent 는 재생 중이 아니면 바로 되돌려보냅니다.
+      else if (interaction.customId.startsWith('m:hist')) await handleHistoryComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
       console.error('[버튼]', err);
@@ -199,6 +204,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 await initSettings();
 await initStore();
 await initPanelRegistry();
+await initHistory();
 const webServer = await startWebServer();
 startAutoCleanup();
 
