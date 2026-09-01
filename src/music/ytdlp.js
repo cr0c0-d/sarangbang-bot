@@ -17,7 +17,9 @@ function extraArgs() {
   //
   // 이 봇은 Node 로 돌아가므로 process.execPath 가 항상 유효한 node 경로입니다.
   // 그걸 그대로 넘겨주면 어느 OS에서도 추가 설치 없이 해결됩니다.
-  args.push('--js-runtimes', `node:${process.execPath}`);
+  if ((process.env.YTDLP_JS_RUNTIME ?? 'true').toLowerCase() !== 'false') {
+    args.push('--js-runtimes', `node:${process.execPath}`);
+  }
 
   const cookies = (process.env.YTDLP_COOKIES_FILE ?? '').trim();
   if (cookies) args.push('--cookies', cookies);
@@ -176,10 +178,42 @@ const STREAM_URL_TTL_MS = 90 * 60 * 1000; // 90분
  *    예전에는 메타데이터에서 한 번, 재생할 때 또 한 번 추출해서 5.5초가 걸렸습니다.
  *    주소를 재사용하면 재생 시작은 ffmpeg 몫(약 150ms)만 남습니다.
  */
+/**
+ * 최근에 뽑아본 결과를 잠깐 들고 있습니다.
+ *
+ * 같은 곡을 다시 트는 일이 잦은데(반복재생, 친구가 같은 링크를 또 붙여넣기),
+ * 그때마다 2.8초를 다시 기다릴 이유가 없습니다.
+ * 재생 주소 유효기간(90분)보다 짧게 잡아, 캐시가 살아있으면 주소도 살아있게 합니다.
+ */
+const CACHE_TTL_MS = 60 * 60 * 1000;
+const cache = new Map();
+
+function cacheGet(key) {
+  const hit = cache.get(key);
+  if (!hit) return null;
+  if (Date.now() - hit.at > CACHE_TTL_MS) {
+    cache.delete(key);
+    return null;
+  }
+  return hit.tracks;
+}
+
+function cacheSet(key, tracks) {
+  cache.set(key, { at: Date.now(), tracks });
+  // 무한정 쌓이지 않게 오래된 것부터 버립니다.
+  if (cache.size > 200) cache.delete(cache.keys().next().value);
+}
+
 export async function getTracks(input) {
   const isUrl = URL_RE.test(input);
   const target = isUrl ? input : `ytsearch1:${input}`;
   const isPlaylist = isUrl && /[?&]list=/.test(input);
+
+  const cached = cacheGet(target);
+  if (cached) {
+    // 캐시본을 그대로 주면 호출한 쪽에서 streamUrl 을 덮어쓸 때 서로 간섭합니다.
+    return cached.map((t) => ({ ...t }));
+  }
 
   // 재생목록은 곡이 수십 개일 수 있어 주소를 전부 뽑으면 오히려 느립니다.
   // 목록만 가볍게 가져오고, 재생 주소는 각 곡을 틀 때 그때 뽑습니다.
@@ -188,7 +222,7 @@ export async function getTracks(input) {
       await run(['--dump-single-json', '--no-warnings', '--ignore-config', '--flat-playlist', ...extraArgs(), target])
     );
     const entries = Array.isArray(json.entries) ? json.entries.filter(Boolean) : [];
-    return entries
+    const list = entries
       .map((e) => ({
         title: e.title ?? '제목 없음',
         url: e.webpage_url ?? e.url ?? (e.id ? `https://www.youtube.com/watch?v=${e.id}` : null),
@@ -199,6 +233,8 @@ export async function getTracks(input) {
         extractedAt: 0,
       }))
       .filter((t) => t.url);
+    cacheSet(target, list);
+    return list.map((t) => ({ ...t }));
   }
 
   // 단일 영상 / 검색: --print 로 필요한 값만 받습니다.
@@ -233,7 +269,7 @@ export async function getTracks(input) {
   // null 이면 재생할 때 yt-dlp 로 다시 뽑습니다 (느리지만 확실).
   const streamUrl = isHttp(na(p[5])) ? na(p[5]).split(/\s+/)[0] : null;
 
-  return [
+  const result = [
     {
       title: na(p[0]) ?? '제목 없음',
       duration: Number.isFinite(Number(p[1])) ? Number(p[1]) : null,
@@ -244,6 +280,13 @@ export async function getTracks(input) {
       extractedAt: Date.now(),
     },
   ];
+  cacheSet(target, result);
+  return result.map((t) => ({ ...t }));
+}
+
+/** JS 런타임 지정을 끌 수 있게 합니다. 느린 서버에서 기동 비용을 줄일 때. */
+export function jsRuntimeEnabled() {
+  return (process.env.YTDLP_JS_RUNTIME ?? 'true').toLowerCase() !== 'false';
 }
 
 /** 저장된 재생 주소를 아직 써도 되는지. */

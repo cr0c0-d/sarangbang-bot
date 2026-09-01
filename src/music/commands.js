@@ -91,12 +91,13 @@ export async function enqueue({ query, guild, member, textChannel }) {
   const voiceChannel = await resolveVoiceChannel(guild, member);
   assertCanJoin(voiceChannel, guild);
 
-  const tracks = await getTracks(query);
-  if (tracks.length === 0) throw new Error('재생할 수 있는 곡을 찾지 못했습니다.');
-
   const audio = getGuildAudio(guild);
   audio.textChannel = textChannel;
-  await audio.connect(voiceChannel);
+
+  // 유튜브 추출(수 초)과 음성채널 접속(수백 ms)을 **동시에** 합니다.
+  // 예전에는 추출을 다 기다린 뒤에 접속해서 그만큼 더 늦었습니다.
+  const [tracks] = await Promise.all([getTracks(query), audio.connect(voiceChannel)]);
+  if (tracks.length === 0) throw new Error('재생할 수 있는 곡을 찾지 못했습니다.');
 
   const wasIdle = !audio.isPlaying;
   audio.add(tracks, member?.user?.tag ?? '알 수 없음');
@@ -205,6 +206,11 @@ export async function handleMusicMessage(message) {
 
   const links = findYoutubeLinks(message.content);
   if (links.length === 0) return false;
+
+  // ⏳ 를 **즉시** 답니다.
+  // 유튜브 추출에 몇 초가 걸리는데 그동안 아무 반응이 없으면 "먹통인가?" 싶습니다.
+  // 실제 처리는 그대로지만 체감 반응은 즉시가 됩니다.
+  message.react('⏳').catch(() => {});
 
   // 이 메시지의 처리를 통째로 줄 세웁니다.
   // 링크 여러 개를 연달아 보내도 **보낸 순서대로** 대기열에 들어갑니다.
