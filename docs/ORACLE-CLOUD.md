@@ -397,6 +397,79 @@ git init && git add -A && git commit -m "디스코드 봇 최초 커밋"
 git clone https://github.com/<본인계정>/<저장소이름>.git sarangbang-bot && cd sarangbang-bot
 ```
 
+#### 매번 아이디·토큰을 물어보지 않게 하기 ⭐
+
+비공개 저장소를 `https://` 로 받으면 **`git pull` 할 때마다** 아이디와 토큰을 묻습니다.
+코드를 고칠 때마다 겪게 되므로 처음에 해결해두세요.
+
+**배포 키(SSH)를 권합니다.** 토큰이 서버에 남지 않고, 만료도 없고,
+**이 저장소만** 읽을 수 있어서 키가 새어나가도 피해가 갇힙니다.
+
+**(1) 서버에서 키를 만듭니다** (`-N ""` 은 암호 없는 키 — 자동 실행에 필요합니다)
+
+```bash
+ssh-keygen -t ed25519 -f ~/.ssh/github_deploy -N "" -C "sarangbang-bot deploy key"
+```
+
+**(2) 공개키를 봅니다.** 나온 한 줄을 통째로 복사하세요.
+
+```bash
+cat ~/.ssh/github_deploy.pub
+```
+
+**(3) GitHub 저장소에 등록합니다**
+
+저장소 페이지 → **Settings** → 왼쪽 **Deploy keys** → **Add deploy key**
+- Title: `oracle-server` (아무거나)
+- Key: (2)에서 복사한 줄을 붙여넣기
+- **`Allow write access` 는 체크하지 마세요.** 서버는 받기만 하면 됩니다.
+
+> 계정 전체 SSH 키(Settings → SSH keys)가 아니라 **저장소의 Deploy keys** 입니다.
+> 계정 키를 쓰면 서버가 내 **모든** 저장소에 접근할 수 있게 됩니다.
+
+**(4) 서버가 그 키를 쓰도록 알려줍니다**
+
+```bash
+printf 'Host github.com\n  User git\n  IdentityFile ~/.ssh/github_deploy\n  IdentitiesOnly yes\n' >> ~/.ssh/config && chmod 600 ~/.ssh/config
+```
+
+**(5) 주소를 SSH 방식으로 바꿉니다** (`<본인계정>/<저장소이름>` 은 본인 것으로)
+
+```bash
+cd ~/sarangbang-bot && git remote set-url origin git@github.com:<본인계정>/<저장소이름>.git
+```
+
+**(6) 확인합니다**
+
+```bash
+ssh -T git@github.com
+```
+
+`Hi <저장소>! You've successfully authenticated, but GitHub does not provide shell access.`
+가 나오면 성공입니다. **shell access 어쩌고는 정상 메시지입니다.**
+(처음이면 `Are you sure...` 이 나오는데 `yes` 를 입력하세요)
+
+이제 `git pull` 이 아무것도 묻지 않습니다.
+
+<details>
+<summary>더 간단한 방법 — 토큰을 파일에 저장 (권장하지 않음)</summary>
+
+```bash
+git config --global credential.helper store
+```
+
+이후 `git pull` 을 한 번 하면서 아이디와 토큰을 입력하면 다음부터 안 묻습니다.
+
+⚠️ **토큰이 `~/.git-credentials` 에 평문으로 저장됩니다.**
+서버에 들어올 수 있는 사람은 그대로 읽을 수 있고, 토큰 권한이 넓으면 다른 저장소까지 열립니다.
+꼭 쓰겠다면 GitHub 에서 **Fine-grained token** 으로 이 저장소만, **Contents: Read-only** 로
+만들어서 쓰세요. 그리고 파일 권한을 잠그세요.
+
+```bash
+chmod 600 ~/.git-credentials
+```
+</details>
+
 ### B. 파일 직접 전송 (git이 부담스러우면)
 
 집 PC에서 실행합니다. `node_modules` 와 `bin` 은 서버에서 다시 만들 것이므로 보내지 않습니다.
@@ -791,6 +864,8 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | 갤러리 `ERR_ADDRESS_UNREACHABLE` | 서버 안 `iptables` 의 `reject-with icmp-host-prohibited` 에 막힌 것. 8단계 (2) 참고. (주소에 사설 IP(10.x)를 넣은 경우에도 같은 에러) |
 | 갤러리 `ERR_CONNECTION_TIMED_OUT` | 클라우드 쪽 **보안목록**이 안 열린 것. 8단계 (1) 참고 |
 | `Access denied` / 비밀번호를 물어봄 | `systemctl` 앞에 **`sudo`** 를 빼먹었습니다. OCI 이미지의 ubuntu 계정은 비밀번호가 없어서 반드시 sudo 로 실행해야 합니다 |
+| `git pull` 이 매번 아이디·토큰을 물어봄 | 5단계의 **배포 키(SSH)** 설정을 하세요. 문서 「매번 아이디·토큰을 물어보지 않게 하기」 |
+| `git@github.com: Permission denied (publickey)` | 배포 키가 GitHub 에 등록되지 않았거나 `~/.ssh/config` 가 없습니다. `ssh -T git@github.com` 으로 확인 |
 | 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인 (음악은 `music-sarangbang-bot`). 대개 `.env` 값 문제 |
 | 모든 명령에 봇이 **두 번** 답함 | `.env` 와 `.env.music` 의 토큰이 같습니다. 애플리케이션을 따로 만드세요 (봇이 잡아내고 실행을 멈춥니다) |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
