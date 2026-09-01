@@ -610,14 +610,14 @@ export class GuildAudio {
    * @param {string} [targetChannelId] 이 음성채널에 있을 때만 읽습니다. 순서를 기다리는 동안
    *   봇이 다른 음성채널로 옮겨갔다면 엉뚱한 곳에서 읽게 되므로 그 경우엔 건너뜁니다.
    */
-  speak(makeStream, targetChannelId = null, volume = 1) {
+  speak(makeStream, targetChannelId = null) {
     this.ttsChain = this.ttsChain
-      .then(() => this.speakNow(makeStream, targetChannelId, volume))
+      .then(() => this.speakNow(makeStream, targetChannelId))
       .catch((err) => console.error('[tts]', err.message));
     return this.ttsChain;
   }
 
-  async speakNow(makeStream, targetChannelId = null, volume = 1) {
+  async speakNow(makeStream, targetChannelId = null) {
     if (!this.connection || this.destroyed) return;
 
     // 큐에서 기다리는 사이에 봇이 다른 채널로 옮겨갔으면 이 문장은 버립니다.
@@ -632,8 +632,8 @@ export class GuildAudio {
     let kill = null;
     try {
       const raw = await makeStream();
-      // 읽어주기 음량은 매 발화마다 새 ffmpeg 이 뜨므로 바로 반영됩니다.
-      const piped = toOggOpus(raw, { volume });
+      // 읽어주기 음량 조절은 없앴습니다(소유자 요청). 원음 그대로 내보냅니다.
+      const piped = toOggOpus(raw);
       kill = piped.kill;
 
       this.subscribeTo(this.ttsPlayer);

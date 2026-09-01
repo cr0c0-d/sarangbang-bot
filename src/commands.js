@@ -11,7 +11,8 @@ import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as featureCommands } from './feature-commands.js';
-import { commands as volumeCommands } from './volume-commands.js';
+import { commands as volumeCommands } from './music/volume-commands.js';
+import { commands as leaveCommands } from './leave-commands.js';
 import { getWithSource, inRole } from './settings.js';
 
 const basicCommands = [
@@ -36,7 +37,7 @@ const basicCommands = [
               '여러 링크를 한꺼번에 붙여넣어도 **보낸 순서대로** 대기열에 들어갑니다.',
               '**`/대기열`** — 이전·다음·일시정지·반복·정지, 순서변경·빼기 **전부 버튼**입니다',
               '`/순서이동 <번호> <새번호>` — 정밀 조작 · `/나가기` — 음성채널에서 나가기',
-              '`/음량 음악:70` — 소리 크기 (읽어주기와 따로 맞춥니다)',
+              '`/음량 크기:70` — 소리 크기 (제어판의 🔉 🔊 버튼으로도 됩니다)',
             ].join('\n'),
           },
           {
@@ -101,34 +102,35 @@ const basicCommands = [
  * (명령어마다 직접 적으면 반드시 빠뜨리는 것이 생깁니다)
  *
  * index.js 가 이 값을 보고 꺼진 기능의 명령어를 막습니다.
- * `/기능` `/채널설정` `/도움말` 은 태그가 없어 **항상 동작합니다** —
+ * `/기능` `/채널설정` `/도움말` `/나가기` 는 태그가 없어 **항상 동작합니다** —
  * 다 꺼놓고 다시 켤 방법이 없으면 안 되기 때문입니다.
+ * (`/나가기` 는 음악·읽어주기·알람이 **같은 음성 커넥션**을 쓰므로 어느 기능에도 안 속합니다)
  */
 const tag = (feature, cmds) => cmds.map((c) => ({ ...c, feature }));
 
 /** 기능 태그가 붙은 명령어 전부. 역할과 무관한 원본입니다. */
 const taggedCommands = [
-  ...tag('music', musicCommands),
+  ...tag('music', [...musicCommands, ...volumeCommands]),
   ...tag('tts', ttsCommands),
   ...tag('timer', timerCommands),
   ...tag('images', imageCommands),
 ];
 
 /**
- * 이 봇이 등록할 명령어.
+ * 이 봇이 등록할 명령어. (`BOT_ROLE` — 망고 / 노래하는 망고)
  *
- * `BOT_ROLE` 로 봇을 나눠 돌릴 때(음악 봇 / 나머지 봇), **맡지 않은 기능의
- * 명령어는 아예 등록하지 않습니다.** 등록해두고 막기만 하면 목록만 지저분해집니다.
+ * **맡지 않은 기능의 명령어는 아예 등록하지 않습니다.**
+ * 등록해두고 막기만 하면 목록만 지저분해집니다.
  *
- * 태그가 없는 `/도움말` `/기능` `/채널설정` `/음량` 은 **양쪽 봇에 다 있습니다.**
- * 봇마다 따로 켜고 끄고 설정해야 하기 때문입니다.
- * 대신 각자 **자기 역할의 항목만** 보여줍니다 (activeKeys / activeFeatures).
+ * 태그가 없는 `/도움말` `/기능` `/채널설정` `/나가기` 는 **양쪽 봇에 다 있습니다.**
+ * 봇마다 따로 켜고 끄고 설정해야 하고, 음성채널도 각자 들어가기 때문입니다.
+ * 대신 각자 **자기 것만** 보여줍니다 (activeKeys / activeFeatures).
  */
 export const allCommands = [
   ...basicCommands,
   ...featureCommands,
   ...channelCommands,
-  ...volumeCommands,
+  ...leaveCommands,
   ...taggedCommands.filter((c) => inRole(c.feature)),
 ];
 

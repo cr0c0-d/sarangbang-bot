@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "사랑이 — 음악 스트리밍 + TTS 낭독 + 이미지 정리 디스코드 봇",
+  "description": "망고 + 노래하는 망고 — TTS 낭독·타이머·이미지 정리 / 음악 스트리밍 디스코드 봇 (한 저장소, 봇 둘)",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",

@@ -8,7 +8,6 @@ import {
   ttsEnabled,
   featureEnabled,
   voiceFor,
-  volumeScale,
   setGuildVoice,
   setUserVoice,
   clearUserVoice,
@@ -135,7 +134,7 @@ export async function handleTtsMessage(message) {
     await audio.connect(voiceChannel);
     // 글쓴이가 자기 목소리를 정해뒀으면 그걸 씁니다.
     const voice = voiceFor(message.guildId, message.author.id);
-    audio.speak(() => synthesize(spoken, voice), voiceChannel.id, volumeScale(message.guildId, 'tts'));
+    audio.speak(() => synthesize(spoken, voice), voiceChannel.id);
   } catch (err) {
     console.error('[tts] 실패:', err.message);
     await message.react('⚠️').catch(() => {});

@@ -22,11 +22,13 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 18개 로드', allCommands.length === 18, `(${allCommands.length}개) ${names.join(' ')}`);
+// 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
+// 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
+ok('망고 명령어 14개 로드', allCommands.length === 14, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '재생', '대기열', '순서이동', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '음량']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -414,8 +416,8 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
 {
   const byName = new Map(allCommands.map((c) => [c.data.toJSON().name, c]));
+  // 망고가 가진 것만 봅니다. 음악 쪽 태그는 6t) 에서 따로 확인합니다.
   const expect = {
-    재생: 'music', 대기열: 'music', 나가기: 'music',
     읽어주기: 'tts', 목소리: 'tts',
     타이머: 'timer', 알람등록: 'timer',
     갤러리: 'images', 폴더: 'images',
@@ -423,8 +425,9 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   for (const [name, feature] of Object.entries(expect)) {
     ok(`/${name} 은 ${feature} 기능 소속`, byName.get(name)?.feature === feature, String(byName.get(name)?.feature));
   }
-  // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다
-  for (const name of ['기능', '채널설정', '도움말', '음량']) {
+  // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다.
+  // /나가기 는 음악·읽어주기·알람이 같은 음성 커넥션을 쓰므로 어느 기능에도 안 속합니다.
+  for (const name of ['기능', '채널설정', '도움말', '나가기']) {
     ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
   }
 
@@ -546,10 +549,9 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   const pn2 = fs.readFileSync('./src/music/panel.js', 'utf8');
   ok('제어판에 음량 버튼', pn2.includes("'m:vol+'") && pn2.includes("'m:vol-'"));
 
-  const tt2 = fs.readFileSync('./src/tts/index.js', 'utf8');
-  ok('읽어주기에 음량 적용', tt2.includes("volumeScale(message.guildId, 'tts')"));
-  const tm2 = fs.readFileSync('./src/timer/index.js', 'utf8');
-  ok('타이머 알람도 읽어주기 음량', tm2.includes("volumeScale(timer.guildId, 'tts')"));
+  // 읽어주기·알람 음량 조절은 걷어냈습니다. speak() 에 음량 인자도 남기지 않습니다.
+  ok('읽어주기는 원음 그대로', ga2.includes('speak(makeStream, targetChannelId = null) {') &&
+    ga2.includes('const piped = toOggOpus(raw);'));
 }
 
 // 7) 유튜브 링크 감지
@@ -620,38 +622,50 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     return JSON.parse(out.trim().split('\n').pop());
   };
 
-  const all = namesFor('all');
+  const mango = namesFor('mango');
   const music = namesFor('music');
-  const home = namesFor('home');
+  const union = [...new Set([...mango, ...music])];
 
-  ok('all 은 지금과 같음 (18개)', all.length === 18, `${all.length}개`);
-  ok('음악 봇은 음악 명령어만', music.includes('재생') && !music.includes('읽어주기') && !music.includes('갤러리'),
+  ok('둘을 합쳐 18개', union.length === 18, `${union.length}개`);
+  ok('노래하는 망고 = 음악만',
+    music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));
-  ok('나머지 봇에는 음악 명령어 없음', !home.includes('재생') && !home.includes('대기열') && home.includes('갤러리'),
-    home.join(' '));
+  ok('망고에는 음악이 아예 없음',
+    !mango.includes('재생') && !mango.includes('대기열') && !mango.includes('음량') && mango.includes('갤러리'),
+    mango.join(' '));
 
-  // 둘을 합치면 빠짐없이 전부여야 합니다. 하나라도 빠지면 그 기능이 사라집니다.
-  ok('둘을 합치면 전부', new Set([...music, ...home]).size === all.length &&
-    all.every((n) => music.includes(n) || home.includes(n)));
+  // 음성채널에서 나올 방법은 **양쪽 다** 있어야 합니다.
+  // 읽어주기도 음성채널에 들어가므로, /나가기 가 음악 쪽에만 있으면 망고가 갇힙니다.
+  ok('양쪽 다 음성채널에서 나올 수 있음', mango.includes('나가기') && music.includes('나가기'));
 
   // 겹치는 것은 **봇마다 따로 있어야 하는 조종 명령어 4개뿐**이어야 합니다.
-  const shared = music.filter((n) => home.includes(n)).sort();
-  ok('겹치는 건 조종 명령어 4개뿐', JSON.stringify(shared) === JSON.stringify(['기능', '도움말', '음량', '채널설정'].sort()),
-    shared.join(' '));
+  const shared = music.filter((n) => mango.includes(n)).sort();
+  ok('겹치는 건 조종 명령어 4개뿐',
+    JSON.stringify(shared) === JSON.stringify(['기능', '나가기', '도움말', '채널설정'].sort()), shared.join(' '));
 
-  // 잘못된 역할 이름은 조용히 넘어가면 안 됩니다 (전부 꺼진 봇이 됩니다)
-  let rejected = false;
-  try {
-    execFileSync(process.execPath, ['--input-type=module', '-e', "await import('./src/config.js');"],
-      { env: { ...process.env, BOT_ROLE: '음악' }, stdio: 'pipe' });
-  } catch {
-    rejected = true;
-  }
-  ok('잘못된 BOT_ROLE 은 실행을 멈춤', rejected);
+  // 잘못된 이름은 조용히 넘어가면 안 됩니다 (전부 꺼진 봇이 됩니다)
+  const rejects = (value) => {
+    try {
+      execFileSync(process.execPath, ['--input-type=module', '-e', "await import('./src/config.js');"],
+        { env: { ...process.env, BOT_ROLE: value }, stdio: 'pipe' });
+      return false;
+    } catch {
+      return true;
+    }
+  };
+  ok('잘못된 BOT_ROLE 은 실행을 멈춤', rejects('음악'));
+  // 겸하는 모드(all)는 없앴습니다. 남아 있으면 셋이 되어 분담표가 무너집니다.
+  ok('겸하는 모드(all)는 없음', rejects('all'));
 
-  fs.rmSync('./data/verify-role-all', { recursive: true, force: true });
+  fs.rmSync('./data/verify-role-mango', { recursive: true, force: true });
   fs.rmSync('./data/verify-role-music', { recursive: true, force: true });
-  fs.rmSync('./data/verify-role-home', { recursive: true, force: true });
+
+  // 읽어주기 음량 조절은 걷어냈습니다 (소유자 요청)
+  ok('읽어주기 음량 배선 제거',
+    !fs.readFileSync('./src/tts/index.js', 'utf8').includes('volumeScale') &&
+    !fs.readFileSync('./src/timer/index.js', 'utf8').includes('volumeScale'));
+  ok('/음량 은 음악 전용',
+    fs.existsSync('./src/music/volume-commands.js') && !fs.existsSync('./src/volume-commands.js'));
 
   // 같은 애플리케이션으로 두 번 돌리면 모든 명령에 두 번 답합니다. 반드시 막아야 합니다.
   const cfg = fs.readFileSync('./src/config.js', 'utf8');

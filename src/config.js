@@ -110,34 +110,36 @@ const imageDirRaw = str('IMAGE_DIR', './data/images');
 const dataDirRaw = str('DATA_DIR', './data');
 
 /**
- * 이 봇이 맡을 역할. 한 코드로 **봇 여러 개**를 돌리기 위한 스위치입니다.
+ * 이 봇이 누구인가. 한 저장소로 **봇 두 개**를 돌립니다.
  *
- *   all   — 전부 (기본값. 지금까지와 똑같습니다)
- *   music — 음악만
- *   home  — 음악 빼고 전부 (읽어주기·타이머·이미지)
+ *   mango — 망고 (기본값). 읽어주기·타이머·이미지. **음악은 없습니다.**
+ *   music — 노래하는 망고. 음악만.
  *
- * 나눠 쓰려면 **디스코드 애플리케이션을 하나 더** 만들어야 합니다.
+ * 둘은 **완전히 다른 봇**입니다. 겸하는 모드는 없습니다.
+ * 그래서 디스코드 애플리케이션도 반드시 두 개여야 합니다 —
  * 같은 토큰으로 두 번 띄우면 두 프로세스가 같은 명령을 받아 **두 번 답합니다.**
  * 자세한 건 docs/ARCHITECTURE.md 2.1절.
  */
-const ROLE_FEATURES = {
-  all: ['music', 'tts', 'timer', 'images'],
-  music: ['music'],
-  home: ['tts', 'timer', 'images'],
+const BOTS = {
+  mango: { name: '망고', features: ['tts', 'timer', 'images'] },
+  music: { name: '노래하는 망고', features: ['music'] },
 };
 
-const roleRaw = str('BOT_ROLE', 'all').toLowerCase();
-if (!ROLE_FEATURES[roleRaw]) {
+const roleRaw = str('BOT_ROLE', 'mango').toLowerCase();
+if (!BOTS[roleRaw]) {
   console.error(`[설정 오류] BOT_ROLE 값이 잘못됐습니다: "${roleRaw}"`);
-  console.error(`   쓸 수 있는 값: ${Object.keys(ROLE_FEATURES).join(' / ')}`);
-  console.error('   비워두면 all (전부) 입니다.');
+  console.error(`   쓸 수 있는 값: ${Object.keys(BOTS).join(' / ')}`);
+  console.error('   mango = 망고 (읽어주기·타이머·이미지) / music = 노래하는 망고 (음악)');
+  console.error('   비워두면 mango 입니다.');
   process.exit(1);
 }
 
 export const config = {
   role: roleRaw,
-  /** 이 역할이 맡은 기능들. settings.js 의 FEATURES 키와 같습니다. */
-  roleFeatures: ROLE_FEATURES[roleRaw],
+  /** 사용자에게 보여줄 이 봇의 이름. */
+  botName: BOTS[roleRaw].name,
+  /** 이 봇이 맡은 기능들. settings.js 의 FEATURES 키와 같습니다. */
+  roleFeatures: BOTS[roleRaw].features,
   token: str('DISCORD_TOKEN'),
   clientId: str('CLIENT_ID'),
   // 여러 서버에서 쓸 수 있습니다. .env 에 쉼표로 나열하세요.

@@ -287,15 +287,8 @@ export const commands = [
     },
   },
 
-  {
-    data: new SlashCommandBuilder().setName('나가기').setDescription('음성채널에서 나갑니다'),
-    async execute(interaction) {
-      const audio = peekGuildAudio(interaction.guildId);
-      if (!audio) return interaction.reply({ content: '음성채널에 있지 않습니다.', flags: MessageFlags.Ephemeral });
-      audio.destroy();
-      await interaction.reply('👋 음성채널에서 나왔습니다.');
-    },
-  },
+  // /나가기 는 여기 있었지만 src/leave-commands.js 로 옮겼습니다.
+  // 음악을 떼어내면 망고 쪽에 음성채널에서 나올 방법이 사라지기 때문입니다.
 ];
 
 /**

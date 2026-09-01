@@ -4,9 +4,15 @@
 
 ## 이 프로젝트가 뭔가
 
-**사랑이 (sarangbang-bot)** — Node.js(ESM) 단일 프로세스 디스코드 봇.
+**망고 · 노래하는 망고 (sarangbang-bot)** — Node.js(ESM) 디스코드 봇. 한 저장소에서 **봇 두 개**를 돌립니다.
 소유자의 개인 서버 2~3개에서 쓰는 용도.
-기능 세 가지: **유튜브 음악 스트리밍 / 채팅 TTS 낭독 / 이미지 폴더 정리 + 웹 갤러리**.
+
+| 봇 | `BOT_ROLE` | 하는 일 | 실행 |
+|---|---|---|---|
+| **망고** | `mango` (기본) | TTS 낭독 · 타이머 · 이미지 정리 + 웹 갤러리 | `npm start` |
+| **노래하는 망고** | `music` | 유튜브 음악 스트리밍 | `npm run start:music` |
+
+**겸하는 모드는 없습니다.** 디스코드 애플리케이션도 둘입니다. (ARCHITECTURE 2.1)
 
 소유자는 프로그래밍 경험이 없는 상태에서 "바이브코딩"으로 이 봇을 만들고 있습니다.
 따라서:
@@ -41,7 +47,7 @@
 | 음량 조절 방식 | 3.2-1 — **`inlineVolume` 금지. 순수 JS opus 인코더뿐이라 끊긴다** |
 | 제어판 메시지 수명, 재시작 정리 | 3.6-1a — **제어판은 메모리에만 두면 안 된다** |
 | 지난 재생 목록 | 3.6-1b — **기록은 재생이 시작될 때만. 명령어를 새로 만들지 말 것** |
-| 봇 나눠 돌리기 (`BOT_ROLE`) | 2.1 — **역할 표는 하나뿐. 애플리케이션은 반드시 두 개** |
+| 봇 두 개 (`BOT_ROLE`) | 2.1 — **겸하는 모드 없음. `/나가기` 는 양쪽에 있어야 한다** |
 
 서버 배포 관련 작업이면 **[docs/ORACLE-CLOUD.md](docs/ORACLE-CLOUD.md)** 도 보세요.
 (Oracle Always Free 배포 절차, ARM 호환성 확인 결과, 유휴 인스턴스 회수 정책)
@@ -51,9 +57,10 @@
 ```bash
 npm install              # 의존성 설치
 npm run update-ytdlp     # yt-dlp 바이너리 갱신 (음악이 안 나올 때 1순위 조치)
-npm run deploy           # 슬래시 명령어를 디스코드에 등록 (명령어 추가/수정 후 필수)
-npm start                # 봇 실행
-npm run start:music      # 음악 전담 봇 실행 (봇을 둘로 나눠 쓸 때만)
+npm run deploy           # 망고 명령어 등록 (명령어 추가/수정 후 필수)
+npm run deploy:music     # 노래하는 망고 명령어 등록
+npm start                # 망고 실행
+npm run start:music      # 노래하는 망고 실행
 npm run verify           # 토큰 없이 가능한 자체 검증 (코드 수정 후 반드시 실행)
 ```
 
@@ -96,7 +103,8 @@ TTS 목소리 실재 여부, 링크 감지, 웹 인증·바인딩).
 
 ## 하면 안 되는 것
 
-- `bin/`, `data/`, `.env`, `node_modules/`를 커밋하지 마세요 (`.gitignore`에 있습니다).
+- `bin/`, `data/`, `.env*`, `node_modules/`를 커밋하지 마세요 (`.gitignore`에 있습니다).
+  `.env.music` 에도 토큰이 들어갑니다. 예시 파일(`.env*.example`)만 추적합니다.
 - `libsodium-wrappers` 제거 금지 (음성 암호화에 필요).
 - `GuildAudio.subscribeTo()`를 우회해 `connection.subscribe()` 직접 호출 금지.
 - 이미지 일괄 다운로드를 ZIP으로 되돌리지 마세요. 요구사항 위반입니다.
