@@ -205,6 +205,19 @@ const AUDIO_FORMAT = 'bestaudio[acodec=opus]/bestaudio/best';
 const STREAM_URL_TTL_MS = 90 * 60 * 1000; // 90분
 
 /**
+ * 재생목록 하나에서 담을 최대 곡 수.
+ * 수백 곡짜리 목록이 흔해서(실측 183곡) 상한이 없으면 대기열이 감당이 안 됩니다.
+ */
+const PLAYLIST_MAX = Math.max(1, Number(process.env.MUSIC_PLAYLIST_MAX ?? 50) || 50);
+
+/** 목록 사본을 주면서 "원래 몇 곡이었는지"(totalFound)를 같이 넘깁니다. */
+function withTotal(list) {
+  const copy = list.map((t) => ({ ...t }));
+  copy.totalFound = list.totalFound ?? list.length;
+  return copy;
+}
+
+/**
  * 링크 또는 검색어 → 재생 목록.
  * 재생목록 링크면 안에 있는 곡을 전부 담아옵니다.
  *
@@ -237,15 +250,36 @@ function cacheSet(key, tracks) {
   if (cache.size > 200) cache.delete(cache.keys().next().value);
 }
 
+/**
+ * 재생목록 링크인가.
+ *
+ * ⚠️ `list=` 가 붙었다고 전부 재생목록으로 보면 안 됩니다.
+ *    유튜브는 자동재생·믹스로 넘어가면 링크에 `list=RD...` 를 **알아서 붙입니다.**
+ *    그 링크를 공유한 사람은 **그 곡 하나**를 보낸 것이지 목록을 보낸 게 아닙니다.
+ *    이걸 목록으로 처리하면 노래 하나 공유했는데 수십 곡이 쏟아집니다.
+ *
+ *    RD = 믹스/라디오 (유튜브가 자동으로 만든 것 — 사람이 공유한 목록이 아닙니다)
+ *    LL = 좋아요, WL = 나중에 볼 동영상 (개인 목록이라 어차피 못 가져옵니다)
+ *
+ *    반대로 아래는 **진짜 재생목록**이므로 그대로 둡니다.
+ *    PL = 사람이 만든 목록, UU = 채널 업로드 전체, OLAK5uy_ = 앨범(자동이지만 의도가 분명함)
+ */
+export function playlistIdOf(url) {
+  const id = String(url).match(/[?&]list=([A-Za-z0-9_-]+)/)?.[1];
+  if (!id) return null;
+  if (/^(RD|LL|WL)/.test(id)) return null;
+  return id;
+}
+
 export async function getTracks(input) {
   const isUrl = URL_RE.test(input);
   const target = isUrl ? input : `ytsearch1:${input}`;
-  const isPlaylist = isUrl && /[?&]list=/.test(input);
+  const isPlaylist = isUrl && playlistIdOf(input) !== null;
 
   const cached = cacheGet(target);
   if (cached) {
     // 캐시본을 그대로 주면 호출한 쪽에서 streamUrl 을 덮어쓸 때 서로 간섭합니다.
-    return cached.map((t) => ({ ...t }));
+    return withTotal(cached);
   }
 
   // 재생목록은 곡이 수십 개일 수 있어 주소를 전부 뽑으면 오히려 느립니다.
@@ -266,8 +300,14 @@ export async function getTracks(input) {
         extractedAt: 0,
       }))
       .filter((t) => t.url);
-    cacheSet(target, list);
-    return list.map((t) => ({ ...t }));
+
+    // 재생목록은 수백 곡짜리가 흔합니다(실측: 183곡짜리 목록 확인).
+    // 그대로 담으면 대기열이 감당이 안 되고, 되돌리려면 전부 지워야 합니다.
+    // 앞에서부터 잘라 담고, **몇 곡 중 몇 곡인지 알려줍니다.**
+    const capped = list.slice(0, PLAYLIST_MAX);
+    capped.totalFound = list.length; // 잘렸는지 알리려고 붙여둡니다
+    cacheSet(target, capped);
+    return withTotal(capped);
   }
 
   // 단일 영상 / 검색: --print 로 필요한 값만 받습니다.

@@ -118,7 +118,11 @@ export async function playRequest(opts) {
   const { tracks, wasIdle, audio } = await enqueue(opts);
 
   if (tracks.length > 1) {
-    return `📃 재생목록에서 **${tracks.length}곡**을 대기열에 넣었습니다.`;
+    // 수백 곡짜리 목록은 앞에서부터 잘라 담습니다.
+    // 잘렸는데 아무 말도 안 하면 "왜 뒷곡이 없지?" 가 됩니다.
+    const total = tracks.totalFound ?? tracks.length;
+    const cut = total > tracks.length ? ` (전체 ${total}곡 중 앞 ${tracks.length}곡)` : '';
+    return `📃 재생목록에서 **${tracks.length}곡**을 대기열에 넣었습니다.${cut}`;
   }
   const t = tracks[0];
   if (wasIdle) return `🎵 **${t.title}** (${formatDuration(t.duration)}) 재생을 시작합니다.`;
@@ -314,6 +318,7 @@ export async function handleMusicMessage(message) {
   serialize(message.guildId, async () => {
     const added = [];
     const failed = [];
+    const truncated = []; // 재생목록이 잘린 것들 (전체 N곡 중 앞 M곡)
 
     for (const link of links) {
       try {
@@ -324,9 +329,19 @@ export async function handleMusicMessage(message) {
           textChannel: message.channel,
         });
         added.push(...tracks);
+        const total = tracks.totalFound ?? tracks.length;
+        if (total > tracks.length) truncated.push({ total, taken: tracks.length });
       } catch (err) {
         failed.push(err.message);
       }
+    }
+
+    // 잘렸는데 아무 말도 안 하면 "왜 뒷곡이 없지?" 가 됩니다.
+    // 링크 붙여넣기는 제어판만 뜨고 안내가 없으므로 여기서 알려줍니다.
+    for (const t of truncated) {
+      await message.channel
+        .send(`📃 재생목록이 길어서 **앞 ${t.taken}곡**만 담았습니다. (전체 ${t.total}곡)`)
+        .catch(() => {});
     }
 
     if (added.length === 0) {

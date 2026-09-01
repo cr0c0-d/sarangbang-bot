@@ -489,6 +489,34 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('구분자 기반 파싱 (줄 밀림 방지)', yt.includes("const SEP = '|::|'"));
   ok('재생주소 http 검증', yt.includes('isHttp(na(p[5]))'));
   ok('직접수신 끄는 스위치', yt.includes('MUSIC_DIRECT_STREAM'));
+
+  // 재생목록: `list=` 가 붙었다고 전부 목록으로 보면 안 됩니다.
+  // 유튜브는 자동재생으로 넘어가면 링크에 list=RD... 를 알아서 붙입니다.
+  // 그걸 목록으로 처리하면 **노래 하나 공유했는데 수십 곡이 쏟아집니다.**
+  const { playlistIdOf } = await import('./src/music/ytdlp.js');
+  const plCases = [
+    ['https://www.youtube.com/playlist?list=PLabc123', 'PLabc123'],
+    ['https://www.youtube.com/watch?v=X&list=PLabc123', 'PLabc123'],
+    ['https://youtu.be/X?list=PLabc123', 'PLabc123'],
+    ['https://www.youtube.com/watch?v=X&list=UUabc', 'UUabc'], // 채널 업로드 — 진짜 목록
+    ['https://www.youtube.com/watch?v=X&list=OLAK5uy_abc', 'OLAK5uy_abc'], // 앨범
+    ['https://www.youtube.com/watch?v=X&list=RDabc', null], // 믹스/라디오 — 자동
+    ['https://www.youtube.com/watch?v=X&list=RDMMabc', null],
+    ['https://www.youtube.com/watch?v=X&list=LL', null], // 좋아요 (개인)
+    ['https://www.youtube.com/watch?v=X&list=WL', null], // 나중에 볼 동영상 (개인)
+    ['https://youtu.be/X', null],
+  ];
+  const plBad = plCases.filter(([url, want]) => playlistIdOf(url) !== want);
+  ok('재생목록 판별 (믹스·개인목록은 제외)', plBad.length === 0,
+    plBad.map(([u]) => u).join(' ') || `${plCases.length}가지 확인`);
+
+  // 수백 곡짜리 목록이 흔합니다 (실측: 183곡). 상한이 없으면 대기열이 감당이 안 됩니다.
+  ok('재생목록 곡 수 상한', yt.includes('PLAYLIST_MAX') && yt.includes('MUSIC_PLAYLIST_MAX'));
+  ok('잘렸으면 몇 곡 중 몇 곡인지 알림',
+    yt.includes('totalFound') &&
+    fs.readFileSync('./src/music/commands.js', 'utf8').includes('전체 ${total}곡 중 앞 ${tracks.length}곡'));
+  ok('붙여넣기로 담아도 잘린 것을 알림',
+    fs.readFileSync('./src/music/commands.js', 'utf8').includes('재생목록이 길어서'));
   // 직접 수신이 매번 실패하면 곡마다 헛걸음해서 시간을 두 배로 씁니다.
   // 쿠키를 쓰는 서버에서 실제로 겪은 문제입니다.
   ok('직접수신이 계속 실패하면 스스로 끔', yt.includes('directDisabled') && yt.includes('noteDirectFailure'));
@@ -499,7 +527,9 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('.env 중복 항목 경고', cfg.includes('warnDuplicateEnvKeys'));
   ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
   ok('추출 결과 캐시', yt.includes('function cacheGet'));
-  ok('캐시본을 복사해서 반환 (오염 방지)', yt.includes('cached.map((t) => ({ ...t }))'));
+  // 캐시본을 그대로 주면 호출한 쪽에서 streamUrl 을 덮어쓸 때 서로 간섭합니다.
+  ok('캐시본을 복사해서 반환 (오염 방지)',
+    yt.includes('return withTotal(cached);') && yt.includes('list.map((t) => ({ ...t }))'));
   ok('JS런타임 끄는 스위치', yt.includes('YTDLP_JS_RUNTIME'));
   ok('제한시간을 늘려가며 재시도', yt.includes('TIMEOUT_LADDER = [20_000, 60_000]'));
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
