@@ -156,7 +156,14 @@ export function friendlyError(stderr) {
   //    경로가 찍힌 아무 오류나 "유튜브 차단" 으로 오진됩니다.
   //    (실제로 그런 버그가 있었습니다. verify.mjs 에 회귀 검사가 있습니다)
   if (s.includes('sign in to confirm')) {
-    return '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
+    // 쿠키를 이미 넣어둔 상태에서 이 오류가 나면 "설정하세요" 는 틀린 안내입니다.
+    // 그때는 만료된 것이므로 **다시 뽑으라고** 해야 합니다.
+    const hasCookies = (process.env.YTDLP_COOKIES_FILE ?? '').trim() !== '';
+    return hasCookies
+      ? '유튜브가 이 서버를 봇으로 판단해 차단했습니다.\n' +
+          '쿠키는 설정되어 있으니 **만료된 것으로 보입니다.** 새로 뽑아서 교체해주세요.\n' +
+          '(시크릿 창에서 로그인 → 영상 재생 → 쿠키 저장 → **로그아웃하지 말고** 창 닫기)'
+      : '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
   }
   // n challenge(서명 계산)는 자바스크립트 런타임이 있어야 풀립니다.
   // 이게 실패하면 곧바로 "The page needs to be reloaded" 가 뒤따라 나오므로

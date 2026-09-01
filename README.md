@@ -550,6 +550,10 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 
 `LOGIN_REQUIRED` 가 보이면 IP 차단이 확정입니다.
 
+> ✅ **쿠키와 JS 런타임이 둘 다 있어야 합니다.** 봇은 JS 런타임을 자동으로 붙이므로
+> `.env` 의 `YTDLP_JS_RUNTIME` 을 건드리지 않았다면 **쿠키만 넣으면 됩니다.**
+> 쿠키만 넣고 JS 런타임이 없으면 `n challenge solving failed` 가 납니다.
+
 **해결: 쿠키 넣기**
 
 브라우저에서 유튜브 쿠키를 파일로 뽑아 `.env` 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.

@@ -140,6 +140,40 @@ yt-dlp 는 유튜브 추출에 JS 런타임이 필요한데 기본으로 찾는 
 특히 쿠키 파일 경로가 틀렸을 때 "쿠키를 설정하세요" 라고 안내하는 최악의 조합이 된다.
 지금은 `'sign in to confirm'` 전체 문구로만 판별하고, `verify.mjs` 에 회귀 검사가 있다.
 
+### 3.1-1-1 클라우드에서 음악을 되게 하려면 — **쿠키 + JS 런타임 둘 다**
+
+Oracle 서버에서 음악이 전혀 안 되던 문제의 **확정된 원인**이다. 하나만으로는 안 된다.
+
+디버깅 과정이 헷갈렸던 이유는 **고치는 도중에 증상이 바뀌기 때문**이다.
+
+| 단계 | 증상 | 원인 |
+|---|---|---|
+| 쿠키 ✗ · JS런타임 ✗ | `playability status: LOGIN_REQUIRED`<br>`Sign in to confirm you're not a bot` | 데이터센터 IP 차단 |
+| 쿠키 ✓ · JS런타임 ✗ | `n challenge solving failed`<br>→ `The page needs to be reloaded` | 차단은 풀렸으나 서명 계산 불가 |
+| 쿠키 ✓ · JS런타임 ✓ | **정상 재생** | — |
+
+**두 번째 줄이 함정이다.** 쿠키를 넣으면 차단이 풀리면서 `web_embedded`, `tv downgraded` 같은
+클라이언트를 실제로 시도하게 되는데, 그 클라이언트들은 **n challenge(서명 계산)** 를 요구한다.
+그건 JS 런타임이 있어야 풀린다. 그리고 실패하면 마지막 줄이
+`The page needs to be reloaded` 라서, **차단 문제로 되돌아간 것처럼 보인다.**
+
+그래서 `friendlyError()` 는 **n challenge 를 "page needs to be reloaded" 보다 먼저** 검사한다.
+순서를 바꾸면 원인을 영영 못 찾는다.
+
+**JS 런타임은 `--js-runtimes node:${process.execPath}` 로 항상 넘긴다** (3.1-1절).
+`.env` 의 `YTDLP_JS_RUNTIME=false` 는 이걸 끄므로, **클라우드에서는 절대 끄면 안 된다.**
+(느린 서버에서 기동 비용을 줄이려고 만든 스위치인데, 차단 환경에서는 재생 자체를 막는다)
+
+**확인해본 것들 — 효과 없음**
+- `--js-runtimes` 를 켜도 `PO Token Providers` 는 여전히 `none` 이다.
+  "JS 런타임을 깔면 PO 토큰을 생성한다" 는 통설은 이 버전에서 성립하지 않는다.
+- JS 런타임을 켜도 쓸 수 있는 player client 는 `default`/`visionos` 뿐이다 (실측).
+  `web`, `tv`, `ios`, `mweb`, `android_vr` 은 전부 실패한다.
+
+**쿠키는 만료된다.** 만료되면 첫 번째 줄 증상으로 되돌아간다.
+그때 `friendlyError` 가 "쿠키가 설정되어 있으니 만료된 것" 이라고 안내하도록,
+`YTDLP_COOKIES_FILE` 설정 여부에 따라 문구를 바꾼다.
+
 ### 3.1-2 추출은 곡당 딱 한 번만 — 속도의 핵심
 
 **측정값 (2026-08-31, 가정용 IP):**

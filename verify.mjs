@@ -202,6 +202,18 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('실제 차단 메시지는 잡아냄',
     friendlyError('ERROR: Sign in to confirm you are not a bot').includes('봇으로 판단'));
 
+  // 쿠키가 이미 있는데 차단되면 "설정하세요" 가 아니라 "만료됐다" 로 안내해야 합니다.
+  {
+    const saved = process.env.YTDLP_COOKIES_FILE;
+    process.env.YTDLP_COOKIES_FILE = '/tmp/cookies.txt';
+    ok('쿠키가 있으면 만료 안내',
+      friendlyError('ERROR: Sign in to confirm you are not a bot').includes('만료'));
+    delete process.env.YTDLP_COOKIES_FILE;
+    ok('쿠키가 없으면 설정 안내',
+      friendlyError('ERROR: Sign in to confirm you are not a bot').includes('설정이 필요'));
+    if (saved !== undefined) process.env.YTDLP_COOKIES_FILE = saved;
+  }
+
   ok('n challenge 실패는 JS런타임 안내로',
     friendlyError('WARNING: n challenge solving failed: Ensure you have a supported JavaScript runtime').includes('자바스크립트 런타임'));
   // n challenge 실패 뒤에는 항상 "The page needs to be reloaded" 가 따라붙습니다.
