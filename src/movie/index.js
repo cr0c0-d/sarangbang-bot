@@ -106,7 +106,7 @@ function buildPicker(guildId, genreKey, providers) {
       usable.map((p) => ({
         label: p.name,
         value: String(p.id),
-        description: p.sparse ? '⚠️ TMDB 에 자료가 거의 없습니다' : undefined,
+        description: p.sparse ? '⚠️ 영화는 없고 오리지널 드라마만 나옵니다' : undefined,
         default: providers.includes(p.id),
       }))
     );
@@ -189,7 +189,11 @@ function buildEmpty(guildId, genreKey, providers) {
 
   const tips = ['· 장르를 **아무거나**로 바꿔보세요.', '· OTT 를 더 고르거나 전부 해제해보세요.'];
   if (sparse.length > 0) {
-    tips.unshift(`· **${sparse.map((p) => p.name).join(', ')}** 는 TMDB 에 자료가 거의 없습니다. 빼보세요.`);
+    // 쿠팡플레이가 대표적입니다. "왜 안 나오지" 를 여기서 끝내야 합니다.
+    tips.unshift(
+      `· **${sparse.map((p) => p.name).join(', ')}** 는 **영화 정보가 없습니다.** 오리지널 드라마만 나옵니다.\n` +
+        '  장르를 빼거나 다른 OTT 를 같이 골라보세요.'
+    );
   }
 
   return {
@@ -251,7 +255,7 @@ function buildOttSettings(guildId) {
             PROVIDERS.map((p) => ({
               label: p.name,
               value: String(p.id),
-              description: p.sparse ? '⚠️ TMDB 에 자료가 거의 없습니다' : undefined,
+              description: p.sparse ? '⚠️ 영화는 없고 오리지널 드라마만 나옵니다' : undefined,
               default: enabled.includes(p.id),
             }))
           )

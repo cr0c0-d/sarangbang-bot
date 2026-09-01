@@ -101,7 +101,13 @@ export const PROVIDERS = [
   { id: 337, name: '디즈니+', tmdbName: 'Disney Plus' },
   { id: 119, name: '아마존 프라임', tmdbName: 'Amazon Prime Video' },
   { id: 350, name: 'Apple TV', tmdbName: 'Apple TV' },
-  { id: 1881, name: '쿠팡플레이', tmdbName: 'Coupang Play', sparse: true },
+  // ⚠️ 쿠팡플레이는 **볼 수 있는 곳(provider)** 자료가 거의 없습니다 (영화 0, 드라마 8).
+  //   그런데 TMDB 에는 **만든 곳(network)** 으로도 등록돼 있고 그쪽은 31건입니다.
+  //   (홈페이지에서 보이는 목록이 이것입니다 — 소유자가 발견)
+  //   오리지널은 쿠팡플레이에서 볼 수 있으므로, network 로 후보를 보태 씁니다.
+  //   다른 OTT 도 network 가 있지만(넷플릭스 213, 왓챠 3898, 디즈니+ 2739)
+  //   provider 자료가 이미 수천 건이라 보탤 이유가 없습니다.
+  { id: 1881, name: '쿠팡플레이', tmdbName: 'Coupang Play', sparse: true, network: 5169 },
 ];
 
 export const providerById = (id) => PROVIDERS.find((p) => p.id === Number(id)) ?? null;
@@ -176,6 +182,10 @@ export async function findCandidates({ genreKey = null, providers = [] } = {}) {
   const genre = genreByKey(genreKey);
   const kinds = ['movie', 'tv'].filter((k) => !genre || genre[k]);
 
+  // provider 자료가 부실한 OTT 는 **만든 곳(network)** 으로도 찾아 보탭니다.
+  // 쿠팡플레이가 그렇습니다 — 볼 수 있는 곳으로는 8건인데 오리지널은 31건입니다.
+  const networks = providers.map((id) => providerById(id)?.network).filter(Boolean);
+
   // 먼저 1페이지를 받아 전체가 몇 페이지인지 봅니다.
   const heads = await Promise.all(
     kinds.map((k) => call(discoverPath(k, { genre, providers, page: 1 })).catch(() => null))
@@ -199,6 +209,17 @@ export async function findCandidates({ genreKey = null, providers = [] } = {}) {
       );
     }
   }
+  // network 로 만든 작품도 후보에 넣습니다. (드라마만 있습니다)
+  if (networks.length > 0 && (!genre || genre.tv)) {
+    const params = ['language=ko-KR', 'sort_by=popularity.desc', `with_networks=${networks.join('|')}`];
+    if (genre?.tv) params.push(`with_genres=${genre.tv}`);
+    extraFetches.push(
+      call(`/discover/tv?${params.join('&')}`)
+        .then((j) => items.push(...(j.results ?? []).map((r) => toItem(r, 'tv'))))
+        .catch(() => {})
+    );
+  }
+
   await Promise.all(extraFetches);
 
   // 같은 작품이 두 페이지에 걸쳐 나올 수 있습니다.

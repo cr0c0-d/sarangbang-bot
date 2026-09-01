@@ -809,7 +809,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('쿠팡플레이 = 1881 (356 아님)', byName['쿠팡플레이'] === 1881, String(byName['쿠팡플레이']));
   ok('356 은 wavve', byName['wavve'] === 356);
   ok('TVING = 1883', byName['TVING'] === 1883);
-  ok('쿠팡플레이는 자료 없음 표시', tmdb.PROVIDERS.find((p) => p.id === 1881)?.sparse === true);
+  const coupang = tmdb.PROVIDERS.find((p) => p.id === 1881);
+  ok('쿠팡플레이는 자료 부족 표시', coupang?.sparse === true);
+  // TMDB 에서 쿠팡플레이는 **볼 수 있는 곳(provider 1881)** 과 **만든 곳(network 5169)** 둘로 존재합니다.
+  // provider 로는 드라마 8건뿐이지만 network 로는 31건입니다. 오리지널은 거기서 볼 수 있으므로 보탭니다.
+  ok('쿠팡플레이는 network 로 보강', coupang?.network === 5169);
+  ok('network 조회가 실제로 붙어 있음', fs.readFileSync('./src/movie/tmdb.js', 'utf8').includes('with_networks='));
 
   // 영화와 드라마는 장르 번호가 다릅니다. 섞어 뽑으므로 둘 다 들고 있어야 합니다.
   const action = tmdb.genreByKey('action');
@@ -839,7 +844,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('포스터는 크게 (모바일에서 확대 가능)', mv.includes('embed.setImage(item.poster)'));
   ok('투표는 기존 것을 재사용', mv.includes('createPoll(') && !mv.includes('votes: {}'));
   ok('포스터 없는 후보는 투표에서 제외', mv.includes('list.filter((it) => it.poster)'));
-  ok('결과 0건이면 무엇을 바꿀지 안내', mv.includes('조건에 맞는 작품이 없어요') && mv.includes('자료가 거의 없습니다'));
+  ok('결과 0건이면 무엇을 바꿀지 안내', mv.includes('조건에 맞는 작품이 없어요') && mv.includes('영화 정보가 없습니다'));
 
   // 서버마다 쓰는 OTT 를 고릅니다. 안 고르면 전체.
   const st2 = await import('./src/settings.js');
