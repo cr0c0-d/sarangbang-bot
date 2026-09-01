@@ -939,7 +939,16 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const pj = JSON.stringify(panel3.components.map((r) => r.toJSON()));
   ok('지도 버튼 2개', pj.includes('map.kakao.com') && pj.includes('map.naver.com'));
   ok('할 일 토글 버튼', pj.includes('"pl:todo:0"') && pj.includes('"pl:todo:2"'));
-  ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind'].every((id) => pj.includes(`"${id}"`)));
+  ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind', 'pl:del'].every((id) => pj.includes(`"${id}"`)));
+
+  // 삭제: **일정만** 과 **채널까지** 를 분명히 갈라놓아야 합니다.
+  // 섞어놓으면 사진과 대화가 통째로 날아갑니다.
+  ok('삭제는 확인을 거침', pl.includes("action === 'del'") && pl.includes('pl:delplan') && pl.includes('pl:delch'));
+  ok('일정만 / 채널까지 를 나눔', pl.includes('일정만 지우기') && pl.includes('채널까지 지우기'));
+  ok('되돌릴 수 없다고 경고', pl.includes('되돌릴 수 없습니다'));
+  ok('만든 사람·채널관리자만', pl.includes('function canManage(') && pl.includes('plan.createdBy'));
+  ok('지울 때 판도 지움 (거짓말 방지)', /removePlan\(interaction\.channelId\)/.test(pl) && pl.includes('m.delete()'));
+  ok('채널 관리 권한 없으면 기록만 지우고 알림', pl.includes('채널은 못 지웠습니다'));
   ok('참고자료는 링크로만 (다시 안 올림)',
     JSON.stringify(panel3.embeds[0].toJSON()).includes('discord.com/channels') && !pl.includes('AttachmentBuilder'));
 

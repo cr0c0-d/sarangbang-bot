@@ -28,7 +28,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { parseWhen, formatWhen, yymmdd, titleFromChannelName } from './parse-when.js';
-import { getPlan, setPlan, updatePlan, scheduleReminder, cancelReminder } from './store.js';
+import { getPlan, setPlan, updatePlan, removePlan, scheduleReminder, cancelReminder } from './store.js';
 import { get as getSetting } from '../settings.js';
 
 /** 할 일 버튼은 한 줄에 5개씩 두 줄까지. 그 이상은 목록으로만 보여줍니다. */
@@ -114,7 +114,8 @@ export function buildPanel(plan) {
       new ButtonBuilder().setCustomId('pl:edit').setEmoji('✏️').setLabel('고치기').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('pl:addtodo').setEmoji('➕').setLabel('할 일').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder().setCustomId('pl:note').setEmoji('📝').setLabel('메모').setStyle(ButtonStyle.Secondary),
-      new ButtonBuilder().setCustomId('pl:remind').setEmoji('🔔').setLabel('알림').setStyle(ButtonStyle.Primary)
+      new ButtonBuilder().setCustomId('pl:remind').setEmoji('🔔').setLabel('알림').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder().setCustomId('pl:del').setEmoji('🗑️').setLabel('삭제').setStyle(ButtonStyle.Danger)
     )
   );
 
@@ -275,6 +276,15 @@ async function refreshPanel(channel, plan) {
   await msg.edit(buildPanel(plan)).catch(() => {});
 }
 
+/**
+ * 일정을 지우거나 고칠 수 있는 사람인가.
+ * 만든 사람과 **채널 관리** 권한이 있는 사람만. 아무나 지우면 안 됩니다.
+ */
+function canManage(interaction, plan) {
+  if (interaction.user.id === plan.createdBy) return true;
+  return Boolean(interaction.memberPermissions?.has(PermissionFlagsBits.ManageChannels));
+}
+
 // ── 알림 ──────────────────────────────────────────────────
 
 const REMIND_CHOICES = [
@@ -348,6 +358,76 @@ export async function handlePlanComponent(interaction, client) {
             )
         )
     );
+  }
+
+  // ── 삭제 ──
+  //
+  // 두 가지를 **분명히 갈라놓습니다.** 섞어놓으면 사진과 대화가 통째로 날아갑니다.
+  //   · 일정만 지우기  → 판과 기록만. 채널·사진·대화는 그대로
+  //   · 채널까지 지우기 → 되돌릴 수 없음
+  if (action === 'del') {
+    if (!canManage(interaction, plan)) {
+      return interaction.reply({
+        content: '일정을 만든 사람이나 **채널 관리** 권한이 있는 사람만 지울 수 있습니다.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    return interaction.reply({
+      content: [
+        `🗑️ **${plan.title}** 을 지울까요?`,
+        '',
+        '· **일정만 지우기** — 판과 등록한 내용(할 일·메모·참고자료)만 지웁니다.',
+        '  이 채널과 사진·대화는 **그대로 남습니다.**',
+        '· **채널까지 지우기** — 이 채널을 지웁니다.',
+        '  **여기 올린 사진과 대화가 전부 사라지고 되돌릴 수 없습니다.**',
+      ].join('\n'),
+      components: [
+        new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setCustomId('pl:delplan').setEmoji('🗑️').setLabel('일정만 지우기').setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder().setCustomId('pl:delch').setEmoji('💥').setLabel('채널까지 지우기').setStyle(ButtonStyle.Danger)
+        ),
+      ],
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  if (action === 'delplan' || action === 'delch') {
+    if (!canManage(interaction, plan)) {
+      return interaction.update({ content: '지울 권한이 없습니다.', components: [] });
+    }
+
+    // 판을 남겨두면 "지웠는데 아직 있다" 가 됩니다. 먼저 지웁니다 (3.6-1a 와 같은 이유).
+    if (plan.panelMessageId) {
+      await interaction.channel?.messages
+        ?.fetch(plan.panelMessageId)
+        .then((m) => m.delete())
+        .catch(() => {});
+    }
+    removePlan(interaction.channelId);
+
+    if (action === 'delplan') {
+      return interaction.update({
+        content: '🗑️ 일정을 지웠습니다. 채널과 사진·대화는 그대로 있습니다.\n`/일정` 으로 다시 등록할 수 있습니다.',
+        components: [],
+      });
+    }
+
+    // 채널 삭제. 여기서부터는 되돌릴 수 없습니다.
+    const me = interaction.guild.members.me;
+    if (!me?.permissions.has(PermissionFlagsBits.ManageChannels)) {
+      return interaction.update({
+        content:
+          '일정 기록은 지웠지만 **채널은 못 지웠습니다.** 봇에게 채널 관리 권한이 없습니다.\n' +
+          '채널은 직접 지우시거나, 서버 설정 → 역할 에서 권한을 켜주세요.',
+        components: [],
+      });
+    }
+    // 채널이 사라지면 이 응답도 사라지므로, 먼저 알려주고 지웁니다.
+    await interaction.update({ content: '💥 채널을 지웁니다…', components: [] });
+    await interaction.channel.delete(`일정 삭제: ${plan.title} (${interaction.user.tag})`).catch((err) => {
+      console.error('[plan] 채널 삭제 실패:', err.message);
+    });
+    return;
   }
 
   if (action === 'remind') {
