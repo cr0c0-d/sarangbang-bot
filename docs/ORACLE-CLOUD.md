@@ -574,10 +574,19 @@ sudo netfilter-persistent save || (sudo apt install -y iptables-persistent && su
 
 `npm start` 는 SSH를 끊으면 같이 죽습니다. 서버가 재부팅돼도 알아서 살아나도록 등록합니다.
 
+봇이 둘이므로 **서비스도 둘**입니다.
+
+| 봇 | 서비스 이름 |
+|---|---|
+| 망고 (읽어주기·타이머·이미지) | `sarangbang-bot` |
+| 노래하는 망고 (음악) | `music-sarangbang-bot` |
+
+### 9-1. 망고
+
 ```bash
 sudo tee /etc/systemd/system/sarangbang-bot.service > /dev/null <<'EOF'
 [Unit]
-Description=Discord Bot (music + TTS + images)
+Description=Mango (TTS + timer + images)
 After=network-online.target
 Wants=network-online.target
 
@@ -609,6 +618,44 @@ sudo systemctl status sarangbang-bot
 ```
 
 `active (running)` 이면 성공입니다. 이제 SSH를 끊어도 봇은 계속 돕니다.
+
+### 9-2. 노래하는 망고 (음악을 쓸 때만)
+
+`.env.music` 을 먼저 만들어 두세요 (README 5단계).
+`--env-file` 로 그 파일을 읽는 것 말고는 위와 같습니다.
+
+```bash
+sudo tee /etc/systemd/system/music-sarangbang-bot.service > /dev/null <<'EOF'
+[Unit]
+Description=Singing Mango (music)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/sarangbang-bot
+ExecStart=/usr/bin/node --env-file=.env.music src/index.js
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+EOF
+```
+
+```bash
+sudo systemctl daemon-reload && sudo systemctl enable --now music-sarangbang-bot
+```
+
+```bash
+sudo systemctl status music-sarangbang-bot
+```
+
+> 💡 **둘은 따로 재시작합니다.** 음악을 고쳐도 읽어주기는 안 끊깁니다.
+> 로그도 따로 봅니다: `journalctl -u music-sarangbang-bot -f`
 
 ---
 
@@ -662,7 +709,8 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 ### 로그 보기
 
 ```bash
-journalctl -u sarangbang-bot -f
+journalctl -u sarangbang-bot -f              # 망고
+journalctl -u music-sarangbang-bot -f        # 노래하는 망고
 ```
 
 `-f` 는 실시간으로 계속 보여줍니다. **Ctrl+C** 로 빠져나옵니다.
@@ -674,17 +722,26 @@ journalctl -u sarangbang-bot -n 100 --no-pager
 
 ### 음악이 안 나올 때 (1순위 조치)
 
+음악은 `music-sarangbang-bot` 쪽입니다. 망고는 건드릴 필요 없습니다.
+
 ```bash
-cd ~/sarangbang-bot && npm run update-ytdlp && sudo systemctl restart sarangbang-bot
+cd ~/sarangbang-bot && npm run update-ytdlp && sudo systemctl restart music-sarangbang-bot
 ```
 
 ### 코드를 고친 뒤 반영하기
 
+저장소는 하나라서 `git pull` 은 한 번이지만, **서비스는 둘 다** 재시작해야 합니다.
+
 ```bash
-cd ~/sarangbang-bot && git pull && npm install && npm run verify && sudo systemctl restart sarangbang-bot
+cd ~/sarangbang-bot && git pull && npm install && npm run verify && sudo systemctl restart sarangbang-bot music-sarangbang-bot
 ```
 
-명령어를 추가·수정했다면 `npm run deploy` 도 한 번 실행하세요.
+명령어를 추가·수정했다면 등록도 **봇마다** 해야 합니다.
+`deploy` 는 덮어쓰기라, 한쪽만 하면 다른 쪽 명령어는 그대로 남습니다.
+
+```bash
+cd ~/sarangbang-bot && npm run deploy && npm run deploy:music
+```
 
 ### 디스크 감시 — 이건 직접 챙기셔야 합니다
 
@@ -734,7 +791,8 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | 갤러리 `ERR_ADDRESS_UNREACHABLE` | 서버 안 `iptables` 의 `reject-with icmp-host-prohibited` 에 막힌 것. 8단계 (2) 참고. (주소에 사설 IP(10.x)를 넣은 경우에도 같은 에러) |
 | 갤러리 `ERR_CONNECTION_TIMED_OUT` | 클라우드 쪽 **보안목록**이 안 열린 것. 8단계 (1) 참고 |
 | `Access denied` / 비밀번호를 물어봄 | `systemctl` 앞에 **`sudo`** 를 빼먹었습니다. OCI 이미지의 ubuntu 계정은 비밀번호가 없어서 반드시 sudo 로 실행해야 합니다 |
-| 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인. 대개 `.env` 값 문제 |
+| 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인 (음악은 `music-sarangbang-bot`). 대개 `.env` 값 문제 |
+| 모든 명령에 봇이 **두 번** 답함 | `.env` 와 `.env.music` 의 토큰이 같습니다. 애플리케이션을 따로 만드세요 (봇이 잡아내고 실행을 멈춥니다) |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
 | 갤러리 접속 안 됨 (A안) | SSH 터널 창을 닫았거나, `.env` 의 `WEB_BIND` 가 `127.0.0.1` 인지 확인 |
 | 사진이 어제 날짜 폴더에 들어감 | 서버 시간대가 UTC. `sudo timedatectl set-timezone Asia/Seoul` 후 재시작 |

@@ -501,7 +501,7 @@ sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT && s
 기존 서비스 파일을 복사해서 `ExecStart` 만 바꾸면 됩니다.
 
 ```bash
-sudo cp /etc/systemd/system/sarangbang-bot.service /etc/systemd/system/sarangbang-bot-music.service
+sudo cp /etc/systemd/system/sarangbang-bot.service /etc/systemd/system/music-sarangbang-bot.service
 ```
 
 복사한 파일에서 이 두 줄만 고칩니다.
@@ -512,13 +512,13 @@ ExecStart=/usr/bin/npm run start:music
 ```
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now sarangbang-bot-music
+sudo systemctl daemon-reload && sudo systemctl enable --now music-sarangbang-bot
 ```
 
 이후로는 따로 재시작합니다. **음악을 고쳐도 읽어주기는 안 끊깁니다.**
 
 ```bash
-sudo systemctl restart sarangbang-bot-music
+sudo systemctl restart music-sarangbang-bot
 ```
 
 ### 알아두실 것
