@@ -1422,6 +1422,16 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // refreshPanel 은 메시지를 옮기면 안 됩니다 (버튼 응답과 겹쳐 "없는 메시지" 오류가 납니다)
   const rp = ga.slice(ga.indexOf('  refreshPanel() {'), ga.indexOf('  onTrackEnd()'));
+  // 버튼을 누른 사람이 기다리게 만들지 않습니다.
+  // 400ms 를 자던 것을 없애고, 소리가 실제로 바뀌는 순간 따라 갱신합니다.
+  {
+    const pnl = fs.readFileSync('./src/music/panel.js', 'utf8');
+    ok('버튼 응답 전에 기다리지 않음', !/setTimeout\(r, 400\)/.test(pnl));
+    ok('소리가 바뀌면 제어판이 따라옴', ga.includes('this.schedulePanelRefresh();'));
+    ok('버튼 응답과 겹치지 않게 미룸', ga.includes('clearTimeout(this.panelTimer)'));
+    ok('나갈 때 예약된 갱신도 정리', ga.includes('this.panelTimer = null;\n    this.queue = [];'));
+  }
+
   ok('갱신은 그 자리에서만 (지우거나 다시 보내지 않음)', rp.includes('msg.edit(') && !rp.includes('showPanel('));
 
   // 빈 제어판이 실제로 "재생 중 없음" 을 보여주는가

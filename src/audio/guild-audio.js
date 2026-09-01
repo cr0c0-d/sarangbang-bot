@@ -114,6 +114,7 @@ export class GuildAudio {
     this.currentResource = null;   // 실제로 얼마나 재생됐는지 확인용
     this.currentOffsetSec = 0;     // 이번 리소스가 몇 초 지점부터 시작했는지 (positionSec 참고)
     this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
+    this.panelTimer = null;        // 곡이 바뀐 뒤 제어판 갱신 (schedulePanelRefresh)
     this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
     this.usedDirect = false;       // 이번 곡을 "직접 수신"(0단계) 으로 틀었는지
     this.srcLevel = SRC_DIRECT;    // 이번 곡을 어느 단계로 틀었는지 (ytdlp.js 의 SRC_* 참고)
@@ -133,6 +134,9 @@ export class GuildAudio {
       if (this.current) recordHistory(this.guild.id, this.current.track);
       // 직접 수신으로 소리가 실제로 났으면, 앞선 실패는 일시적이었던 것입니다.
       if (this.usedDirect) noteDirectSuccess();
+      // 곡이 실제로 바뀐 순간에 제어판을 맞춰줍니다.
+      // 이게 있어서 버튼 처리 쪽이 "다음 곡이 뜰 때까지" 기다릴 필요가 없어졌습니다.
+      this.schedulePanelRefresh();
     });
     this.musicPlayer.on('error', (err) => {
       console.error('[music] 재생 오류:', err.message);
@@ -523,6 +527,26 @@ export class GuildAudio {
    * 버튼 응답(interaction.update)과 겹칠 수 있는데, 여기서 메시지를 지워버리면
    * 그 응답이 "없는 메시지" 오류를 냅니다.
    */
+  /**
+   * 곡이 바뀐 것을 제어판에 반영합니다. **버튼 응답과 겹치지 않게 살짝 미룹니다.**
+   *
+   * 예전에는 `⏮️ 이전` `⏭️ 다음` 버튼을 처리할 때 400ms 를 그냥 잤습니다.
+   * 다음 곡 정보가 아직 없는 채로 제어판을 갱신하면 옛 곡이 그대로 보였기 때문입니다.
+   * 그 400ms 는 **누른 사람이 고스란히 기다리는 시간**이었습니다.
+   * 이제는 버튼에 바로 답하고, 소리가 실제로 바뀌는 순간 여기서 따라 갱신합니다.
+   *
+   * ⚠️ 미루는 이유: 버튼 응답(interaction.update)이 아직 날아가는 중일 수 있습니다.
+   *    같은 메시지를 동시에 두 번 고치면 갱신이 서로를 덮어씁니다.
+   * ⚠️ 연달아 불립니다 (곡 전환·일시정지 해제·음량 반영). 마지막 것만 반영합니다.
+   */
+  schedulePanelRefresh() {
+    clearTimeout(this.panelTimer);
+    this.panelTimer = setTimeout(() => {
+      this.panelTimer = null;
+      this.refreshPanel();
+    }, 600);
+  }
+
   refreshPanel() {
     const msg = this.panelMessage;
     if (!msg || this.destroyed) return;
@@ -732,6 +756,8 @@ export class GuildAudio {
     this.cancelLeaveTimer();
     clearTimeout(this.volumeTimer);
     this.volumeTimer = null;
+    clearTimeout(this.panelTimer);
+    this.panelTimer = null;
     this.queue = [];
     this.history = [];
     this.nextIntent = null;

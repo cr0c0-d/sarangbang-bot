@@ -260,9 +260,12 @@ export async function handleMusicComponent(interaction, audio) {
   }
 
   // 버튼을 누른 그 메시지를 최신 상태로 갱신합니다.
-  // 곡을 넘긴 직후에는 아직 다음 곡이 로딩 중일 수 있어 살짝 기다립니다.
-  if (id === 'm:prev' || id === 'm:next') await new Promise((r) => setTimeout(r, 400));
-
+  //
+  // ⚠️ 여기서 기다리지 마세요. 예전에는 `⏮️` `⏭️` 에 400ms 를 잤습니다 —
+  //    다음 곡 정보가 아직 없어서 옛 곡이 그대로 보였기 때문입니다.
+  //    그 400ms 는 누른 사람이 고스란히 기다리는 시간이었습니다.
+  //    지금은 바로 답하고, 소리가 실제로 바뀌는 순간
+  //    guild-audio 의 schedulePanelRefresh() 가 따라 갱신합니다.
   audio.panelMessage = interaction.message;
   rememberPanel(MUSIC, interaction.channelId, interaction.message.id);
   try {
