@@ -8,8 +8,9 @@
 //
 //   대신 ffmpeg 의 -af volume 을 씁니다. 그러면:
 //     · 읽어주기 — 매 발화마다 새 ffmpeg 이 뜨므로 **바로** 반영됩니다.
-//     · 음악     — 이미 흐르는 소리는 못 바꾸므로, 재생 중이면
-//                  **듣던 지점부터 다시 틀어서** 반영합니다 (약 1초 끊깁니다).
+//     · 음악     — 이미 흐르는 소리는 못 바꾸므로 다시 틀어야 합니다. 다만
+//                  **새 소리를 다 준비한 뒤에 바꿔치기**하므로 끊기지 않습니다.
+//                  대신 누른 뒤 1~2초쯤 지나 바뀝니다.
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { volumePercent, setVolume, VOLUME_MAX } from './settings.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
@@ -71,7 +72,7 @@ export const commands = [
       if (music !== null) {
         // 재생 중이면 듣던 지점부터 다시 틀어 바로 반영합니다.
         const audio = peekGuildAudio(interaction.guildId);
-        if (audio?.reapplyVolume()) note = '\n(재생 중이라 잠깐 끊겼다 이어집니다)';
+        if (audio?.reapplyVolume()) note = '\n(듣던 곳에서 곧 바뀝니다. 끊기지 않습니다)';
       }
       if (tts !== null) note += '\n(읽어주기는 다음 문장부터 바로 적용됩니다)';
 

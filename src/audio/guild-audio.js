@@ -23,6 +23,37 @@ import { showPanel, buildPanel } from '../music/panel.js';
 import { forgetPanel, MUSIC } from '../panel-registry.js';
 import { record as recordHistory } from '../music/history.js';
 
+// 음량을 바꿀 때 새 스트림을 준비하는 데 걸리는 시간(초)을 미리 잡아둡니다.
+// 이만큼 앞을 내다보고 잘라야, 준비가 끝났을 때 옛 소리와 정확히 이어붙습니다.
+// 짧으면 조금 되감기고, 길면 반영이 늦어질 뿐 **끊기지는 않습니다.**
+const LEAD_REMOTE_SEC = 1.5; // 유튜브 주소를 ffmpeg 이 직접 받는 경우
+const LEAD_PIPE_SEC = 3.5;   // yt-dlp 를 거치는 경우 (시작만 1초가 넘습니다 — 실측)
+
+/**
+ * 새 스트림이 **첫 소리를 낼 준비가 될 때까지** 기다립니다.
+ * 이게 있어야 "준비되면 바꿔치기" 가 가능하고, 그래야 침묵이 안 생깁니다.
+ * @returns {Promise<boolean>} 소리가 나올 수 있으면 true
+ */
+function waitForAudio(stream, timeoutMs = 15_000) {
+  return new Promise((resolve) => {
+    if (stream.readableLength > 0) return resolve(true);
+    const finish = (okFlag) => {
+      clearTimeout(timer);
+      stream.off("readable", onReadable);
+      stream.off("end", onDead);
+      stream.off("error", onDead);
+      resolve(okFlag);
+    };
+    // 데이터 없이 readable 이 뜨는 경우(끝났을 때)가 있어 길이를 함께 봅니다.
+    const onReadable = () => { if (stream.readableLength > 0) finish(true); };
+    const onDead = () => finish(false);
+    const timer = setTimeout(() => finish(false), timeoutMs);
+    stream.on("readable", onReadable);
+    stream.once("end", onDead);
+    stream.once("error", onDead);
+  });
+}
+
 /** @type {Map<string, GuildAudio>} */
 const registry = new Map();
 
@@ -63,6 +94,7 @@ export class GuildAudio {
     this.currentResource = null;   // 실제로 얼마나 재생됐는지 확인용
     this.currentOffsetSec = 0;     // 이번 리소스가 몇 초 지점부터 시작했는지 (positionSec 참고)
     this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
+    this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
     this.usedDirect = false;       // 이번 곡을 "직접 수신" 으로 틀었는지
     this.lastStreamError = null;   // ffmpeg 이 남긴 마지막 오류
     this.killCurrent = null;
@@ -290,29 +322,43 @@ export class GuildAudio {
     this.volumeTimer = setTimeout(() => {
       this.volumeTimer = null;
       if (this.destroyed || this.current !== item) return; // 그 사이 곡이 바뀌었습니다
-      this.restartAtCurrentPosition();
-    }, 700);
+      this.restartAtCurrentPosition().catch((err) => console.error("[music] 음량 반영:", err.message));
+    }, 500);
     return true;
   }
 
-  /** 듣던 지점부터 다시 틉니다. 새 음량이 여기서 적용됩니다. */
-  restartAtCurrentPosition() {
+  /**
+   * 듣던 지점부터 다시 틉니다. 새 음량이 여기서 적용됩니다.
+   *
+   * **순서가 핵심이다.** 예전에는 옛 소리를 먼저 끊고 새 스트림을 만들었는데,
+   * 그러면 준비되는 몇 초가 통째로 침묵이었다. 게다가 새 스트림이 실패하면
+   * 이미 끊어놓은 뒤라 재시도 경로를 타고 **곡이 처음부터** 다시 시작됐다.
+   *
+   * 그래서 **준비를 다 끝낸 뒤에 바꿔치기하고, 그 다음에 옛것을 끊는다.**
+   *   - 침묵이 없다 (준비하는 동안 옛 소리가 계속 난다)
+   *   - 실패해도 듣던 소리가 그대로 이어진다 (아무 일도 없던 것이 된다)
+   */
+  async restartAtCurrentPosition() {
     if (!this.current || !this.isPlaying) return false;
 
-    // 지금까지 재생된 지점부터 이어서 틉니다.
-    //
-    // ★ playbackDuration 은 **지금 리소스**가 재생한 시간만 셉니다.
-    //   한 번 다시 틀면 새 리소스는 0 부터 세므로, 건너뛴 만큼(currentOffsetSec)을
-    //   더하지 않으면 **두 번째 조절부터 곡이 처음으로 되돌아갑니다.** (실제로 겪은 버그)
-    const resumeAt = Math.max(0, this.positionSec() - 0.3); // 살짝 앞에서 시작해 끊김을 덜 느끼게
+    const item = this.current;
+    // 준비 중에 또 눌리면 앞의 것은 버려야 합니다. 세대 번호로 구분합니다.
+    const gen = ++this.restartGen;
 
-    this.killCurrent?.();
-    this.killCurrent = null;
-
+    let prepared;
+    let resumeAt;
     try {
-      const item = this.current;
       const src = createSource(item.track, { forcePipe: Boolean(item.forcePipe) });
-      this.usedDirect = src.remote;
+
+      // 준비하는 동안에도 **옛 소리는 계속 납니다.** 그만큼 앞을 내다보고 잘라야
+      // 바꿔치기하는 순간에 겹치지도, 끊기지도 않습니다.
+      // yt-dlp 를 거치는 쪽은 시작만 1초가 넘어서(실측) 더 넉넉히 잡습니다.
+      const lead = src.remote ? LEAD_REMOTE_SEC : LEAD_PIPE_SEC;
+
+      // ★ playbackDuration 은 **지금 리소스**가 재생한 시간만 셉니다.
+      //   다시 틀면 새 리소스는 0 부터 세므로, 건너뛴 만큼(currentOffsetSec)을
+      //   더하지 않으면 **두 번째 조절부터 곡이 처음으로 되돌아갑니다.** (실제로 겪은 버그)
+      resumeAt = Math.max(0, this.positionSec() + lead);
 
       const { stream, kill } = toOggOpus(src.input, {
         volume: volumeScale(this.guild.id, 'music'),
@@ -322,20 +368,55 @@ export class GuildAudio {
           this.lastStreamError = msg;
         },
       });
-      this.killCurrent = () => {
-        kill();
-        src.kill();
+      prepared = {
+        stream,
+        remote: src.remote,
+        kill: () => {
+          kill();
+          src.kill();
+        },
       };
-
-      const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
-      this.currentResource = resource;
-      this.currentOffsetSec = resumeAt; // 다음 번에 위치를 제대로 계산하기 위해 꼭 남깁니다
-      this.musicPlayer.play(resource);
-      return true;
     } catch (err) {
       console.error('[music] 음량 반영 실패:', err.message);
       return false;
     }
+
+    // 첫 소리가 나올 준비가 될 때까지 기다립니다. 그동안 옛 소리는 계속 납니다.
+    const ready = await waitForAudio(prepared.stream);
+    if (!this.isCurrentStill(item, gen) || !ready) {
+      prepared.kill();
+      if (ready === false && this.isCurrentStill(item, gen)) {
+        // 듣던 소리는 멀쩡하므로 아무것도 하지 않습니다. 예전에는 여기서 곡이 처음으로 돌아갔습니다.
+        console.warn('[music] 음량 반영 실패 — 듣던 소리를 그대로 둡니다');
+      }
+      return false;
+    }
+
+    // 옛 소리가 잘라둔 지점에 닿을 때까지만 더 기다렸다가 바꿔치기합니다.
+    const waitMs = (resumeAt - this.positionSec()) * 1000;
+    if (waitMs > 0) await new Promise((r) => setTimeout(r, waitMs));
+    if (!this.isCurrentStill(item, gen)) {
+      prepared.kill();
+      return false;
+    }
+
+    const stopOld = this.killCurrent;
+    this.killCurrent = prepared.kill;
+    this.usedDirect = prepared.remote;
+
+    const resource = createAudioResource(prepared.stream, { inputType: StreamType.OggOpus });
+    this.currentResource = resource;
+    this.currentOffsetSec = resumeAt; // 다음 번에 위치를 제대로 계산하기 위해 꼭 남깁니다
+    this.musicPlayer.play(resource);
+
+    // **바꿔치기한 뒤에** 끊습니다. 먼저 끊으면 그 시간만큼 침묵이 생깁니다.
+    stopOld?.();
+    return true;
+  }
+
+  /** 기다리는 사이에 곡이 바뀌거나 또 눌리지 않았는지 확인합니다. */
+  isCurrentStill(item, gen) {
+    return !this.destroyed && this.current === item && gen === this.restartGen && this.isPlaying;
   }
 
   /**
@@ -386,13 +467,16 @@ export class GuildAudio {
    * (2) 그것도 실패하면 **디스코드에 이유를 알립니다.**
    */
   playedNothing() {
-    // 음량을 바꾸면 리소스가 새로 생겨 playbackDuration 이 0 부터 다시 셉니다.
-    // 건너뛴 만큼을 더하지 않으면, 곡 끝 무렵에 음량을 바꿨을 때
-    // 멀쩡히 다 들은 곡을 "재생 실패" 로 잘못 알립니다.
-    const played = this.positionSec() * 1000;
+    // 이번 시도가 소리를 냈는지만 봅니다. 3초 넘게 났으면 실패가 아닙니다.
+    const played = this.currentResource?.playbackDuration ?? 0;
+    if (played >= 3000) return false;
+
+    // 처음부터 튼 것이 아닐 수 있습니다(음량 조절·재시도로 이어듣기).
+    // 그때는 **남은 길이**를 봐야 합니다. 곡 끝 무렵이면 3초만 나고 끝나는 게 정상인데,
+    // 원곡 전체 길이와 비교하면 멀쩡히 다 들은 곡을 "재생 실패" 로 잘못 알립니다.
     const trackLen = this.current?.track?.duration ?? 0;
-    // 3초 미만만 재생됐는데 원곡이 그보다 길면 실패로 봅니다.
-    return played < 3000 && (trackLen === 0 || trackLen > 5);
+    if (trackLen === 0) return true; // 길이를 모르면 실패로 봅니다
+    return trackLen - this.currentOffsetSec > 5;
   }
 
   /**
@@ -424,7 +508,8 @@ export class GuildAudio {
         // 재생 주소가 거부된 것으로 보입니다. 느리지만 확실한 방식으로 다시 시도합니다.
         console.warn(`[music] 직접 수신 실패 → yt-dlp 방식으로 재시도: ${item.track.title}`);
         this.current = null;
-        this.queue.unshift({ ...item, forcePipe: true });
+        // 듣던 위치를 넘겨줍니다. 안 넘기면 **곡이 처음부터** 다시 시작됩니다.
+        this.queue.unshift({ ...item, forcePipe: true, resumeAt: this.positionSec() });
         this.playNext('auto');
         return;
       }

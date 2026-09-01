@@ -240,7 +240,7 @@ export async function handleMusicComponent(interaction, audio) {
       const now = setVolume(audio.guild.id, 'music', volumePercent(audio.guild.id, 'music') + step);
       // 재생 중이면 듣던 지점부터 다시 틀어 바로 반영합니다.
       audio.reapplyVolume();
-      toast = `🔊 음악 음량 **${now}%**`;
+      toast = `🔊 음악 음량 **${now}%** — 듣던 곳에서 곧 바뀝니다.`;
       break;
     }
     case 'm:top': {
