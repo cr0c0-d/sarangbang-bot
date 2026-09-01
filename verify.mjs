@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 29개 로드', allCommands.length === 29, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 30개 로드', allCommands.length === 30, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능', '내목소리']) {
+for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '정리']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -386,7 +386,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
 
   const idx = fs.readFileSync('./src/index.js', 'utf8');
   ok('index.js: 명령어 중앙 차단', idx.includes('command.feature && !featureEnabled'));
-  ok('index.js: 버튼 차단', idx.includes("isMusic ? 'music' : isTimer ? 'timer' : null"));
+  ok('index.js: 버튼 차단', idx.includes("isMusic ? 'music' : isTimer ? 'timer' :"));
   ok('index.js: f: 라우팅', idx.includes("startsWith('f:')"));
 
   for (const [file, key] of [
@@ -423,6 +423,43 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
   ok('갤러리 패널: 사진 없으면 안 띄움', ip.includes('files.length === 0'));
   ok('갤러리 패널: 링크 버튼', ip.includes('ButtonStyle.Link'));
   ok('이미지 저장 후 패널 호출', fs.readFileSync('./src/images/commands.js', 'utf8').includes('showGalleryPanel('));
+}
+
+// 6r) 사진 용량 자동 정리
+{
+  process.env.IMAGE_MAX_GB = '0.000001'; // 1KB — 무조건 초과시켜 계획이 서는지 본다
+  process.env.IMAGE_MIN_KEEP_DAYS = '0';
+  const cl = await import('./src/images/cleanup.js');
+
+  const L = cl.limits();
+  ok('예산 설정을 읽음', L.maxBytes > 0 && L.targetPercent > 0);
+  ok('기본 최소보관일이 있음', cl.limits().minKeepDays >= 0);
+
+  const u = await cl.usage();
+  ok('용량 집계', typeof u.bytes === 'number' && typeof u.count === 'number');
+  ok('디스크 여유 확인', u.diskFree === null || u.diskFree > 0, String(u.diskFree));
+
+  const plan = await cl.planCleanup();
+  ok('계획은 실제로 지우지 않음 (files 목록만)', Array.isArray(plan.files));
+  ok('요약 문구 생성', typeof cl.describe(plan) === 'string' && cl.describe(plan).length > 10);
+
+  // 예산이 넉넉하면 정리 대상이 없어야 한다
+  process.env.IMAGE_MAX_GB = '1000';
+  const plan2 = await cl.planCleanup();
+  ok('여유 있으면 정리 안 함', plan2.need === false, plan2.reason);
+
+  const src2 = fs.readFileSync('./src/images/cleanup.js', 'utf8');
+  ok('오래된 순 정렬', src2.includes('a.mtime - b.mtime'));
+  ok('최근 사진 보호', src2.includes('f.mtime > cutoff'));
+  ok('디스크 바닥이면 보호 해제', src2.includes('const ignoreAge = diskTight'));
+  ok('정리 후 디스코드 알림', src2.includes('사진 자동 정리'));
+
+  const ic2 = fs.readFileSync('./src/images/commands.js', 'utf8');
+  ok('/정리 는 확인 버튼을 거침', ic2.includes("setCustomId('g:clean')"));
+  ok('확인 시점에 계획을 다시 계산', ic2.includes('planCleanup({ force: true })'));
+
+  process.env.IMAGE_MAX_GB = '15';
+  delete process.env.IMAGE_MIN_KEEP_DAYS;
 }
 
 // 7) 유튜브 링크 감지

@@ -12,7 +12,8 @@ import { handleMusicMessage } from './music/commands.js';
 import { handleTtsMessage } from './tts/index.js';
 import { prewarm as prewarmTts } from './tts/synth.js';
 import { ttsEnabled } from './settings.js';
-import { handleImageMessage, } from './images/commands.js';
+import { handleImageMessage, handleImageComponent } from './images/commands.js';
+import { startAutoCleanup } from './images/cleanup.js';
 import { initStore } from './images/store.js';
 import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
@@ -88,10 +89,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isMusic = interaction.customId.startsWith('m:');
     const isTimer = interaction.customId.startsWith('t:');
     const isFeature = interaction.customId.startsWith('f:');
-    if (!isMusic && !isTimer && !isFeature) return;
+    const isImage = interaction.customId.startsWith('g:');
+    if (!isMusic && !isTimer && !isFeature && !isImage) return;
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -100,6 +102,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     try {
       if (isFeature) await handleFeatureComponent(interaction);
+      else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
@@ -187,6 +190,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 await initSettings();
 await initStore();
 const webServer = await startWebServer();
+startAutoCleanup();
 
 await client.login(config.token).catch((err) => {
   console.error('❌ 로그인 실패:', err.message);
