@@ -495,8 +495,8 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
 {
   const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
   ok('재생 실패 감지 함수', ga.includes('playedNothing()'));
-  ok('직접수신 실패 시 파이프로 재시도', ga.includes('forcePipe: true'));
-  ok('두 방식 다 실패하면 사용자에게 알림', ga.includes('재생에 실패했습니다'));
+  ok('실패하면 한 단계 아래로 재시도', ga.includes('srcLevel: nextLevel'));
+  ok('세 단계 모두 실패하면 사용자에게 알림', ga.includes('재생에 실패했습니다'));
 
   const ff = fs.readFileSync('./src/audio/ffmpeg.js', 'utf8');
   ok('ffmpeg 오류를 호출부로 전달', ff.includes('onError?.(msg)'));
@@ -537,6 +537,33 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   // 쿠키를 쓰는 서버에서 실제로 겪은 문제입니다.
   ok('직접수신이 계속 실패하면 스스로 끔', yt.includes('directDisabled') && yt.includes('noteDirectFailure'));
   ok('성공하면 실패 기록을 지움', yt.includes('noteDirectSuccess'));
+
+  // 원본 준비의 **세 단계**. 1단계(뽑아둔 주소를 yt-dlp 가 받기)가 없으면
+  // 쿠키를 쓰는 서버는 한 곡에 유튜브 추출을 **두 번** 합니다. (실측 3.5초 → 1.4초)
+  {
+    const { sourceLevel, SRC_DIRECT, SRC_URL, SRC_EXTRACT } = await import('./src/music/ytdlp.js');
+    const fresh = { streamUrl: 'https://x/a', extractedAt: Date.now(), url: 'https://youtu.be/x' };
+    const stale = { streamUrl: 'https://x/a', extractedAt: 1, url: 'https://youtu.be/x' };
+    const none = { streamUrl: null, extractedAt: 0, url: 'https://youtu.be/x' };
+    const saved = process.env.MUSIC_DIRECT_STREAM;
+
+    process.env.MUSIC_DIRECT_STREAM = 'true';
+    ok('주소가 살아있으면 0단계(직접)', sourceLevel(fresh, SRC_DIRECT) === SRC_DIRECT);
+    ok('0단계가 실패했으면 1단계(뽑아둔 주소)', sourceLevel(fresh, SRC_URL) === SRC_URL);
+    ok('1단계도 실패했으면 2단계(전체 추출)', sourceLevel(fresh, SRC_EXTRACT) === SRC_EXTRACT);
+    ok('주소가 없으면 곧바로 2단계', sourceLevel(none, SRC_DIRECT) === SRC_EXTRACT);
+    ok('주소가 만료됐으면 2단계', sourceLevel(stale, SRC_DIRECT) === SRC_EXTRACT);
+
+    process.env.MUSIC_DIRECT_STREAM = 'false';
+    // ⚠️ 직접 수신을 껐다고 2단계로 떨어지면 안 됩니다. 그게 예전의 느린 동작이었습니다.
+    ok('직접수신을 꺼도 1단계는 씀', sourceLevel(fresh, SRC_DIRECT) === SRC_URL);
+    if (saved === undefined) delete process.env.MUSIC_DIRECT_STREAM;
+    else process.env.MUSIC_DIRECT_STREAM = saved;
+
+    ok('1단계는 뽑아둔 주소를 넘김', yt.includes("createStream(track.streamUrl, { extract: false })"));
+    // 재생 주소에는 고를 포맷이 하나뿐이라, -f 조건을 걸면 도리어 못 찾고 실패합니다.
+    ok('추출하지 않을 때는 -f 를 안 붙임', yt.includes("if (extract) args.push('-f', AUDIO_FORMAT, '--no-playlist');"));
+  }
   const gaDirect = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
   ok('실패 원인을 로그에 남김', gaDirect.includes('this.lastStreamError.slice(0, 200)'));
   const cfg = fs.readFileSync('./src/config.js', 'utf8');
@@ -1346,13 +1373,14 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('새 소리를 준비한 뒤에 바꿈', rs.indexOf('await waitForAudio(') < rs.indexOf('this.musicPlayer.play(resource)'));
   ok('옛 소리는 바꾼 뒤에 끊음', rs.indexOf('this.musicPlayer.play(resource)') < rs.indexOf('stopOld?.()'));
   ok('준비에 실패해도 듣던 소리를 안 끊음', rs.includes('prepared.kill()') && !rs.includes('this.killCurrent?.()'));
-  ok('준비 시간만큼 앞을 내다봄', ga.includes('LEAD_REMOTE_SEC') && ga.includes('LEAD_PIPE_SEC'));
+  ok('준비 시간만큼 앞을 내다봄',
+    ga.includes('LEAD_REMOTE_SEC') && ga.includes('LEAD_URL_SEC') && ga.includes('LEAD_PIPE_SEC'));
   ok('yt-dlp 쪽을 더 넉넉히', ga.includes('const LEAD_PIPE_SEC = 3.5;') && ga.includes('const LEAD_REMOTE_SEC = 1.5;'));
   ok('준비 중 또 누르면 앞의 것 버림', rs.includes('++this.restartGen') && ga.includes('gen === this.restartGen'));
   ok('데이터 없는 readable 은 준비된 것이 아님', ga.includes('if (stream.readableLength > 0) finish(true)'));
 
   // 재시도가 곡을 처음으로 되돌리지 않는가
-  ok('재시도할 때 듣던 위치를 넘김', ga.includes('forcePipe: true, resumeAt: this.positionSec()'));
+  ok('재시도할 때 듣던 위치를 넘김', ga.includes('srcLevel: nextLevel, resumeAt: this.positionSec()'));
   ok('재생 실패 판정은 이번 시도만 봄', ga.includes('const played = this.currentResource?.playbackDuration ?? 0;'));
   ok('이어듣기는 남은 길이로 판정', ga.includes('return trackLen - this.currentOffsetSec > 5;'));
   ok('음량 버튼 연타는 모아서 한 번만', ga.includes('clearTimeout(this.volumeTimer)') && ga.includes('this.restartAtCurrentPosition()'));

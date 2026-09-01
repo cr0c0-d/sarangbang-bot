@@ -17,7 +17,16 @@ import {
 } from '@discordjs/voice';
 import { config } from '../config.js';
 import { volumeScale } from '../settings.js';
-import { createSource, hasFreshStreamUrl, getTracks, noteDirectFailure, noteDirectSuccess } from '../music/ytdlp.js';
+import {
+  createSource,
+  hasFreshStreamUrl,
+  getTracks,
+  noteDirectFailure,
+  noteDirectSuccess,
+  SRC_DIRECT,
+  SRC_URL,
+  SRC_EXTRACT,
+} from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel, buildPanel } from '../music/panel.js';
 import { forgetPanel, MUSIC } from '../panel-registry.js';
@@ -26,8 +35,19 @@ import { record as recordHistory } from '../music/history.js';
 // 음량을 바꿀 때 새 스트림을 준비하는 데 걸리는 시간(초)을 미리 잡아둡니다.
 // 이만큼 앞을 내다보고 잘라야, 준비가 끝났을 때 옛 소리와 정확히 이어붙습니다.
 // 짧으면 조금 되감기고, 길면 반영이 늦어질 뿐 **끊기지는 않습니다.**
-const LEAD_REMOTE_SEC = 1.5; // 유튜브 주소를 ffmpeg 이 직접 받는 경우
-const LEAD_PIPE_SEC = 3.5;   // yt-dlp 를 거치는 경우 (시작만 1초가 넘습니다 — 실측)
+const LEAD_REMOTE_SEC = 1.5; // 유튜브 주소를 ffmpeg 이 직접 받는 경우 (0단계)
+const LEAD_URL_SEC = 2.5;    // 뽑아둔 주소를 yt-dlp 가 받는 경우 (1단계, 실측 1.4~2.2초)
+const LEAD_PIPE_SEC = 3.5;   // 유튜브에서 다시 뽑는 경우 (2단계, 시작만 1초가 넘습니다 — 실측)
+
+/** 로그에 단계 번호만 찍으면 나중에 아무도 못 읽습니다. */
+const SRC_LABEL = ['직접 수신', '뽑아둔 주소', '전체 추출'];
+
+/** 준비에 걸리는 시간만큼 앞을 내다봐야 바꿔치기가 매끄럽습니다. (restartAtCurrentPosition) */
+function leadFor(level) {
+  if (level === SRC_DIRECT) return LEAD_REMOTE_SEC;
+  if (level === SRC_URL) return LEAD_URL_SEC;
+  return LEAD_PIPE_SEC;
+}
 
 /**
  * 새 스트림이 **첫 소리를 낼 준비가 될 때까지** 기다립니다.
@@ -95,7 +115,8 @@ export class GuildAudio {
     this.currentOffsetSec = 0;     // 이번 리소스가 몇 초 지점부터 시작했는지 (positionSec 참고)
     this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
     this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
-    this.usedDirect = false;       // 이번 곡을 "직접 수신" 으로 틀었는지
+    this.usedDirect = false;       // 이번 곡을 "직접 수신"(0단계) 으로 틀었는지
+    this.srcLevel = SRC_DIRECT;    // 이번 곡을 어느 단계로 틀었는지 (ytdlp.js 의 SRC_* 참고)
     this.lastStreamError = null;   // ffmpeg 이 남긴 마지막 오류
     this.killCurrent = null;
     this.loop = false;
@@ -270,10 +291,11 @@ export class GuildAudio {
     this.current = item;
 
     try {
-      // 이미 뽑아둔 재생 주소가 살아 있으면 ffmpeg 이 직접 받습니다 (yt-dlp 재추출 생략).
-      // item.forcePipe 는 "직접 받기가 실패해서 다시 시도하는 중" 이라는 뜻입니다.
-      const src = createSource(item.track, { forcePipe: Boolean(item.forcePipe) });
+      // 가장 빠른 단계부터 시작합니다. item.srcLevel 은 "그 단계가 실패해서
+      // 한 칸 내려가 다시 시도하는 중" 이라는 뜻입니다. (ytdlp.js 의 SRC_* 참고)
+      const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
       this.usedDirect = src.remote;
+      this.srcLevel = src.level;
       this.lastStreamError = null;
 
       const { stream, kill } = toOggOpus(src.input, {
@@ -350,12 +372,12 @@ export class GuildAudio {
     let prepared;
     let resumeAt;
     try {
-      const src = createSource(item.track, { forcePipe: Boolean(item.forcePipe) });
+      const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
 
       // 준비하는 동안에도 **옛 소리는 계속 납니다.** 그만큼 앞을 내다보고 잘라야
       // 바꿔치기하는 순간에 겹치지도, 끊기지도 않습니다.
       // yt-dlp 를 거치는 쪽은 시작만 1초가 넘어서(실측) 더 넉넉히 잡습니다.
-      const lead = src.remote ? LEAD_REMOTE_SEC : LEAD_PIPE_SEC;
+      const lead = leadFor(src.level);
 
       // ★ playbackDuration 은 **지금 리소스**가 재생한 시간만 셉니다.
       //   다시 틀면 새 리소스는 0 부터 세므로, 건너뛴 만큼(currentOffsetSec)을
@@ -373,6 +395,7 @@ export class GuildAudio {
       prepared = {
         stream,
         remote: src.remote,
+        level: src.level,
         kill: () => {
           kill();
           src.kill();
@@ -405,6 +428,7 @@ export class GuildAudio {
     const stopOld = this.killCurrent;
     this.killCurrent = prepared.kill;
     this.usedDirect = prepared.remote;
+    this.srcLevel = prepared.level;
 
     const resource = createAudioResource(prepared.stream, { inputType: StreamType.OggOpus });
     this.currentResource = resource;
@@ -506,23 +530,25 @@ export class GuildAudio {
     if (intent === 'auto' && this.current && this.playedNothing()) {
       const item = this.current;
 
-      if (this.usedDirect && !item.forcePipe) {
-        // 재생 주소가 거부된 것으로 보입니다. 느리지만 확실한 방식으로 다시 시도합니다.
+      if (this.srcLevel < SRC_EXTRACT) {
+        // 이 단계가 거부된 것으로 보입니다. **한 칸 아래 단계로** 다시 시도합니다.
         // 오류 내용을 안 찍으면 왜 실패하는지 영영 알 수 없습니다.
+        const nextLevel = this.srcLevel + 1;
         console.warn(
-          `[music] 직접 수신 실패 → yt-dlp 방식으로 재시도: ${item.track.title}` +
+          `[music] ${SRC_LABEL[this.srcLevel]} 실패 → ${SRC_LABEL[nextLevel]} 로 재시도: ${item.track.title}` +
             (this.lastStreamError ? `
         ${this.lastStreamError.slice(0, 200)}` : '')
         );
-        noteDirectFailure(this.lastStreamError);
+        // 0단계(직접 수신)만 "이 서버에서 아예 안 되는 것" 으로 셉니다.
+        if (this.srcLevel === SRC_DIRECT) noteDirectFailure(this.lastStreamError);
         this.current = null;
         // 듣던 위치를 넘겨줍니다. 안 넘기면 **곡이 처음부터** 다시 시작됩니다.
-        this.queue.unshift({ ...item, forcePipe: true, resumeAt: this.positionSec() });
+        this.queue.unshift({ ...item, srcLevel: nextLevel, resumeAt: this.positionSec() });
         this.playNext('auto');
         return;
       }
 
-      // 두 방식 다 실패했습니다. 이제는 조용히 넘어가면 안 됩니다.
+      // 세 단계 모두 실패했습니다. 이제는 조용히 넘어가면 안 됩니다.
       console.error(`[music] 재생 실패: ${item.track.title} ${this.lastStreamError ?? ''}`);
       this.notify(
         `⚠️ **${item.track.title}** 재생에 실패했습니다.\n` +

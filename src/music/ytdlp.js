@@ -368,22 +368,15 @@ export function hasFreshStreamUrl(track) {
 }
 
 /**
- * 곡 하나의 오디오 원본을 준비합니다.
- *
- * @param {object} track getTracks() 가 돌려준 곡 객체
- * @returns {{ input: import('node:stream').Readable | string, remote: boolean, kill: () => void }}
- *   input 이 문자열이면 ffmpeg 이 그 주소를 직접 받으면 됩니다 (yt-dlp 재추출 없음 = 빠름).
- *   Readable 이면 yt-dlp 가 흘려보내는 스트림입니다 (주소가 만료됐거나 없을 때).
- */
-/**
- * 직접 수신이 이 서버에서 되는가.
+ * 직접 수신(0단계)이 이 서버에서 되는가.
  *
  * **쿠키를 쓰는 서버에서는 거의 항상 실패합니다.** 쿠키로 뽑은 재생 주소를
  * ffmpeg 이 쿠키 없이 그냥 받으면 유튜브가 거부하기 때문입니다.
- * 그런데 실패해도 곡은 나옵니다 — 느린 방식으로 다시 시도하니까요.
- * 그래서 **문제를 눈치채기 어려운 채로 곡마다 시간을 두 배로 씁니다.**
+ * 그런데 실패해도 곡은 나옵니다 — 아래 단계로 다시 시도하니까요.
+ * 그래서 **문제를 눈치채기 어려운 채로 곡마다 헛걸음을 합니다.**
  *
- * 두 번 연속 실패하면 이번 실행 동안은 아예 쓰지 않습니다.
+ * 두 번 연속 실패하면 이번 실행 동안은 0단계를 아예 쓰지 않습니다.
+ * (1단계부터 시작하므로 재생 자체는 계속 됩니다)
  */
 let directFailures = 0;
 let directDisabled = false;
@@ -393,8 +386,9 @@ export function noteDirectFailure(reason) {
   if (++directFailures < 2) return;
   directDisabled = true;
   console.warn(
-    '[music] 직접 수신이 계속 실패해서 이번 실행 동안은 쓰지 않습니다.\n' +
-      '        곡마다 헛걸음하던 것이 사라져 재생이 빨라집니다. (재생 자체는 계속 됩니다)\n' +
+    '[music] 직접 수신(0단계)이 계속 실패해서 이번 실행 동안은 쓰지 않습니다.\n' +
+      '        이제 곡마다 1단계(뽑아둔 주소를 yt-dlp 가 받기)부터 시작합니다.\n' +
+      '        헛걸음이 사라져 재생이 빨라집니다. (재생 자체는 계속 됩니다)\n' +
       '        쿠키를 쓰는 서버에서 흔한 일입니다. 영구히 끄려면\n' +
       '        .env.music 에 MUSIC_DIRECT_STREAM=false 를 넣으세요.' +
       (reason ? `\n        마지막 오류: ${reason}` : '')
@@ -406,39 +400,72 @@ export function noteDirectSuccess() {
   directFailures = 0;
 }
 
-export function createSource(track, { forcePipe = false } = {}) {
+/**
+ * 오디오 원본을 준비하는 **세 단계**. 위에서부터 빠르고, 실패하면 한 칸 내려갑니다.
+ *
+ *   0 직접 — 뽑아둔 주소를 **ffmpeg 이 직접** 받습니다. yt-dlp 를 아예 안 씁니다. (가장 빠름)
+ *   1 주소 — 뽑아둔 주소를 **yt-dlp 가** 받습니다. 유튜브 추출을 건너뛰므로
+ *            **쿠키·프록시를 그대로 쓰면서** 추출 한 번(수 초)을 아낍니다.
+ *   2 추출 — 유튜브에서 처음부터 다시 뽑습니다. 가장 느리지만 가장 확실합니다.
+ *
+ * ⚠️ **1단계를 지우지 마세요.** 예전에는 0 아니면 2 뿐이었습니다.
+ *    쿠키를 쓰는 서버는 0 단계가 거의 항상 거부되므로(직접 수신 실패) 곧바로 2 로 떨어졌고,
+ *    그러면 **한 곡에 유튜브 추출을 두 번**(목록 담을 때 + 틀 때) 하게 됩니다.
+ *    1 단계는 그 두 번째 추출을 없앱니다. (실측: 파이프 경로 3.2초 → 1.4초)
+ */
+export const SRC_DIRECT = 0;
+export const SRC_URL = 1;
+export const SRC_EXTRACT = 2;
+
+/** 이 곡을 실제로 어느 단계로 틀 수 있는지. (원하는 단계가 불가능하면 내려갑니다) */
+export function sourceLevel(track, wanted = SRC_DIRECT) {
   // .env 로 직접 수신을 아예 끌 수 있습니다.
   // 서버 환경에 따라 재생 주소가 거부될 수 있어, 문제가 생기면 이걸로 즉시 되돌립니다.
   const allowDirect = (process.env.MUSIC_DIRECT_STREAM ?? 'true').toLowerCase() !== 'false';
 
-  if (!forcePipe && allowDirect && !directDisabled && hasFreshStreamUrl(track)) {
-    // 이미 뽑아둔 주소를 그대로 씁니다. 추출을 한 번 건너뛰므로 약 2.8초가 절약됩니다.
-    return { input: track.streamUrl, remote: true, kill: () => {} };
+  let level = Math.max(SRC_DIRECT, Math.min(SRC_EXTRACT, wanted));
+  if (level === SRC_DIRECT && (!allowDirect || directDisabled)) level = SRC_URL;
+  // 뽑아둔 주소가 없거나 만료됐으면 0·1 단계를 쓸 수 없습니다.
+  if (level <= SRC_URL && !hasFreshStreamUrl(track)) level = SRC_EXTRACT;
+  return level;
+}
+
+export function createSource(track, { level = SRC_DIRECT } = {}) {
+  const lv = sourceLevel(track, level);
+
+  if (lv === SRC_DIRECT) {
+    return { input: track.streamUrl, remote: true, level: lv, kill: () => {} };
   }
-  const stream = createStream(track.url);
-  return { input: stream, remote: false, kill: () => stream.destroy?.() };
+  const stream =
+    lv === SRC_URL
+      ? createStream(track.streamUrl, { extract: false })
+      : createStream(track.url);
+  return { input: stream, remote: false, level: lv, kill: () => stream.destroy?.() };
 }
 
 /**
  * yt-dlp 로 오디오를 stdout 스트림으로 뽑아냅니다.
- * 재생 주소가 없거나 만료됐을 때만 씁니다 (재생목록에서 꺼낸 곡 등).
+ *
+ * @param {string} url 유튜브 주소(extract: true) 또는 이미 뽑아둔 재생 주소(extract: false)
+ * @param {{extract?: boolean}} [opts]
+ *   extract: false 면 **추출하지 않고 그 주소를 그대로 받아옵니다.**
+ *   그때는 `-f` 를 넘기지 않습니다 — 재생 주소에는 고를 포맷이 하나뿐이라,
+ *   `bestaudio[acodec=opus]` 같은 조건을 걸면 도리어 못 찾고 실패합니다.
  */
-export function createStream(url) {
-  const child = spawn(
-    YTDLP,
-    [
-      '-f', AUDIO_FORMAT,
-      '--no-playlist',
-      '--no-warnings',
-      '--ignore-config',
-      // 라이브/긴 영상에서 끊김을 줄이는 옵션
-      '--buffer-size', '16K',
-      ...extraArgs(),
-      '-o', '-',
-      url,
-    ],
-    { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true }
+export function createStream(url, { extract = true } = {}) {
+  const args = [];
+  if (extract) args.push('-f', AUDIO_FORMAT, '--no-playlist');
+  args.push(
+    '--no-warnings',
+    '--ignore-config',
+    // 라이브/긴 영상에서 끊김을 줄이는 옵션
+    '--buffer-size', '16K',
+    ...extraArgs(),
+    '-o', '-',
+    url
   );
+
+  const child = spawn(YTDLP, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
 
   let stderr = '';
   child.stderr.on('data', (d) => {
