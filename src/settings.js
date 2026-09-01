@@ -138,6 +138,39 @@ export function voiceFor(guildId, userId) {
   return userVoice(guildId, userId) ?? guildVoice(guildId) ?? config.tts.voice;
 }
 
+// ── 음량 (음악 / 읽어주기 따로) ────────────────────────────────
+//
+// ffmpeg 의 -af volume 으로 조절합니다. discord.js 의 inlineVolume 을 쓰면
+// 실시간 조절이 되지만, opus 를 PCM 으로 풀었다 다시 인코딩해야 합니다.
+// 이 프로젝트에는 순수 JS 인코더(opusscript)밖에 없어서 1코어 서버에서는 소리가 끊깁니다.
+// (ARCHITECTURE 3.2 절의 재인코딩 회피가 통째로 깨집니다)
+
+/** 0~200(%). 100 이 원음. */
+const VOLUME_DEFAULT = 100;
+export const VOLUME_MAX = 200;
+
+export function volumePercent(guildId, kind) {
+  return store[guildId]?.volume?.[kind] ?? VOLUME_DEFAULT;
+}
+
+/** ffmpeg 에 넘길 배율 (1 = 원음). */
+export function volumeScale(guildId, kind) {
+  return volumePercent(guildId, kind) / 100;
+}
+
+export function setVolume(guildId, kind, percent) {
+  const v = Math.max(0, Math.min(VOLUME_MAX, Math.round(percent)));
+  store[guildId] ??= {};
+  store[guildId].volume ??= {};
+  if (v === VOLUME_DEFAULT) delete store[guildId].volume[kind];
+  else store[guildId].volume[kind] = v;
+
+  if (Object.keys(store[guildId].volume).length === 0) delete store[guildId].volume;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return v;
+}
+
 export async function initSettings() {
   await fs.mkdir(config.dataDir, { recursive: true });
   try {

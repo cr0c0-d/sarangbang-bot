@@ -13,6 +13,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { formatDuration } from './ytdlp.js';
+import { volumePercent, setVolume } from '../settings.js';
 
 // 드롭다운은 디스코드 제한으로 최대 25개까지만 담을 수 있습니다.
 const SELECT_LIMIT = 25;
@@ -29,7 +30,8 @@ export function buildPanel(audio) {
     embed.setDescription(
       `**${cut(t.title, 200)}**\n${formatDuration(t.duration)}` +
         (audio.loop ? ' · 🔁 반복' : '') +
-        (audio.isPaused ? ' · ⏸️ 일시정지' : '')
+        (audio.isPaused ? ' · ⏸️ 일시정지' : '') +
+        ` · 🔊 ${volumePercent(audio.guild?.id, 'music')}%`
     );
     if (t.thumbnail) embed.setThumbnail(t.thumbnail);
   } else {
@@ -119,6 +121,8 @@ function buildComponents(audio) {
 
   rows.push(
     new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId('m:vol-').setEmoji('🔉').setLabel('소리 -10').setStyle(ButtonStyle.Secondary),
+      new ButtonBuilder().setCustomId('m:vol+').setEmoji('🔊').setLabel('소리 +10').setStyle(ButtonStyle.Secondary),
       new ButtonBuilder()
         .setCustomId('m:refresh')
         .setEmoji('🔄')
@@ -220,6 +224,15 @@ export async function handleMusicComponent(interaction, audio) {
     }
     case 'm:refresh':
       break;
+    case 'm:vol-':
+    case 'm:vol+': {
+      const step = id === 'm:vol+' ? 10 : -10;
+      const now = setVolume(audio.guild.id, 'music', volumePercent(audio.guild.id, 'music') + step);
+      // 재생 중이면 듣던 지점부터 다시 틀어 바로 반영합니다.
+      audio.reapplyVolume();
+      toast = `🔊 음악 음량 **${now}%**`;
+      break;
+    }
     case 'm:top': {
       const pos = Number(interaction.values[0]);
       const item = audio.bringToFront(pos);

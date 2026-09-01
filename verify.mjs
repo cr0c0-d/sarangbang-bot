@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 17개 로드', allCommands.length === 17, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 18개 로드', allCommands.length === 18, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '재생', '대기열', '순서이동', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말']) {
+for (const need of ['채널설정', '재생', '대기열', '순서이동', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '음량']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -249,6 +249,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
 {
   const { buildPanel } = await import('./src/music/panel.js');
   const fake = {
+    guild: { id: 'paneltest' },
     current: { track: { title: '지금곡', duration: 200, thumbnail: null } },
     queue: [
       { track: { title: '다음곡A', duration: 100 } },
@@ -423,7 +424,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
     ok(`/${name} 은 ${feature} 기능 소속`, byName.get(name)?.feature === feature, String(byName.get(name)?.feature));
   }
   // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다
-  for (const name of ['기능', '채널설정', '도움말']) {
+  for (const name of ['기능', '채널설정', '도움말', '음량']) {
     ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
   }
 
@@ -515,6 +516,40 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
 
   process.env.IMAGE_MAX_GB = '15';
   delete process.env.IMAGE_MIN_KEEP_DAYS;
+}
+
+// 6s) 음량 (음악 / 읽어주기 따로)
+{
+  const st = await import('./src/settings.js');
+  const G = 'volguild';
+  ok('기본은 100%', st.volumePercent(G, 'music') === 100 && st.volumePercent(G, 'tts') === 100);
+  ok('배율은 1', st.volumeScale(G, 'music') === 1);
+
+  st.setVolume(G, 'music', 70);
+  ok('음악만 바뀜', st.volumePercent(G, 'music') === 70 && st.volumePercent(G, 'tts') === 100);
+  ok('배율 환산', Math.abs(st.volumeScale(G, 'music') - 0.7) < 1e-9, String(st.volumeScale(G, 'music')));
+
+  st.setVolume(G, 'tts', 150);
+  ok('읽어주기는 따로', st.volumePercent(G, 'tts') === 150 && st.volumePercent(G, 'music') === 70);
+
+  ok('상한을 넘기면 잘림', st.setVolume(G, 'music', 999) === st.VOLUME_MAX, String(st.VOLUME_MAX));
+  ok('음수는 0으로', st.setVolume(G, 'music', -50) === 0);
+  st.setVolume(G, 'music', 100);
+  st.setVolume(G, 'tts', 100);
+
+  // inlineVolume 을 쓰면 안 됩니다 (순수 JS opus 인코더뿐이라 1코어 서버에서 끊김)
+  const ga2 = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  ok('inlineVolume 을 쓰지 않음', !ga2.includes('inlineVolume'));
+  ok('ffmpeg 음량으로 조절', ga2.includes("volumeScale(this.guild.id, 'music')"));
+  ok('재생 중 음량 반영 (이어서 다시 틀기)', ga2.includes('reapplyVolume()') && ga2.includes('seekSec: resumeAt'));
+
+  const pn2 = fs.readFileSync('./src/music/panel.js', 'utf8');
+  ok('제어판에 음량 버튼', pn2.includes("'m:vol+'") && pn2.includes("'m:vol-'"));
+
+  const tt2 = fs.readFileSync('./src/tts/index.js', 'utf8');
+  ok('읽어주기에 음량 적용', tt2.includes("volumeScale(message.guildId, 'tts')"));
+  const tm2 = fs.readFileSync('./src/timer/index.js', 'utf8');
+  ok('타이머 알람도 읽어주기 음량', tm2.includes("volumeScale(timer.guildId, 'tts')"));
 }
 
 // 7) 유튜브 링크 감지

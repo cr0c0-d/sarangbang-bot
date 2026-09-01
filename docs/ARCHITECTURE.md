@@ -261,6 +261,32 @@ yt-dlp -o -            ffmpeg -c:a libopus -f opus       @discordjs/voice
   바꿨을 때 즉시 죽지 않도록 남겨둔 안전망이다.
 - 검증됨: 3분 33초짜리 곡에서 8초 만에 2.5MB Opus 수신, ffmpeg이 `Audio: opus, 48000 Hz, stereo` 출력.
 
+### 3.2-1 음량은 ffmpeg 으로 조절한다 — `inlineVolume` 금지
+
+음악과 읽어주기의 음량을 **따로** 둔다 (`settings.js` 의 `volumePercent` / `volumeScale`).
+0~200%, 기본 100%. 서버별로 저장된다.
+
+**`createAudioResource(..., { inlineVolume: true })` 를 쓰면 안 된다.**
+실시간 조절은 되지만 opus → PCM → opus 재인코딩이 필요하고, 이 프로젝트에 설치된
+opus 인코더는 **순수 JS 인 `opusscript` 뿐이다**(`@discordjs/opus` 는 네이티브 빌드가 필요해
+Windows/ARM 설치가 번거로워 넣지 않았다). 1/8 OCPU 서버에서는 소리가 끊긴다.
+**3.2절의 "재인코딩 회피" 가 통째로 무너진다.**
+
+대신 ffmpeg 의 `-af volume=` 을 쓴다. 그러면 반영 시점이 달라진다.
+
+| | 반영 시점 | 이유 |
+|---|---|---|
+| 읽어주기 | **즉시** (다음 문장부터) | 발화마다 새 ffmpeg 프로세스가 뜬다 |
+| 음악 | `reapplyVolume()` 이 **듣던 지점부터 다시 튼다** (약 1초 끊김) | 이미 흐르는 ffmpeg 출력은 못 바꾼다 |
+
+`reapplyVolume()` 은 `currentResource.playbackDuration` 으로 위치를 구해
+`toOggOpus` 의 `seekSec` 으로 이어 붙인다.
+**`AudioPlayer.play()` 를 재생 중에 부르면 Idle 이벤트가 나지 않으므로**(소스 확인함)
+`onTrackEnd()` 가 "곡이 끝났다" 고 오해하지 않는다 — 이 성질에 의존하고 있으니
+discord.js 를 올릴 때 확인할 것.
+
+타이머 알람도 읽어주기 음량을 따른다 (같은 TTS 경로이므로).
+
 ### 3.3 서버당 음성 커넥션은 **하나**뿐이다 — 음악과 TTS의 공존 방식
 
 **제약**: 디스코드 봇은 한 서버(길드)에서 음성채널에 동시에 하나만 접속할 수 있다.
@@ -876,9 +902,7 @@ README의 "잘 되는지 확인하는 순서" 1~7단계가 그 역할을 한다.
 5. **갤러리에 페이지네이션 없음.** 한 폴더에 수천 장이 쌓이면 브라우저가 느려진다.
 6. **웹 갤러리 인증이 Basic Auth 단일 비밀번호.** 외부에 열어둘 거라면
    HTTPS(리버스 프록시) + 더 나은 인증이 필요하다.
-7. **볼륨 조절 명령어 없음.** `GuildAudio.volume` 필드는 있고 ffmpeg에 전달되지만,
-   곡이 바뀔 때만 반영된다(재생 중 변경 불가). 실시간 조절은 `inlineVolume`이 필요하고
-   그러면 3.2절의 재인코딩 회피가 깨진다. **트레이드오프를 이해하고 결정할 것.**
+7. ~~볼륨 조절 명령어 없음~~ → 구현됨. 3.2-1 절 참고.
 
 ---
 

@@ -17,7 +17,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { config } from '../config.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, volumeScale } from '../settings.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { synthesize } from '../tts/synth.js';
 
@@ -204,7 +204,7 @@ async function speakAlarm(timer) {
     const audio = getGuildAudio(guild);
     await audio.connect(voiceChannel);
     const voice = config.tts.voice;
-    audio.speak(() => synthesize(text, voice), voiceChannel.id);
+    audio.speak(() => synthesize(text, voice), voiceChannel.id, volumeScale(timer.guildId, 'tts'));
   } catch (err) {
     console.error('[timer] 음성 알림 실패:', err.message);
   }

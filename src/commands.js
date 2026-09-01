@@ -11,6 +11,7 @@ import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as featureCommands } from './feature-commands.js';
+import { commands as volumeCommands } from './volume-commands.js';
 import { getWithSource } from './settings.js';
 
 const basicCommands = [
@@ -37,6 +38,7 @@ const basicCommands = [
               '여러 링크를 한꺼번에 붙여넣어도 **보낸 순서대로** 대기열에 들어갑니다.',
               '**`/대기열`** — 이전·다음·일시정지·반복·정지, 순서변경·빼기 **전부 버튼**입니다',
               '`/순서이동 <번호> <새번호>` — 정밀 조작 · `/나가기` — 음성채널에서 나가기',
+              '`/음량 음악:70` — 소리 크기 (읽어주기와 따로 맞춥니다)',
             ].join('\n'),
           },
           {
@@ -100,6 +102,7 @@ export const allCommands = [
   ...basicCommands,
   ...featureCommands,
   ...channelCommands,
+  ...volumeCommands,
   ...tag('music', musicCommands),
   ...tag('tts', ttsCommands),
   ...tag('timer', timerCommands),

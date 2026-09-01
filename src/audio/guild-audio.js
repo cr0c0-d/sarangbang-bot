@@ -16,6 +16,7 @@ import {
   NoSubscriberBehavior,
 } from '@discordjs/voice';
 import { config } from '../config.js';
+import { volumeScale } from '../settings.js';
 import { createSource, hasFreshStreamUrl, getTracks } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel } from '../music/panel.js';
@@ -62,7 +63,6 @@ export class GuildAudio {
     this.lastStreamError = null;   // ffmpeg 이 남긴 마지막 오류
     this.killCurrent = null;
     this.loop = false;
-    this.volume = 1;
     this.textChannel = null; // 제어판을 띄울 곳
     this.panelMessage = null; // 띄워둔 제어판 메시지 (곡이 바뀌면 이걸 수정해서 재사용)
     this.leaveTimer = null;
@@ -218,7 +218,8 @@ export class GuildAudio {
       this.lastStreamError = null;
 
       const { stream, kill } = toOggOpus(src.input, {
-        volume: this.volume,
+        volume: volumeScale(this.guild.id, 'music'),
+        seekSec: item.resumeAt ?? 0,
         remote: src.remote,
         onError: (msg) => {
           this.lastStreamError = msg;
@@ -240,6 +241,53 @@ export class GuildAudio {
       console.error('[music] 스트림 생성 실패:', err);
       this.notify('⚠️ **' + item.track.title + '** 을(를) 재생할 수 없어 건너뜁니다.\n' + err.message);
       setImmediate(() => this.playNext());
+    }
+  }
+
+  /**
+   * 바뀐 음량을 **지금 재생 중인 곡에** 바로 반영합니다.
+   *
+   * ffmpeg 의 -af volume 은 프로세스를 띄울 때 정해지므로, 이미 흐르는 소리는 못 바꿉니다.
+   * 그래서 **재생 중이던 지점부터 다시 트는** 방식으로 반영합니다 (약 1초 끊깁니다).
+   *
+   * AudioPlayer.play() 를 재생 중에 부르면 Idle 이벤트 없이 바로 새 소리로 넘어가므로,
+   * onTrackEnd() 가 "곡이 끝났다" 고 오해하지 않습니다. (실제 동작 확인함)
+   */
+  reapplyVolume() {
+    if (!this.current || !this.isPlaying) return false;
+
+    // 지금까지 재생된 지점부터 이어서 틉니다.
+    const playedMs = this.currentResource?.playbackDuration ?? 0;
+    const resumeAt = Math.max(0, playedMs / 1000 - 0.3); // 살짝 앞에서 시작해 끊김을 덜 느끼게
+
+    this.killCurrent?.();
+    this.killCurrent = null;
+
+    try {
+      const item = this.current;
+      const src = createSource(item.track, { forcePipe: Boolean(item.forcePipe) });
+      this.usedDirect = src.remote;
+
+      const { stream, kill } = toOggOpus(src.input, {
+        volume: volumeScale(this.guild.id, 'music'),
+        seekSec: resumeAt,
+        remote: src.remote,
+        onError: (msg) => {
+          this.lastStreamError = msg;
+        },
+      });
+      this.killCurrent = () => {
+        kill();
+        src.kill();
+      };
+
+      const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
+      this.currentResource = resource;
+      this.musicPlayer.play(resource);
+      return true;
+    } catch (err) {
+      console.error('[music] 음량 반영 실패:', err.message);
+      return false;
     }
   }
 
@@ -400,14 +448,14 @@ export class GuildAudio {
    * @param {string} [targetChannelId] 이 음성채널에 있을 때만 읽습니다. 순서를 기다리는 동안
    *   봇이 다른 음성채널로 옮겨갔다면 엉뚱한 곳에서 읽게 되므로 그 경우엔 건너뜁니다.
    */
-  speak(makeStream, targetChannelId = null) {
+  speak(makeStream, targetChannelId = null, volume = 1) {
     this.ttsChain = this.ttsChain
-      .then(() => this.speakNow(makeStream, targetChannelId))
+      .then(() => this.speakNow(makeStream, targetChannelId, volume))
       .catch((err) => console.error('[tts]', err.message));
     return this.ttsChain;
   }
 
-  async speakNow(makeStream, targetChannelId = null) {
+  async speakNow(makeStream, targetChannelId = null, volume = 1) {
     if (!this.connection || this.destroyed) return;
 
     // 큐에서 기다리는 사이에 봇이 다른 채널로 옮겨갔으면 이 문장은 버립니다.
@@ -422,7 +470,8 @@ export class GuildAudio {
     let kill = null;
     try {
       const raw = await makeStream();
-      const piped = toOggOpus(raw);
+      // 읽어주기 음량은 매 발화마다 새 ffmpeg 이 뜨므로 바로 반영됩니다.
+      const piped = toOggOpus(raw, { volume });
       kill = piped.kill;
 
       this.subscribeTo(this.ttsPlayer);
