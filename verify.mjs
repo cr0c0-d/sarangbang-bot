@@ -604,6 +604,46 @@ ok('이동: 암호 없으면 401',
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 
+// 6q) 제어판이 재시작·곡 종료 후에 남지 않는가
+{
+  const reg = fs.readFileSync('./src/panel-registry.js', 'utf8');
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  const pn = fs.readFileSync('./src/music/panel.js', 'utf8');
+  const ip = fs.readFileSync('./src/images/panel.js', 'utf8');
+  const ix = fs.readFileSync('./src/index.js', 'utf8');
+
+  // (1) 재시작해도 옛 제어판을 찾아 지울 수 있는가
+  ok('제어판 ID 를 디스크에 기억', pn.includes('rememberPanel(MUSIC'));
+  ok('갤러리 버튼도 기억', ip.includes('rememberPanel(GALLERY'));
+  ok('시작할 때 옛 제어판 정리', ix.includes('cleanupPanelsOnStart('));
+  ok('종료할 때도 제어판 삭제', ix.includes('deleteMusicPanels(client)'));
+  ok('registry 를 로그인 전에 초기화', ix.indexOf('await initPanelRegistry()') < ix.indexOf('client.login'));
+  ok('갤러리 버튼은 되찾아 재사용', ip.includes('adoptGalleryPanel') && reg.includes('adoptGallery?.('));
+  ok('훑기는 봇 자기 메시지만 지움', reg.includes('msg.author?.id !== botId'));
+  ok('훑기 전에 members.me 확보', reg.includes('guild.members.fetchMe()'));
+
+  // (2) 곡이 다 끝났는데 제어판이 "지금 재생 중" 으로 굳던 버그
+  ok('대기열이 비면 제어판 갱신', ga.includes('if (!item) {') && ga.includes('this.refreshPanel();\n      this.scheduleLeave();'));
+  ok('곡이 끝나도 제어판 갱신', ga.includes('this.current = null;\n      this.refreshPanel();'));
+  ok('나갈 때 제어판 삭제', ga.includes('panel.delete()') && ga.includes('forgetPanel(MUSIC'));
+
+  // (3) 우클릭 → "연결 끊기" 로 내보낸 경우 (명령어를 거치지 않는 경로)
+  const dc = ga.slice(ga.indexOf('VoiceConnectionStatus.Disconnected'), ga.indexOf('await entersState(this.connection, VoiceConnectionStatus.Ready, 30_000)'));
+  ok('연결 끊기면 정리 (destroy 호출)', dc.includes('this.destroy()'));
+  ok('연결 끊기면 왜 멈췄는지 알림', dc.includes('this.notify('));
+  ok('복구 중이면 Ready 까지 확인', dc.includes('VoiceConnectionStatus.Ready'));
+  ok('끊김 처리는 한 번만 (중복 방지)', dc.includes('if (this.destroyed) return;'));
+
+  // refreshPanel 은 메시지를 옮기면 안 됩니다 (버튼 응답과 겹쳐 "없는 메시지" 오류가 납니다)
+  const rp = ga.slice(ga.indexOf('  refreshPanel() {'), ga.indexOf('  onTrackEnd()'));
+  ok('갱신은 그 자리에서만 (지우거나 다시 보내지 않음)', rp.includes('msg.edit(') && !rp.includes('showPanel('));
+
+  // 빈 제어판이 실제로 "재생 중 없음" 을 보여주는가
+  const { buildPanel: bp } = await import('./src/music/panel.js');
+  const emptyPanel = bp({ guild: { id: 'g' }, current: null, queue: [], history: [], loop: false });
+  ok('빈 제어판은 재생 중이 아님을 알림', JSON.stringify(emptyPanel.embeds[0].toJSON()).includes('재생 중인 곡이 없습니다'));
+}
+
 await new Promise((res) => server.close(res));
 fs.rmSync('./data/verify-images', { recursive: true, force: true });
 fs.rmSync('./data/verify-data', { recursive: true, force: true });

@@ -19,6 +19,8 @@ import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
+import { adoptGalleryPanel } from './images/panel.js';
+import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
@@ -58,6 +60,10 @@ client.once(Events.ClientReady, (c) => {
 
   // 저장된 타이머를 되살립니다. (배포로 재시작해도 타이머가 사라지지 않게)
   initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));
+  // 재시작 전에 띄워둔 제어판을 정리합니다.
+  //   음악 제어판 → 지웁니다 (재시작하면 음악이 이어지지 않으므로 "재생 중" 이 거짓말)
+  //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)
+  cleanupPanelsOnStart(c, adoptGalleryPanel);
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
   // TTS 연결을 미리 데워둡니다.
@@ -192,6 +198,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 // 채널 설정은 명령어로 언제든 바뀔 수 있으므로, 저장소와 웹서버는 항상 준비해둡니다.
 await initSettings();
 await initStore();
+await initPanelRegistry();
 const webServer = await startWebServer();
 startAutoCleanup();
 
@@ -204,10 +211,15 @@ await client.login(config.token).catch((err) => {
 // ── 종료 처리 ───────────────────────────────────────────────
 
 let shuttingDown = false;
-function shutdown(signal) {
+async function shutdown(signal) {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`\n${signal} 수신, 정리 중...`);
+
+  // 제어판을 남겨두면 봇이 꺼진 뒤에도 "지금 재생 중" 으로 보입니다.
+  // 디스코드가 늦게 답할 수 있으니 3초까지만 기다리고 나갑니다.
+  await Promise.race([deleteMusicPanels(client).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+
   for (const guild of client.guilds.cache.values()) {
     peekGuildAudio(guild.id)?.destroy();
   }

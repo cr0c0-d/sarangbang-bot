@@ -14,6 +14,7 @@ import {
 } from 'discord.js';
 import { config } from '../config.js';
 import { listFiles } from './store.js';
+import { rememberPanel, forgetPanel, GALLERY } from '../panel-registry.js';
 
 /** 채널ID → 띄워둔 패널 메시지. 음악과 달리 **채널 단위**입니다. */
 const panels = new Map();
@@ -79,19 +80,32 @@ async function showNow(channel, folder) {
         return;
       } catch {
         panels.delete(channel.id);
+        forgetPanel(GALLERY, channel.id);
       }
     } else {
       // 다른 대화에 밀려 올라갔습니다. 지우고 맨 아래에 다시 띄웁니다.
       await existing.delete().catch(() => {});
       panels.delete(channel.id);
+      forgetPanel(GALLERY, channel.id);
     }
   }
 
   const sent = await channel.send({ ...body, flags: MessageFlags.SuppressNotifications });
   panels.set(channel.id, sent);
+  // 재시작 후 이 버튼을 되찾아 그대로 쓰기 위해 디스크에 적어둡니다.
+  rememberPanel(GALLERY, channel.id, sent.id);
 }
 
 /** 봇이 채널을 떠나거나 기능이 꺼질 때 정리용. */
 export function forgetGalleryPanel(channelId) {
   panels.delete(channelId);
+  forgetPanel(GALLERY, channelId);
+}
+
+/**
+ * 재시작 전에 띄워둔 갤러리 버튼을 되찾습니다.
+ * 이걸 안 하면 다음 업로드 때 버튼이 하나 더 생겨서 재시작마다 쌓입니다.
+ */
+export function adoptGalleryPanel(channelId, message) {
+  panels.set(channelId, message);
 }

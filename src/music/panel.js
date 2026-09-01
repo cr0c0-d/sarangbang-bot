@@ -14,6 +14,7 @@ import {
 } from 'discord.js';
 import { formatDuration } from './ytdlp.js';
 import { volumePercent, setVolume } from '../settings.js';
+import { rememberPanel, forgetPanel, MUSIC } from '../panel-registry.js';
 
 // 드롭다운은 디스코드 제한으로 최대 25개까지만 담을 수 있습니다.
 const SELECT_LIMIT = 25;
@@ -173,11 +174,13 @@ async function showPanelNow(audio, channel) {
         return;
       } catch {
         audio.panelMessage = null; // 지워졌거나 수정 불가 → 아래에서 새로 보냅니다
+        forgetPanel(MUSIC, channel.id);
       }
     } else {
       // 위로 밀려났습니다. 옛 제어판을 지우고 맨 아래에 다시 띄웁니다.
       await audio.panelMessage.delete().catch(() => {});
       audio.panelMessage = null;
+      forgetPanel(MUSIC, channel.id);
     }
   }
 
@@ -186,6 +189,8 @@ async function showPanelNow(audio, channel) {
     // @silent 메시지 — 채팅방에 나타나지만 푸시 알림은 울리지 않습니다.
     flags: MessageFlags.SuppressNotifications,
   });
+  // 재시작 후에도 이 제어판을 찾아 지울 수 있도록 디스크에 적어둡니다.
+  rememberPanel(MUSIC, channel.id, audio.panelMessage.id);
 }
 
 /** 버튼·드롭다운 클릭 처리. customId 가 `m:` 으로 시작하는 것만 옵니다. */
@@ -254,6 +259,7 @@ export async function handleMusicComponent(interaction, audio) {
   if (id === 'm:prev' || id === 'm:next') await new Promise((r) => setTimeout(r, 400));
 
   audio.panelMessage = interaction.message;
+  rememberPanel(MUSIC, interaction.channelId, interaction.message.id);
   try {
     await interaction.update(buildPanel(audio));
   } catch (err) {

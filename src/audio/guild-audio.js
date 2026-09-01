@@ -19,7 +19,8 @@ import { config } from '../config.js';
 import { volumeScale } from '../settings.js';
 import { createSource, hasFreshStreamUrl, getTracks } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
-import { showPanel } from '../music/panel.js';
+import { showPanel, buildPanel } from '../music/panel.js';
+import { forgetPanel, MUSIC } from '../panel-registry.js';
 
 /** @type {Map<string, GuildAudio>} */
 const registry = new Map();
@@ -97,14 +98,25 @@ export class GuildAudio {
     });
 
     this.connection.on(VoiceConnectionStatus.Disconnected, async () => {
+      if (this.destroyed) return;
       // 채널 이동이나 순간적인 네트워크 끊김이면 스스로 복구됩니다.
       try {
         await Promise.race([
           entersState(this.connection, VoiceConnectionStatus.Signalling, 5_000),
           entersState(this.connection, VoiceConnectionStatus.Connecting, 5_000),
         ]);
+        // 돌아오는 "중" 인 것만으로는 부족합니다. 정말 다시 붙는지까지 확인합니다.
+        // 여기서 멈추면 죽은 커넥션을 붙잡은 채 제어판이 계속 "재생 중" 이라고 합니다.
+        await entersState(this.connection, VoiceConnectionStatus.Ready, 20_000);
       } catch {
-        this.destroy();
+        // 5초 안에 돌아오지 못했습니다. 대부분 **우클릭 → "연결 끊기"** 로 내보낸 경우입니다.
+        // /나가기 와 달리 아무 명령도 거치지 않으므로, 여기서 알려주지 않으면
+        // 제어판만 조용히 사라져서 "왜 멈췄지?" 가 됩니다.
+        if (this.destroyed) return;
+        if (this.current || this.queue.length > 0) {
+          this.notify('🔌 음성채널에서 연결이 끊겨 재생을 멈췄습니다.\n다시 들으시려면 유튜브 링크를 붙여넣어 주세요.');
+        }
+        this.destroy(); // 제어판도 여기서 지워집니다
       }
     });
 
@@ -204,6 +216,8 @@ export class GuildAudio {
 
     const item = this.queue.shift();
     if (!item) {
+      // 더 틀 게 없습니다. 제어판이 "지금 재생 중" 인 채로 굳지 않게 갱신합니다.
+      this.refreshPanel();
       this.scheduleLeave();
       return;
     }
@@ -335,6 +349,22 @@ export class GuildAudio {
     return played < 3000 && (trackLen === 0 || trackLen > 5);
   }
 
+  /**
+   * 제어판 내용을 **그 자리에서** 갱신합니다.
+   *
+   * 곡이 다 끝났는데도 제어판이 "지금 재생 중" 으로 남아 있던 문제를 막습니다.
+   * showPanel() 과 달리 **맨 아래로 옮기지 않습니다.** 곡이 끝나는 순간은
+   * 버튼 응답(interaction.update)과 겹칠 수 있는데, 여기서 메시지를 지워버리면
+   * 그 응답이 "없는 메시지" 오류를 냅니다.
+   */
+  refreshPanel() {
+    const msg = this.panelMessage;
+    if (!msg || this.destroyed) return;
+    Promise.resolve()
+      .then(() => msg.edit(buildPanel(this)))
+      .catch(() => {}); // 이미 지워졌으면 그냥 둡니다
+  }
+
   onTrackEnd() {
     if (this.destroyed) return;
     const intent = this.nextIntent ?? 'auto';
@@ -371,6 +401,7 @@ export class GuildAudio {
       this.killCurrent = null;
       if (this.current) this.pushHistory(this.current);
       this.current = null;
+      this.refreshPanel();
       this.scheduleLeave();
     }
   }
@@ -519,7 +550,13 @@ export class GuildAudio {
     this.history = [];
     this.nextIntent = null;
     this.current = null;
+    // 봇이 나가면 제어판은 거짓말이 됩니다. 지우고 기억에서도 뺍니다.
+    const panel = this.panelMessage;
     this.panelMessage = null;
+    if (panel) {
+      forgetPanel(MUSIC, panel.channelId);
+      panel.delete().catch(() => {});
+    }
     this.killCurrent?.();
     this.killCurrent = null;
     this.musicPlayer.stop(true);
