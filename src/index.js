@@ -24,7 +24,7 @@ import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
-import { initPolls, handlePollComponent, handlePollModal, flushPolls } from './poll/index.js';
+import { initPolls, handlePollComponent, handlePollModal, restorePollDeadlines, flushPolls } from './poll/index.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES, inRole } from './settings.js';
@@ -65,6 +65,9 @@ client.once(Events.ClientReady, (c) => {
 
   // 저장된 타이머를 되살립니다. (배포로 재시작해도 타이머가 사라지지 않게)
   if (inRole('timer')) initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));
+  // 자동 마감 예약을 되살립니다. setTimeout 은 재시작하면 사라지므로,
+  // 저장해둔 마감 시각을 보고 다시 겁니다. 이미 지난 것은 바로 닫힙니다.
+  if (inRole('poll')) restorePollDeadlines(c);
   // 재시작 전에 띄워둔 제어판을 정리합니다.
   //   음악 제어판 → 지웁니다 (재시작하면 음악이 이어지지 않으므로 "재생 중" 이 거짓말)
   //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)

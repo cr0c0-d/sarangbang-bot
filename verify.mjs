@@ -731,7 +731,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   //   모달에 **파일 업로드 칸**을 넣을 수 있어서 사진까지 한 화면에서 받습니다.
   const modal = poll.buildCreateModal().toJSON();
   ok('만들기 창이 v:new', modal.custom_id === 'v:new');
-  ok('창은 4칸 (디스코드 한도 5)', modal.components.length === 4, `${modal.components.length}칸`);
+  ok('창은 5칸 (디스코드 한도와 같음 — 더 못 늘림)', modal.components.length === 5, `${modal.components.length}칸`);
   const inner = modal.components.map((c) => c.component ?? {});
   ok('질문·선택지는 글자 칸', inner[0].custom_id === 'q' && inner[1].custom_id === 'opts');
   ok('질문 사진 칸 (한 장)', inner[2].custom_id === 'qimg' && inner[2].max_values === 1);
@@ -744,8 +744,37 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // 창이 안 뜨는 환경이 있을 때를 대비해 인자로도 만들 수 있어야 합니다.
   const cmd = poll.commands[0].data.toJSON();
   ok('/투표 는 칸을 비우면 창이 뜸', cmd.options.every((o) => o.required !== true), '필수 인자 없음');
-  ok('인자로도 만들 수 있음 (창이 안 될 때 대비)', cmd.options.length === 2,
+  ok('인자로도 만들 수 있음 (창이 안 될 때 대비)', cmd.options.length === 3,
     cmd.options.map((o) => o.name).join(' '));
+
+  // ── 자동 마감 ──
+  // 켜고 끄는 스위치를 따로 두지 않았습니다. 비우면 안 함 = off.
+  ok('마감 분 읽기', poll.parseMinutes('30') === 30 && poll.parseMinutes('30분') === 30 &&
+    poll.parseMinutes(' 45 ') === 45);
+  ok('비우면 자동 마감 안 함', poll.parseMinutes('') === null && poll.parseMinutes(null) === null &&
+    poll.parseMinutes('abc') === null);
+  ok('0분은 안 함 (즉시 마감은 실수일 뿐)', poll.parseMinutes('0') === null);
+  ok('상한을 넘기면 잘림 (7일)', poll.parseMinutes('99999') === poll.CLOSE_MAX_MINUTES);
+  ok('창에 자동 마감 칸', inner[4].custom_id === 'close' && inner[4].required === false);
+  ok('명령어에도 자동마감', cmd.options.some((o) => o.name === '자동마감'));
+
+  const timed = { ...make(2), closesAt: 1800000000000 };
+  const timedJson = JSON.stringify(poll.buildPoll(timed).embeds[0].toJSON());
+  // 디스코드 시각 표시는 **본문에서만** 렌더링됩니다. 푸터에 넣으면 <t:...> 가 그대로 보입니다.
+  ok('언제 닫히는지 본문에 보임', timedJson.includes('<t:1800000000:R>'));
+  ok('푸터에는 넣지 않음', !JSON.stringify(poll.buildPoll(timed).embeds[0].toJSON().footer ?? {}).includes('<t:'));
+
+  const autoClosed = { ...timed, closed: true, closedAuto: true };
+  const acJson = JSON.stringify(poll.buildPoll(autoClosed).embeds[0].toJSON());
+  ok('자동으로 닫혔음을 표시', acJson.includes('자동 마감'));
+  ok('닫힌 뒤엔 남은 시간 안 보임', !acJson.includes('<t:'));
+
+  // setTimeout 은 재시작하면 사라집니다. 마감 시각을 저장해두고 켜질 때 다시 걸어야 합니다.
+  ok('마감 시각을 저장함', src2.includes('closesAt:'));
+  ok('메시지를 다시 찾을 수 있게 채널도 저장', src2.includes('channelId: interaction.channelId'));
+  ok('재시작하면 예약을 되살림', typeof poll.restorePollDeadlines === 'function' &&
+    fs.readFileSync('./src/index.js', 'utf8').includes('restorePollDeadlines(c)'));
+  ok('손으로 마감하면 예약을 취소', src2.includes('cancelClose(interaction.message.id)'));
 
   // 10개면 버튼이 두 줄로 나뉘어야 합니다 (한 줄에 5개 제한)
   const big = poll.buildPoll(make(10));
