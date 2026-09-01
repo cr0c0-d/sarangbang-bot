@@ -26,6 +26,9 @@ import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './pa
 import { initTimers, handleTimerComponent } from './timer/index.js';
 import { initPolls, handlePollComponent, handlePollModal, restorePollDeadlines, flushPolls } from './poll/index.js';
 import { handleMovieComponent } from './movie/index.js';
+import { handlePlanComponent, handlePlanModal, makeReminderFire } from './plan/index.js';
+import { initPlans, restoreReminders, flushPlans } from './plan/store.js';
+import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlements } from './plan/settle.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
@@ -70,6 +73,8 @@ client.once(Events.ClientReady, (c) => {
   // 자동 마감 예약을 되살립니다. setTimeout 은 재시작하면 사라지므로,
   // 저장해둔 마감 시각을 보고 다시 겁니다. 이미 지난 것은 바로 닫힙니다.
   if (inRole('poll')) restorePollDeadlines(c);
+  // 일정 알림도 setTimeout 이라 재시작하면 사라집니다. 저장해둔 시각으로 다시 겁니다.
+  if (inRole('plan')) restoreReminders(makeReminderFire(c));
   // TMDB 의 OTT 번호가 바뀌었는지 한 번 대조합니다. 조용히 틀리는 것보다 낫습니다.
   if (inRole('movie') && hasTmdbKey()) checkProviders();
   // 재시작 전에 띄워둔 제어판을 정리합니다.
@@ -105,17 +110,24 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
   // 입력 창(모달) 제출. 지금은 투표 만들기 창 하나뿐입니다.
   if (interaction.isModalSubmit()) {
-    if (!interaction.customId.startsWith('v:') || !inRole('poll')) return;
-    if (!featureEnabled(interaction.guildId, 'poll')) {
+    const modalFeature = interaction.customId.startsWith('v:')
+      ? 'poll'
+      : /^(pl|st):/.test(interaction.customId)
+        ? 'plan'
+        : null;
+    if (!modalFeature || !inRole(modalFeature)) return;
+    if (!featureEnabled(interaction.guildId, modalFeature)) {
       return interaction
-        .reply({ content: featureOffMessage('poll'), flags: MessageFlags.Ephemeral })
+        .reply({ content: featureOffMessage(modalFeature), flags: MessageFlags.Ephemeral })
         .catch(() => {});
     }
     try {
-      await handlePollModal(interaction);
+      if (modalFeature === 'poll') await handlePollModal(interaction);
+      else if (interaction.customId.startsWith('st:')) await handleSettleModal(interaction);
+      else await handlePlanModal(interaction, client);
     } catch (err) {
-      console.error('[투표 만들기]', err);
-      const content = `⚠️ ${err.message ?? '투표를 만들지 못했습니다.'}`;
+      console.error('[입력 창]', err);
+      const content = `⚠️ ${err.message ?? '처리하지 못했습니다.'}`;
       if (interaction.deferred) await interaction.editReply(content).catch(() => {});
       else if (!interaction.replied) await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
@@ -131,7 +143,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isChannel = interaction.customId.startsWith('c:');
     const isPoll = interaction.customId.startsWith('v:');
     const isMovie = interaction.customId.startsWith('mv:');
-    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel && !isPoll && !isMovie) return;
+    const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
+    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (
@@ -139,13 +152,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (isTimer && !inRole('timer')) ||
       (isImage && !inRole('images')) ||
       (isPoll && !inRole('poll')) ||
-      (isMovie && !inRole('movie'))
+      (isMovie && !inRole('movie')) ||
+      (isPlan && !inRole('plan'))
     ) {
       return;
     }
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -158,6 +172,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
       else if (isMovie) await handleMovieComponent(interaction);
+      else if (interaction.customId.startsWith('st:')) await handleSettleComponent(interaction);
+      else if (isPlan) await handlePlanComponent(interaction, client);
       else if (isPoll) await handlePollComponent(interaction);
       // 지난 곡 보기·담기는 **재생 중이 아니어도** 되어야 하므로 먼저 가로챕니다.
       // handleMusicComponent 는 재생 중이 아니면 바로 되돌려보냅니다.
@@ -174,7 +190,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     return;
   }
 
-  if (!interaction.isChatInputCommand()) return;
+  // 메시지 우클릭 → 앱 → … 도 명령어입니다. 슬래시와 같은 표(commandMap)에서 찾습니다.
+  // isChatInputCommand() 만 보면 우클릭 명령어가 조용히 무시됩니다.
+  if (!interaction.isChatInputCommand() && !interaction.isMessageContextMenuCommand()) return;
 
   const command = commandMap.get(interaction.commandName);
   if (!command) return;
@@ -252,6 +270,10 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 await initSettings();
 await initPanelRegistry();
 if (inRole('poll')) await initPolls();
+if (inRole('plan')) {
+  await initPlans();
+  await initSettlements();
+}
 if (inRole('music')) await initHistory();
 
 // 갤러리 웹서버는 **이미지를 맡은 봇만** 띄웁니다.
@@ -304,6 +326,8 @@ async function shutdown(signal) {
   // 방금 튼 곡이 지난 목록에 안 남을 수 있습니다. 저장이 끝날 때까지 기다립니다.
   await flushHistory().catch(() => {});
   await flushPolls().catch(() => {});
+  await flushPlans().catch(() => {});
+  await flushSettlements().catch(() => {});
 
   webServer?.close();
   client.destroy();

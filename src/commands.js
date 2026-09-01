@@ -12,6 +12,8 @@ import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as pollCommands } from './poll/index.js';
 import { commands as movieCommands } from './movie/index.js';
+import { commands as planCommands } from './plan/index.js';
+import { commands as settleCommands } from './plan/settle.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
@@ -88,6 +90,18 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'plan',
+            name: '📅 일정 · 정산',
+            value: [
+              '**`/일정새로`** — 일정용 **비공개 채널**을 만듭니다. 참여자·역할을 고르면 그 사람만 보입니다.',
+              '**`/일정`** — 이 채널의 일정 판. 시간·장소·할 일이 한 장에 모입니다.',
+              '장소를 적으면 **카카오맵·네이버지도 버튼**이 붙습니다.',
+              '할 일은 **눌러서 체크**하고, 누른 사람이 담당자로 표시됩니다.',
+              '중요한 메시지는 **우클릭 → 앱 → 📌 일정에 등록** 으로 참고자료에 모읍니다.',
+              '**`/정산`** — 결제한 돈을 나눕니다. 각자 **✅ 보냈어요** 를 누르면 됩니다.',
+            ].join('\n'),
+          },
+          {
             feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
@@ -140,6 +154,7 @@ const taggedCommands = [
   ...tag('images', imageCommands),
   ...tag('poll', pollCommands),
   ...tag('movie', movieCommands),
+  ...tag('plan', [...planCommands, ...settleCommands]),
 ];
 
 /**

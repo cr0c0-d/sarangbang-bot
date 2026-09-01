@@ -58,6 +58,14 @@ export const KEYS = {
     envValue: () => config.tts.voiceChannelId,
     envName: 'TTS_VOICE_CHANNEL_ID',
   },
+  planCategoryId: {
+    label: '일정 카테고리',
+    feature: 'plan',
+    hint: '/일정새로 로 만든 일정 채널이 이 카테고리 밑에 생깁니다',
+    kind: 'category',
+    envValue: () => config.plan.categoryId,
+    envName: 'PLAN_CATEGORY_ID',
+  },
   imageChannelIds: {
     label: '이미지 채널',
     feature: 'images',
@@ -99,6 +107,7 @@ export const FEATURES = {
   images: { label: '이미지 정리', emoji: '🖼️', hint: '사진 자동 저장 (갤러리 열람은 계속 됩니다)' },
   poll: { label: '투표', emoji: '🗳️', hint: '/투표 로 선택지를 만들고 버튼으로 고르기' },
   movie: { label: '영화 고르기', emoji: '🎬', hint: '/영화 로 한 편 뽑기 · 투표 만들기 (TMDB)' },
+  plan: { label: '일정', emoji: '📅', hint: '/일정 · /일정새로 · /정산' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */

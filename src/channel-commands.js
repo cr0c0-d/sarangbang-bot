@@ -25,6 +25,8 @@ const CHOICES = Object.entries(activeKeys()).map(([key, spec]) => ({ name: spec.
 
 const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const VOICE_TYPES = [ChannelType.GuildVoice, ChannelType.GuildStageVoice];
+// 일정 채널을 만들 때 어느 카테고리 밑에 넣을지 지정하는 데 씁니다.
+const CATEGORY_TYPES = [ChannelType.GuildCategory];
 
 /**
  * 고른 종류에 맞는 채널인지 검사합니다.
@@ -38,6 +40,9 @@ function checkKind(key, channel) {
   const spec = KEYS[key];
   if (spec.kind === 'text' && !channel.isTextBased?.()) {
     return `**${spec.label}** 에는 채팅을 쓸 수 있는 채널을 골라주세요. (${channel.name} 에는 채팅창이 없습니다)`;
+  }
+  if (spec.kind === 'category' && channel.type !== ChannelType.GuildCategory) {
+    return '카테고리를 골라주세요. (채널을 담는 상위 묶음입니다)';
   }
   if (spec.kind === 'voice' && !channel.isVoiceBased?.()) {
     return `**${spec.label}** 에는 음성채널을 골라주세요. (${channel.name} 은 채팅 전용 채널입니다)`;
@@ -105,7 +110,7 @@ export const commands = [
           .setName('채널')
           .setDescription('지정할 채널')
           .setRequired(false)
-          .addChannelTypes(...TEXT_TYPES, ...VOICE_TYPES)
+          .addChannelTypes(...TEXT_TYPES, ...VOICE_TYPES, ...CATEGORY_TYPES)
       ),
     async execute(interaction) {
       const key = interaction.options.getString('종류');

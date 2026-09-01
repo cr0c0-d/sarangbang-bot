@@ -24,11 +24,11 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 15개 로드', allCommands.length === 15, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 19개 로드 (우클릭 1개 포함)', allCommands.length === 19, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -438,7 +438,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 6개', Object.keys(st.FEATURES).length === 6, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 7개', Object.keys(st.FEATURES).length === 7, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -861,6 +861,152 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('시작할 때 OTT 번호 대조', ix2.includes('checkProviders()'));
 }
 
+// 6w) 일정 · 정산
+{
+  const pw = await import('./src/plan/parse-when.js');
+  const pl = fs.readFileSync('./src/plan/index.js', 'utf8');
+  const now = new Date(2026, 8, 1, 12, 0); // 2026-09-01 12:00
+  const p2 = (n) => String(n).padStart(2, '0');
+  const fmt = (t) => {
+    const d = new Date(t);
+    return `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+  };
+
+  // 소유자 결정: 날짜는 직접 적는다. "이번 주말" 해석기는 만들지 않는다.
+  // 대신 **적어둔 날짜를 관대하게** 읽어야 한다.
+  const whenCases = [
+    ['2026-10-03 18:30', '2026-10-03 18:30'],
+    ['2026.10.3 오후 6시 30분', '2026-10-03 18:30'],
+    ['10/3 18:30', '2026-10-03 18:30'],
+    ['10월 3일 오후 6시', '2026-10-03 18:00'], // 치환하면 "10- 3" 이 되어 끊기던 버그
+    ['10-3', '2026-10-03 00:00'],
+    ['내일 19시', '2026-09-02 19:00'],
+    ['오늘 저녁 7시', '2026-09-01 19:00'],
+    ['251003', '2025-10-03 00:00'], // 채널 이름 형식을 그대로 적는 사람이 있다
+    ['12/25 오전 9시', '2026-12-25 09:00'],
+    ['1/5', '2027-01-05 00:00'], // ★ 연도를 안 적었으면 가장 가까운 미래
+    ['2026-02-30', null], // 없는 날짜
+    ['10/3 25:00', null],
+    ['13/1', null],
+    ['', null],
+    ['아무말', null],
+  ];
+  const whenBad = whenCases.filter(([input, want]) => {
+    const r = pw.parseWhen(input, now);
+    return (r ? fmt(r.at) : null) !== want;
+  });
+  ok('날짜 읽기', whenBad.length === 0, whenBad.map(([i]) => i).join(' / ') || `${whenCases.length}가지 확인`);
+  ok('시간 안 적으면 종일', pw.parseWhen('10/3', now).hasTime === false && pw.parseWhen('10/3 9:00', now).hasTime === true);
+  ok('표시 형식', pw.formatWhen(pw.parseWhen('10/3 18:30', now).at, true) === '10월 3일 (토) 오후 6:30',
+    pw.formatWhen(pw.parseWhen('10/3 18:30', now).at, true));
+  ok('채널 이름용 yymmdd', pw.yymmdd(pw.parseWhen('10/3', now).at) === '261003');
+
+  // 이미 채널 이름에 적어둔 것을 또 타이핑하지 않게 합니다.
+  const titleCases = [
+    ['[251003-오사카]', '오사카'],
+    ['251003-오사카', '오사카'],
+    ['251003_제주도 여행', '제주도 여행'],
+    ['251003-스타필드-하남', '스타필드 하남'],
+    ['오사카', '오사카'],
+  ];
+  ok('채널 이름에서 제목 뽑기',
+    titleCases.every(([input, want]) => pw.titleFromChannelName(input) === want),
+    titleCases.map(([i]) => `${i}→${pw.titleFromChannelName(i)}`).join(' '));
+
+  // 지도는 좌표도 API 키도 필요 없습니다. 검색어만 넣으면 됩니다 (2026-09-01 실측).
+  const { kakaoMapUrl, naverMapUrl } = await import('./src/plan/index.js');
+  ok('카카오맵 주소', kakaoMapUrl('스타필드 하남') === 'https://map.kakao.com/?q=' + encodeURIComponent('스타필드 하남'));
+  ok('네이버지도 주소', naverMapUrl('스타필드 하남') === 'https://map.naver.com/p/search/' + encodeURIComponent('스타필드 하남'));
+  ok('장소를 그대로 넘기지 않고 인코딩', kakaoMapUrl('강남 & 역삼').includes('%26'));
+  const { ButtonBuilder, ButtonStyle } = await import('discord.js');
+  ok('지도는 링크 버튼으로 쓸 수 있음', (() => {
+    try {
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('x').setURL(kakaoMapUrl('테스트')).toJSON();
+      new ButtonBuilder().setStyle(ButtonStyle.Link).setLabel('x').setURL(naverMapUrl('테스트')).toJSON();
+      return true;
+    } catch { return false; }
+  })());
+
+  // 판: 할 일 버튼은 한 줄에 5개, 두 줄까지. 넘치면 조용히 자르지 말고 알려야 합니다.
+  const { buildPanel } = await import('./src/plan/index.js');
+  const mkPlan = (n) => ({
+    title: '오사카', at: pw.parseWhen('10/3 18:30', now).at, hasTime: true, place: '스타필드 하남',
+    todos: Array.from({ length: n }, (_, i) => ({ text: `할일${i}`, doneBy: i === 0 ? 'u1' : null })),
+    notes: ['체크인 15시'], refs: [{ label: '숙소', url: 'https://discord.com/channels/1/2/3' }],
+    panelMessageId: null, remindAt: null, createdBy: 'u1',
+  });
+  const panel3 = buildPanel(mkPlan(3));
+  const pj = JSON.stringify(panel3.components.map((r) => r.toJSON()));
+  ok('지도 버튼 2개', pj.includes('map.kakao.com') && pj.includes('map.naver.com'));
+  ok('할 일 토글 버튼', pj.includes('"pl:todo:0"') && pj.includes('"pl:todo:2"'));
+  ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind'].every((id) => pj.includes(`"${id}"`)));
+  ok('참고자료는 링크로만 (다시 안 올림)',
+    JSON.stringify(panel3.embeds[0].toJSON()).includes('discord.com/channels') && !pl.includes('AttachmentBuilder'));
+
+  const panel12 = buildPanel(mkPlan(12));
+  ok('버튼 줄은 5줄 이내', panel12.components.length <= 5, `${panel12.components.length}줄`);
+  ok('할 일 버튼은 10개까지', panel12.components.filter((r) => JSON.stringify(r.toJSON()).includes('pl:todo')).length === 2);
+  ok('넘치면 조용히 자르지 않고 알림', JSON.stringify(panel12.embeds[0].toJSON()).includes('앞 10개만'));
+
+  // 일정 하나 = 채널 하나. 일정 ID 를 따로 만들지 않습니다.
+  const store = fs.readFileSync('./src/plan/store.js', 'utf8');
+  ok('채널 ID 가 곧 일정 ID', store.includes('[channelId: string]: Plan'));
+  ok('알림은 저장하고 재시작 때 되살림',
+    store.includes('restoreReminders') && fs.readFileSync('./src/index.js', 'utf8').includes('restoreReminders(makeReminderFire(c))'));
+  ok('지난 시각이면 알리지 않음', store.includes('if (delay <= 0)'));
+  ok('setTimeout 한계보다 먼 알림도 처리', store.includes('MAX_TIMEOUT_MS'));
+
+  // 채널 생성: 비공개 + 지정 카테고리 + 사람/역할
+  ok('everyone 을 막고 참여자만 열어줌',
+    pl.includes('deny: [PermissionFlagsBits.ViewChannel]') && pl.includes('guild.roles.everyone.id'));
+  ok('사람과 역할 둘 다', pl.includes('UserSelectMenuBuilder') && pl.includes('RoleSelectMenuBuilder'));
+  ok('만든 사람도 넣음 (안 넣으면 자기 채널을 못 봄)', pl.includes('id: interaction.user.id, allow'));
+  ok('지정한 카테고리 밑에', pl.includes('parent: category.id') && pl.includes("getSetting(interaction.guildId, 'planCategoryId')"));
+  ok('채널 관리 권한이 없으면 미리 알림', pl.includes('PermissionFlagsBits.ManageChannels'));
+  ok('카테고리 설정 항목', (await import('./src/settings.js')).KEYS.planCategoryId?.kind === 'category');
+  ok('/채널설정 이 카테고리를 받음',
+    fs.readFileSync('./src/channel-commands.js', 'utf8').includes('CATEGORY_TYPES'));
+
+  // 자동 감지를 하지 않는 것이 요구사항입니다.
+  ok('메시지 자동 감지 안 함', !fs.readFileSync('./src/index.js', 'utf8').includes('handlePlanMessage'));
+  ok('우클릭으로 등록', pl.includes('ContextMenuCommandBuilder') && pl.includes('ApplicationCommandType.Message'));
+  ok('우클릭 명령어가 라우팅됨', fs.readFileSync('./src/index.js', 'utf8').includes('isMessageContextMenuCommand()'));
+
+  // ── 정산 ──
+  const st3 = await import('./src/plan/settle.js');
+  await st3.initSettlements();
+  ok('숫자 하나면 균등분할', JSON.stringify(st3.parseAmounts('120000', 3)) === JSON.stringify([40000, 40000, 40000]));
+  // 나누어떨어지지 않으면 총액이 어긋나면 안 되므로 앞사람이 1원씩 더 냅니다.
+  const odd = st3.parseAmounts('100000', 3);
+  ok('안 나누어떨어지면 총액을 지킴', odd.reduce((a, b) => a + b, 0) === 100000, odd.join('+'));
+  ok('12만 도 읽음', JSON.stringify(st3.parseAmounts('12만', 2)) === JSON.stringify([60000, 60000]));
+  ok('쉼표·원 도 읽음', JSON.stringify(st3.parseAmounts('120,000원', 2)) === JSON.stringify([60000, 60000]));
+  ok('줄 수가 인원과 같으면 개별 금액',
+    JSON.stringify(st3.parseAmounts('10000\n20000\n30000', 3)) === JSON.stringify([10000, 20000, 30000]));
+  ok('개수가 안 맞으면 거부', st3.parseAmounts('10000\n20000', 3) === null);
+  ok('금액을 못 읽으면 거부', st3.parseAmounts('', 3) === null && st3.parseAmounts('돈', 3) === null);
+
+  const settle = {
+    title: '숙소', payerId: 'p', total: 120000,
+    shares: [{ userId: 'p', amount: 40000, sent: false }, { userId: 'a', amount: 40000, sent: true },
+             { userId: 'b', amount: 40000, sent: false }],
+    createdAt: Date.now(),
+  };
+  const sj = JSON.stringify(st3.buildSettlement(settle).embeds[0].toJSON());
+  ok('결제자는 송금 대상이 아님', sj.includes('(결제자)'));
+  ok('보낸 사람만 표시', sj.includes('✅ 보냈어요') && sj.includes('⬜ 송금 전'));
+  ok('받을 돈 합계', sj.includes('40,000원 / 80,000원'));
+  const allSent = { ...settle, shares: settle.shares.map((x) => ({ ...x, sent: true })) };
+  ok('전원 보내면 완료', JSON.stringify(st3.buildSettlement(allSent).embeds[0].toJSON()).includes('정산 완료'));
+  ok('완료되면 버튼도 사라짐', st3.buildSettlement(allSent).components.length === 0);
+  const sSrc = fs.readFileSync('./src/plan/settle.js', 'utf8');
+  ok('본인 줄만 토글', sSrc.includes('x.userId === interaction.user.id'));
+  ok('실제 송금 연동은 하지 않음 (표시만)', sSrc.includes('보냈다는 표시'));
+
+  fs.rmSync('./data/verify-data/plans.json', { force: true });
+  fs.rmSync('./data/verify-data/settlements.json', { force: true });
+}
+
 // 6t) 봇 나눠 돌리기 (BOT_ROLE)
 //
 // 역할마다 **실제로 프로세스를 띄워** 확인합니다. config.js 가 import 시점에 한 번만
@@ -881,7 +1027,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 19개', union.length === 19, `${union.length}개`);
+  ok('둘을 합쳐 23개', union.length === 23, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

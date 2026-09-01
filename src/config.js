@@ -121,7 +121,7 @@ const dataDirRaw = str('DATA_DIR', './data');
  * 자세한 건 docs/ARCHITECTURE.md 2.1절.
  */
 const BOTS = {
-  mango: { name: '망고', features: ['tts', 'timer', 'images', 'poll', 'movie'] },
+  mango: { name: '망고', features: ['tts', 'timer', 'images', 'poll', 'movie', 'plan'] },
   music: { name: '노래하는 망고', features: ['music'] },
 };
 
@@ -165,6 +165,11 @@ export const config = {
     voice: str('TTS_VOICE', 'ko-KR-HyunsuMultilingualNeural'),
     maxChars: num('TTS_MAX_CHARS', 200),
     readAuthor: bool('TTS_READ_AUTHOR', false),
+  },
+
+  // 일정 채널을 만들 카테고리. /채널설정 으로 바꿀 수 있습니다.
+  plan: {
+    categoryId: str('PLAN_CATEGORY_ID'),
   },
 
   // 영화 정보 (TMDB). 없으면 /영화 만 안내하고 기능은 꺼둡니다 — 봇 전체가 죽으면 안 됩니다.
