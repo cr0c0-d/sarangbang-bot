@@ -24,17 +24,18 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 15개 로드', allCommands.length === 15, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 14개 로드', allCommands.length === 14, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
 // 버튼으로 대체해 없앤 명령어들이 되살아나지 않았는지 (명령어 수 줄이기의 회귀 검사)
 for (const gone of ['핑', '다음', '정지', '일시정지', '이어재생', '반복', '이전곡',
-                    '대기열제거', '대기열비우기', '목소리목록', '폴더확인', '채널확인', '채널해제']) {
+                    '대기열제거', '대기열비우기', '목소리목록', '폴더확인', '채널확인', '채널해제',
+                    '내목소리']) {
   ok(`/${gone} 제거됨`, !names.includes(gone));
 }
 for (const c of allCommands) {
@@ -180,16 +181,16 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('기본 목소리 실재', real.has(config.tts.voice), config.tts.voice);
   ok('기본 목소리가 다국어', config.tts.voice.includes('Multilingual'), config.tts.voice);
 
-  // 사람별 목소리
+  // 사람별 목소리. 서버 기본 목소리 명령어(/목소리)는 없앴고,
+  // 이제 **개인 설정 > .env 기본값** 두 단계뿐입니다.
   const st = await import('./src/settings.js');
   const G = 'voiceguild', U = 'user1', U2 = 'user2';
   ok('기본은 .env 값', st.voiceFor(G, U) === config.tts.voice);
-  st.setGuildVoice(G, 'ko-KR-SunHiNeural');
-  ok('서버 기본이 .env 를 덮음', st.voiceFor(G, U) === 'ko-KR-SunHiNeural');
   st.setUserVoice(G, U, 'en-US-AvaMultilingualNeural');
-  ok('내 목소리가 서버 기본을 덮음', st.voiceFor(G, U) === 'en-US-AvaMultilingualNeural');
-  ok('다른 사람은 서버 기본 그대로', st.voiceFor(G, U2) === 'ko-KR-SunHiNeural');
-  ok('내 목소리 해제하면 서버 기본으로', st.clearUserVoice(G, U) && st.voiceFor(G, U) === 'ko-KR-SunHiNeural');
+  ok('내 목소리가 기본값을 덮음', st.voiceFor(G, U) === 'en-US-AvaMultilingualNeural');
+  ok('다른 사람은 기본값 그대로', st.voiceFor(G, U2) === config.tts.voice);
+  ok('내 목소리 해제하면 기본값으로', st.clearUserVoice(G, U) && st.voiceFor(G, U) === config.tts.voice);
+  ok('서버 기본 목소리 설정은 제거됨', st.setGuildVoice === undefined && st.guildVoice === undefined);
 }
 
 // 6c) GUILD_ID 를 쉼표 목록으로 읽는가 (여러 서버 지원)
@@ -726,7 +727,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 19개', union.length === 19, `${union.length}개`);
+  ok('둘을 합쳐 18개', union.length === 18, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

@@ -131,18 +131,14 @@ export function featureStates(guildId) {
 
 // ── TTS 목소리 (사람마다 다르게) ──────────────────────────────
 //
-// 우선순위: 내가 정한 목소리 > 서버 기본 목소리 > .env 기본값
-// 예전에는 서버 목소리를 메모리에만 뒀더니 재시작하면 초기화됐습니다. 이제 저장합니다.
-
-export function guildVoice(guildId) {
-  return store[guildId]?.voice ?? null;
-}
-
-export function setGuildVoice(guildId, voice) {
-  store[guildId] ??= {};
-  store[guildId].voice = voice;
-  save();
-}
+// 우선순위: **내가 정한 목소리 > `.env` 의 TTS_VOICE**
+//
+// 예전에는 `/목소리`(서버 기본) 와 `/내목소리`(개인) 두 명령어가 있었는데,
+// 둘 다 있으면 어느 쪽을 써야 할지 헷갈려서 **개인 설정만 남겼습니다.**
+// 서버 기본값은 `.env` 의 `TTS_VOICE` 로 정합니다.
+//
+// ⚠️ 예전에 `/목소리` 로 정해둔 서버 기본값(settings.json 의 `voice`)은 이제 쓰지 않습니다.
+//    그 서버 사람들은 개인 설정이 없으면 `.env` 기본 목소리를 씁니다.
 
 export function userVoice(guildId, userId) {
   return store[guildId]?.userVoices?.[userId] ?? null;
@@ -165,7 +161,7 @@ export function clearUserVoice(guildId, userId) {
 
 /** 이 사람의 글을 읽을 때 쓸 목소리. */
 export function voiceFor(guildId, userId) {
-  return userVoice(guildId, userId) ?? guildVoice(guildId) ?? config.tts.voice;
+  return userVoice(guildId, userId) ?? config.tts.voice;
 }
 
 // ── 음량 (음악 / 읽어주기 따로) ────────────────────────────────

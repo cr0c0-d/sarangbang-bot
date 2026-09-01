@@ -8,11 +8,8 @@ import {
   ttsEnabled,
   featureEnabled,
   voiceFor,
-  setGuildVoice,
   setUserVoice,
   clearUserVoice,
-  userVoice,
-  guildVoice,
 } from '../settings.js';
 import { VOICES, VOICE_CHOICES, voiceLabel, isKoreanOnly } from './voices.js';
 
@@ -250,14 +247,19 @@ export const commands = [
     },
   },
 
+  // /목소리 — **사람마다** 자기 목소리를 정합니다.
+  //
+  // 예전에는 `/목소리`(서버 기본) 와 `/내목소리`(개인) 둘로 나뉘어 있었는데,
+  // 둘 다 있으면 어느 쪽을 써야 할지 헷갈립니다. 개인 설정만 남겼습니다.
+  // 서버 기본값은 `.env` 의 `TTS_VOICE` 로 정합니다.
   {
     data: new SlashCommandBuilder()
-      .setName('내목소리')
+      .setName('목소리')
       .setDescription('내 글을 읽을 목소리를 고릅니다 (사람마다 다르게 쓸 수 있습니다)')
       .addStringOption((o) =>
         o
           .setName('목소리')
-          .setDescription('고르지 않으면 서버 기본 목소리를 씁니다')
+          .setDescription('고르지 않으면 기본 목소리로 되돌립니다')
           .setRequired(false)
           .addChoices(...VOICE_CHOICES)
       ),
@@ -265,13 +267,13 @@ export const commands = [
       const picked = interaction.options.getString('목소리');
 
       if (!picked) {
-        // 비우고 실행하면 내 설정을 지웁니다 (서버 기본값으로 돌아감).
+        // 비우고 실행하면 내 설정을 지웁니다 (기본값으로 돌아감).
         const had = clearUserVoice(interaction.guildId, interaction.user.id);
         const now = voiceFor(interaction.guildId, interaction.user.id);
         return interaction.reply({
           content: had
-            ? `🔄 내 목소리 설정을 지웠습니다. 이제 서버 기본값 **${voiceLabel(now)}** 를 씁니다.`
-            : `지금 서버 기본값 **${voiceLabel(now)}** 를 쓰고 있습니다.`,
+            ? `🔄 내 목소리 설정을 지웠습니다. 이제 기본 목소리 **${voiceLabel(now)}** 를 씁니다.`
+            : `지금 기본 목소리 **${voiceLabel(now)}** 를 쓰고 있습니다.`,
           flags: MessageFlags.Ephemeral,
         });
       }
@@ -283,25 +285,6 @@ export const commands = [
       });
     },
   },
-
-  {
-    data: new SlashCommandBuilder()
-      .setName('목소리')
-      .setDescription('서버 기본 목소리를 바꿉니다 (개인 설정이 없는 사람에게 적용)')
-      .addStringOption((o) =>
-        o.setName('목소리').setDescription('서버 기본으로 쓸 목소리').setRequired(true).addChoices(...VOICE_CHOICES)
-      ),
-    async execute(interaction) {
-      const picked = interaction.options.getString('목소리');
-      setGuildVoice(interaction.guildId, picked);
-      await interaction.reply(
-        `🗣️ 서버 기본 목소리를 **${voiceLabel(picked)}** 로 바꿨습니다.` +
-          koreanOnlyWarning(picked) +
-          '\n(개인 목소리는 `/내목소리` 로 따로 정할 수 있습니다)'
-      );
-    },
-  },
-
 ];
 
 /** 한국어 전용 목소리를 골랐을 때만 붙이는 경고. */
