@@ -635,11 +635,13 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('시간 표시', h.timeAgo(t0 - 30_000, t0) === '방금' && h.timeAgo(t0 - 5 * 60e3, t0) === '5분 전' &&
     h.timeAgo(t0 - 26 * 3600e3, t0) === '어제' && h.timeAgo(t0 - 5 * 86400e3, t0) === '5일 전');
 
-  // 재시작을 견디는가
-  await new Promise((r) => setTimeout(r, 150));
+  // 재시작을 견디는가.
+  // 시간을 재서 기다리면(setTimeout) 느린 서버에서 어긋납니다 — 실제로 실패했습니다.
+  await h.flushHistory();
   const h2 = await import('./src/music/history.js?reload=1');
   await h2.initHistory();
-  ok('재시작해도 목록이 남음', h2.recent('hg1').length === 2);
+  ok('재시작해도 목록이 남음', h2.recent('hg1').length === 2, `${h2.count('hg1')}곡`);
+  ok('저장 완료를 기다릴 수 있음 (시간 재기 금지)', typeof h.flushHistory === 'function' && fs.readFileSync('./src/index.js','utf8').includes('await flushHistory()'));
 
   const mc = fs.readFileSync('./src/music/commands.js', 'utf8');
   const pn3 = fs.readFileSync('./src/music/panel.js', 'utf8');

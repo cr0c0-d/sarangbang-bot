@@ -20,7 +20,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { initHistory } from './music/history.js';
+import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
@@ -229,6 +229,9 @@ async function shutdown(signal) {
   for (const guild of client.guilds.cache.values()) {
     peekGuildAudio(guild.id)?.destroy();
   }
+  // 방금 튼 곡이 지난 목록에 안 남을 수 있습니다. 저장이 끝날 때까지 기다립니다.
+  await flushHistory().catch(() => {});
+
   webServer?.close();
   client.destroy();
   setTimeout(() => process.exit(0), 500);

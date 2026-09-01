@@ -54,6 +54,17 @@ export function record(guildId, track, at = Date.now()) {
   save();
 }
 
+/**
+ * 저장이 디스크에 **실제로 내려갈 때까지** 기다립니다.
+ *
+ * `record()` 는 쓰기를 기다리지 않습니다(재생 중에 멈추면 안 되므로).
+ * 그래서 "적고 → 바로 다시 읽기" 를 하려면 이걸 거쳐야 합니다.
+ * 시간을 재서 기다리면(setTimeout) 느린 서버에서 어긋납니다.
+ */
+export function flushHistory() {
+  return writeChain;
+}
+
 /** 최근에 들은 순서대로 돌려줍니다. */
 export function recent(guildId, limit = 25) {
   return (store[guildId] ?? []).slice(0, limit);
