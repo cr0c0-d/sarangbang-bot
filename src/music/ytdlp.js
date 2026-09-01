@@ -335,12 +335,43 @@ export function hasFreshStreamUrl(track) {
  *   input 이 문자열이면 ffmpeg 이 그 주소를 직접 받으면 됩니다 (yt-dlp 재추출 없음 = 빠름).
  *   Readable 이면 yt-dlp 가 흘려보내는 스트림입니다 (주소가 만료됐거나 없을 때).
  */
+/**
+ * 직접 수신이 이 서버에서 되는가.
+ *
+ * **쿠키를 쓰는 서버에서는 거의 항상 실패합니다.** 쿠키로 뽑은 재생 주소를
+ * ffmpeg 이 쿠키 없이 그냥 받으면 유튜브가 거부하기 때문입니다.
+ * 그런데 실패해도 곡은 나옵니다 — 느린 방식으로 다시 시도하니까요.
+ * 그래서 **문제를 눈치채기 어려운 채로 곡마다 시간을 두 배로 씁니다.**
+ *
+ * 두 번 연속 실패하면 이번 실행 동안은 아예 쓰지 않습니다.
+ */
+let directFailures = 0;
+let directDisabled = false;
+
+export function noteDirectFailure(reason) {
+  if (directDisabled) return;
+  if (++directFailures < 2) return;
+  directDisabled = true;
+  console.warn(
+    '[music] 직접 수신이 계속 실패해서 이번 실행 동안은 쓰지 않습니다.\n' +
+      '        곡마다 헛걸음하던 것이 사라져 재생이 빨라집니다. (재생 자체는 계속 됩니다)\n' +
+      '        쿠키를 쓰는 서버에서 흔한 일입니다. 영구히 끄려면\n' +
+      '        .env.music 에 MUSIC_DIRECT_STREAM=false 를 넣으세요.' +
+      (reason ? `\n        마지막 오류: ${reason}` : '')
+  );
+}
+
+/** 직접 수신이 실제로 성공했으면 실패 기록을 지웁니다. (일시적 실패였을 수 있으므로) */
+export function noteDirectSuccess() {
+  directFailures = 0;
+}
+
 export function createSource(track, { forcePipe = false } = {}) {
   // .env 로 직접 수신을 아예 끌 수 있습니다.
   // 서버 환경에 따라 재생 주소가 거부될 수 있어, 문제가 생기면 이걸로 즉시 되돌립니다.
   const allowDirect = (process.env.MUSIC_DIRECT_STREAM ?? 'true').toLowerCase() !== 'false';
 
-  if (!forcePipe && allowDirect && hasFreshStreamUrl(track)) {
+  if (!forcePipe && allowDirect && !directDisabled && hasFreshStreamUrl(track)) {
     // 이미 뽑아둔 주소를 그대로 씁니다. 추출을 한 번 건너뛰므로 약 2.8초가 절약됩니다.
     return { input: track.streamUrl, remote: true, kill: () => {} };
   }

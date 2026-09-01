@@ -121,7 +121,7 @@ ok('4순위 날짜 (채널 이름을 모를 때)',
 const { cleanText } = await import('./src/tts/index.js');
 const g = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } };
 const got = cleanText({ content: '<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵게** ㅋㅋㅋㅋㅋ', guild: g }, 200);
-ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.stringify(got));
+ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.stringify(got));
 
 // 6a) 이모지는 읽지 않는다
 {
@@ -134,7 +134,13 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('글에 섞이면 이모지만 빼고 읽음', say('안녕 😀') === '안녕', say('안녕 😀'));
   ok('커스텀 이모지도 빼고 읽음', say('안녕하세요 <:kekw:123> 반가워요') === '안녕하세요 반가워요');
   ok('이모지 이름을 읽지 않음', !say('<:kekw:123> 안녕').includes('kekw'));
-  ok('한글 자음은 이모지가 아님 (지우면 안 됨)', say('ㅋㅋㅋㅋㅋ') === 'ㅋㅋㅋ', say('ㅋㅋㅋㅋㅋ'));
+  // ★ Edge TTS 는 낱자만 이어진 글에 소리를 아예 안 냅니다 (실측: ㅋㅋ 부터 0바이트).
+  //   그래서 3개로 줄인 뒤 **발음 나는 글자로 바꿔야** 읽힙니다.
+  ok('ㅋㅋㅋㅋㅋ → 크크크 (3개로 줄이고 글자로)', say('ㅋㅋㅋㅋㅋ') === '크크크', say('ㅋㅋㅋㅋㅋ'));
+  ok('ㅎ · ㅠ · ㅜ 도 마찬가지', say('ㅎㅎ') === '흐흐' && say('ㅠㅠ') === '흑흑' && say('ㅜㅜㅜㅜ') === '흑흑흑',
+    `${say('ㅎㅎ')} / ${say('ㅠㅠ')} / ${say('ㅜㅜㅜㅜ')}`);
+  ok('글에 섞인 낱자도 바뀜', say('안녕 ㅋㅋ') === '안녕 크크', say('안녕 ㅋㅋ'));
+  ok('낱자를 지워버리지는 않음', say('ㅋㅋㅋㅋㅋ') !== '');
   ok('평범한 문장은 그대로', say('오늘 날씨 좋다') === '오늘 날씨 좋다');
   ok('빈 메시지는 여전히 빈 값 (안 읽음)', say('   ') === '');
 }
@@ -461,6 +467,12 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('구분자 기반 파싱 (줄 밀림 방지)', yt.includes("const SEP = '|::|'"));
   ok('재생주소 http 검증', yt.includes('isHttp(na(p[5]))'));
   ok('직접수신 끄는 스위치', yt.includes('MUSIC_DIRECT_STREAM'));
+  // 직접 수신이 매번 실패하면 곡마다 헛걸음해서 시간을 두 배로 씁니다.
+  // 쿠키를 쓰는 서버에서 실제로 겪은 문제입니다.
+  ok('직접수신이 계속 실패하면 스스로 끔', yt.includes('directDisabled') && yt.includes('noteDirectFailure'));
+  ok('성공하면 실패 기록을 지움', yt.includes('noteDirectSuccess'));
+  const gaDirect = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  ok('실패 원인을 로그에 남김', gaDirect.includes('this.lastStreamError.slice(0, 200)'));
   const cfg = fs.readFileSync('./src/config.js', 'utf8');
   ok('.env 중복 항목 경고', cfg.includes('warnDuplicateEnvKeys'));
   ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
@@ -552,6 +564,11 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   // 읽어주기·알람 음량 조절은 걷어냈습니다. speak() 에 음량 인자도 남기지 않습니다.
   ok('읽어주기는 원음 그대로', ga2.includes('speak(makeStream, targetChannelId = null) {') &&
     ga2.includes('const piped = toOggOpus(raw);'));
+
+  // 소리가 안 나오는 글을 그냥 재생하면 Playing 을 15초 기다리다 실패하고,
+  // 그동안 뒤에 온 문장이 전부 밀립니다.
+  ok('소리 안 나오면 15초 기다리지 않고 건너뜀',
+    ga2.includes('await waitForAudio(piped.stream') && ga2.includes('소리가 나오지 않아 건너뜁니다'));
 }
 
 // 7) 유튜브 링크 감지

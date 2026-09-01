@@ -17,7 +17,7 @@ import {
 } from '@discordjs/voice';
 import { config } from '../config.js';
 import { volumeScale } from '../settings.js';
-import { createSource, hasFreshStreamUrl, getTracks } from '../music/ytdlp.js';
+import { createSource, hasFreshStreamUrl, getTracks, noteDirectFailure, noteDirectSuccess } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel, buildPanel } from '../music/panel.js';
 import { forgetPanel, MUSIC } from '../panel-registry.js';
@@ -110,6 +110,8 @@ export class GuildAudio {
     // 대기열에 넣을 때 남기면 재생에 실패한 곡까지 쌓여서, 다시 골라도 또 실패합니다.
     this.musicPlayer.on(AudioPlayerStatus.Playing, () => {
       if (this.current) recordHistory(this.guild.id, this.current.track);
+      // 직접 수신으로 소리가 실제로 났으면, 앞선 실패는 일시적이었던 것입니다.
+      if (this.usedDirect) noteDirectSuccess();
     });
     this.musicPlayer.on('error', (err) => {
       console.error('[music] 재생 오류:', err.message);
@@ -506,7 +508,13 @@ export class GuildAudio {
 
       if (this.usedDirect && !item.forcePipe) {
         // 재생 주소가 거부된 것으로 보입니다. 느리지만 확실한 방식으로 다시 시도합니다.
-        console.warn(`[music] 직접 수신 실패 → yt-dlp 방식으로 재시도: ${item.track.title}`);
+        // 오류 내용을 안 찍으면 왜 실패하는지 영영 알 수 없습니다.
+        console.warn(
+          `[music] 직접 수신 실패 → yt-dlp 방식으로 재시도: ${item.track.title}` +
+            (this.lastStreamError ? `
+        ${this.lastStreamError.slice(0, 200)}` : '')
+        );
+        noteDirectFailure(this.lastStreamError);
         this.current = null;
         // 듣던 위치를 넘겨줍니다. 안 넘기면 **곡이 처음부터** 다시 시작됩니다.
         this.queue.unshift({ ...item, forcePipe: true, resumeAt: this.positionSec() });
@@ -635,6 +643,15 @@ export class GuildAudio {
       // 읽어주기 음량 조절은 없앴습니다(소유자 요청). 원음 그대로 내보냅니다.
       const piped = toOggOpus(raw);
       kill = piped.kill;
+
+      // ★ 소리가 하나도 안 나오는 경우가 있습니다.
+      //   (낱자만 있는 글, 한국어 전용 목소리에 일본어 — 둘 다 실측으로 0바이트 확인)
+      //   그대로 재생하면 아래 entersState 가 **15초를 기다리다 실패**하고,
+      //   그동안 뒤에 온 문장이 전부 밀립니다. 미리 확인하고 건너뜁니다.
+      if (!(await waitForAudio(piped.stream, 8_000))) {
+        console.warn('[tts] 소리가 나오지 않아 건너뜁니다.');
+        return; // finally 에서 정리됩니다
+      }
 
       this.subscribeTo(this.ttsPlayer);
       this.ttsPlayer.play(createAudioResource(piped.stream, { inputType: StreamType.OggOpus }));

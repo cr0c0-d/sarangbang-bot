@@ -41,6 +41,20 @@ const EMOJI_RE =
  * 디스코드 메시지를 "읽어도 되는 문장"으로 다듬습니다.
  * 멘션 ID, 이모지 코드, 링크를 그대로 읽으면 알아들을 수 없기 때문입니다.
  */
+/**
+ * 낱자(자음·모음)를 소리 나는 글자로.
+ *
+ * Edge TTS 가 낱자만 이어진 글에 소리를 안 내기 때문에 필요합니다.
+ * 여기 없는 낱자는 그대로 둡니다 — 다른 글자와 섞여 있으면 정상적으로 읽힙니다.
+ * 자주 쓰는 것이 더 있으면 여기에 추가하면 됩니다.
+ */
+const JAMO_SPEAK = {
+  ㅋ: '크',
+  ㅎ: '흐',
+  ㅠ: '흑',
+  ㅜ: '흑',
+};
+
 export function cleanText(message, maxChars) {
   let text = message.content ?? '';
 
@@ -74,6 +88,16 @@ export function cleanText(message, maxChars) {
 
   // ㅋㅋㅋㅋㅋㅋ, ㅎㅎㅎㅎ, !!!!! 같은 반복은 3개까지만
   text = text.replace(/(.)\1{2,}/g, '$1$1$1');
+
+  // ── 자음·모음만 있는 글은 발음 나는 글자로 바꿉니다 ──
+  //
+  // ★ Edge TTS 는 `ㅋㅋ` `ㅎㅎ` `ㅠㅠ` 처럼 **낱자만 이어진 글에 소리를 아예 내지 않습니다.**
+  //   (실측: `ㅋ` 은 정상, `ㅋㅋ` 부터 0바이트. `ㅋㅋㅋ 웃김` 처럼 섞이면 정상)
+  //   그래서 3개로 줄이는 것까지는 맞았는데 결과가 **무음**이었습니다.
+  //   글자로 바꿔주면 그대로 읽힙니다.
+  text = text.replace(/([ㄱ-ㅎㅏ-ㅣ])\1*/g, (run, jamo) =>
+    JAMO_SPEAK[jamo] ? JAMO_SPEAK[jamo].repeat(run.length) : run
+  );
 
   text = text.replace(/\s+/g, ' ').trim();
 
