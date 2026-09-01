@@ -12,7 +12,7 @@ import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './volume-commands.js';
-import { getWithSource } from './settings.js';
+import { getWithSource, inRole } from './settings.js';
 
 const basicCommands = [
   {
@@ -23,12 +23,10 @@ const basicCommands = [
       const ttsText = getWithSource(g, 'ttsTextChannelId');
       const imageCh = getWithSource(g, 'imageChannelIds');
 
-      const embed = new EmbedBuilder()
-        .setTitle('🤖 봇 사용법')
-        .setColor(0x5865f2)
-        .setDescription('설정은 `/기능` 으로 켜고 끄고, `/채널설정` 으로 채널을 정합니다.')
-        .addFields(
+      // 봇을 나눠 돌릴 때(BOT_ROLE), 이 봇이 못 하는 일을 설명하면 혼란만 줍니다.
+      const fields = [
           {
+            feature: 'music',
             name: '🎵 음악',
             value: [
               '`/재생 <링크 또는 검색어>` — 재생 (재생목록 링크도 됩니다)',
@@ -42,6 +40,7 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'tts',
             name: '🗣️ 읽어주기 (TTS)',
             value:
               ttsText.source === 'none'
@@ -54,6 +53,7 @@ const basicCommands = [
                   ].join('\n'),
           },
           {
+            feature: 'timer',
             name: '⏰ 타이머',
             value: [
               '`/타이머 15분` — 시간이 되면 음성으로 알려줍니다',
@@ -63,6 +63,7 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
               imageCh.source === 'none'
@@ -80,8 +81,15 @@ const basicCommands = [
                     '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
                     '`/폴더` `/폴더목록` `/정리`',
                   ].join('\n'),
-          }
-        );
+          },
+      ];
+
+      const embed = new EmbedBuilder()
+        .setTitle('🤖 봇 사용법')
+        .setColor(0x5865f2)
+        .setDescription('설정은 `/기능` 으로 켜고 끄고, `/채널설정` 으로 채널을 정합니다.')
+        .addFields(fields.filter((f) => inRole(f.feature)).map(({ feature, ...f }) => f));
+
       await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
     },
   },
@@ -98,15 +106,30 @@ const basicCommands = [
  */
 const tag = (feature, cmds) => cmds.map((c) => ({ ...c, feature }));
 
+/** 기능 태그가 붙은 명령어 전부. 역할과 무관한 원본입니다. */
+const taggedCommands = [
+  ...tag('music', musicCommands),
+  ...tag('tts', ttsCommands),
+  ...tag('timer', timerCommands),
+  ...tag('images', imageCommands),
+];
+
+/**
+ * 이 봇이 등록할 명령어.
+ *
+ * `BOT_ROLE` 로 봇을 나눠 돌릴 때(음악 봇 / 나머지 봇), **맡지 않은 기능의
+ * 명령어는 아예 등록하지 않습니다.** 등록해두고 막기만 하면 목록만 지저분해집니다.
+ *
+ * 태그가 없는 `/도움말` `/기능` `/채널설정` `/음량` 은 **양쪽 봇에 다 있습니다.**
+ * 봇마다 따로 켜고 끄고 설정해야 하기 때문입니다.
+ * 대신 각자 **자기 역할의 항목만** 보여줍니다 (activeKeys / activeFeatures).
+ */
 export const allCommands = [
   ...basicCommands,
   ...featureCommands,
   ...channelCommands,
   ...volumeCommands,
-  ...tag('music', musicCommands),
-  ...tag('tts', ttsCommands),
-  ...tag('timer', timerCommands),
-  ...tag('images', imageCommands),
+  ...taggedCommands.filter((c) => inRole(c.feature)),
 ];
 
 /** 이름 → 명령어 객체 */

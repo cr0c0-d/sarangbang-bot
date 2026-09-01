@@ -41,6 +41,7 @@
 | 음량 조절 방식 | 3.2-1 — **`inlineVolume` 금지. 순수 JS opus 인코더뿐이라 끊긴다** |
 | 제어판 메시지 수명, 재시작 정리 | 3.6-1a — **제어판은 메모리에만 두면 안 된다** |
 | 지난 재생 목록 | 3.6-1b — **기록은 재생이 시작될 때만. 명령어를 새로 만들지 말 것** |
+| 봇 나눠 돌리기 (`BOT_ROLE`) | 2.1 — **역할 표는 하나뿐. 애플리케이션은 반드시 두 개** |
 
 서버 배포 관련 작업이면 **[docs/ORACLE-CLOUD.md](docs/ORACLE-CLOUD.md)** 도 보세요.
 (Oracle Always Free 배포 절차, ARM 호환성 확인 결과, 유휴 인스턴스 회수 정책)
@@ -52,6 +53,7 @@ npm install              # 의존성 설치
 npm run update-ytdlp     # yt-dlp 바이너리 갱신 (음악이 안 나올 때 1순위 조치)
 npm run deploy           # 슬래시 명령어를 디스코드에 등록 (명령어 추가/수정 후 필수)
 npm start                # 봇 실행
+npm run start:music      # 음악 전담 봇 실행 (봇을 둘로 나눠 쓸 때만)
 npm run verify           # 토큰 없이 가능한 자체 검증 (코드 수정 후 반드시 실행)
 ```
 

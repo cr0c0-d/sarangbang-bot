@@ -1,5 +1,10 @@
 node_modules/
+# .env 뿐 아니라 .env.music 같은 역할별 파일도 전부 막습니다 (토큰이 들어갑니다).
+# 예시 파일(.env.example)만 남깁니다.
 .env
+.env.*
+!.env.example
+!.env.music.example
 data/
 bin/
 *.log

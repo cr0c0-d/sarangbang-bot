@@ -16,6 +16,13 @@ import { allCommands } from './commands.js';
 const rest = new REST({ version: '10' }).setToken(config.token);
 const body = allCommands.map((c) => c.data.toJSON());
 
+// 봇을 나눠 돌리면 등록 대상이 둘입니다. 어느 쪽에 등록하는지 반드시 보여줍니다.
+// (엉뚱한 쪽에 등록하면 상대 봇의 명령어가 통째로 지워집니다 — put 은 덮어쓰기입니다)
+if (config.role !== 'all') {
+  console.log(`역할: ${config.role} (${config.roleFeatures.join(', ')})`);
+  console.log(`애플리케이션: ${config.clientId}\n`);
+}
+
 console.log(`명령어 ${body.length}개를 서버 ${config.guildIds.length}곳에 등록합니다...\n`);
 
 let ok = 0;

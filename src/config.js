@@ -70,10 +70,74 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
+/**
+ * 봇을 나눠 돌릴 때 **같은 디스코드 애플리케이션**을 두 번 쓰는 사고를 막습니다.
+ *
+ * `.env.music` 을 만들면서 토큰만 그대로 두기가 정말 쉽습니다. 그러면 두 프로세스가
+ * 같은 봇으로 로그인해서 **모든 명령에 두 번 답하고**, `npm run deploy:music` 이
+ * 나머지 봇의 명령어를 통째로 지워버립니다. 원인을 찾기가 아주 어렵습니다.
+ */
+function assertDifferentApplications() {
+  const read = (name) => {
+    try {
+      return readFileSync(path.join(ROOT, name), 'utf8');
+    } catch {
+      return null;
+    }
+  };
+  const pick = (text, key) => text?.match(new RegExp(`^\\s*${key}\\s*=\\s*(.+)$`, 'm'))?.[1]?.trim();
+
+  const main = read('.env');
+  const music = read('.env.music');
+  if (!main || !music) return; // 나눠 쓰지 않는 상태입니다
+
+  for (const key of ['DISCORD_TOKEN', 'CLIENT_ID']) {
+    const a = pick(main, key);
+    const b = pick(music, key);
+    if (a && b && a === b) {
+      console.error(`[설정 오류] .env 와 .env.music 의 ${key} 가 같습니다.`);
+      console.error('   같은 봇으로 두 번 로그인하면 모든 명령에 두 번 답하고,');
+      console.error('   deploy 가 서로의 명령어를 지웁니다.');
+      console.error('   → 디스코드 개발자 포털에서 **애플리케이션을 하나 더** 만들고');
+      console.error('     그 토큰과 CLIENT_ID 를 .env.music 에 넣으세요.');
+      process.exit(1);
+    }
+  }
+}
+assertDifferentApplications();
+
 const imageDirRaw = str('IMAGE_DIR', './data/images');
 const dataDirRaw = str('DATA_DIR', './data');
 
+/**
+ * 이 봇이 맡을 역할. 한 코드로 **봇 여러 개**를 돌리기 위한 스위치입니다.
+ *
+ *   all   — 전부 (기본값. 지금까지와 똑같습니다)
+ *   music — 음악만
+ *   home  — 음악 빼고 전부 (읽어주기·타이머·이미지)
+ *
+ * 나눠 쓰려면 **디스코드 애플리케이션을 하나 더** 만들어야 합니다.
+ * 같은 토큰으로 두 번 띄우면 두 프로세스가 같은 명령을 받아 **두 번 답합니다.**
+ * 자세한 건 docs/ARCHITECTURE.md 2.1절.
+ */
+const ROLE_FEATURES = {
+  all: ['music', 'tts', 'timer', 'images'],
+  music: ['music'],
+  home: ['tts', 'timer', 'images'],
+};
+
+const roleRaw = str('BOT_ROLE', 'all').toLowerCase();
+if (!ROLE_FEATURES[roleRaw]) {
+  console.error(`[설정 오류] BOT_ROLE 값이 잘못됐습니다: "${roleRaw}"`);
+  console.error(`   쓸 수 있는 값: ${Object.keys(ROLE_FEATURES).join(' / ')}`);
+  console.error('   비워두면 all (전부) 입니다.');
+  process.exit(1);
+}
+
 export const config = {
+  role: roleRaw,
+  /** 이 역할이 맡은 기능들. settings.js 의 FEATURES 키와 같습니다. */
+  roleFeatures: ROLE_FEATURES[roleRaw],
   token: str('DISCORD_TOKEN'),
   clientId: str('CLIENT_ID'),
   // 여러 서버에서 쓸 수 있습니다. .env 에 쉼표로 나열하세요.

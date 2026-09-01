@@ -22,9 +22,13 @@ let writeChain = Promise.resolve();
  * 다룰 수 있는 설정 키와, 값이 비었을 때 쓸 .env 기본값.
  * 새 설정을 추가하려면 여기에만 넣으면 됩니다.
  */
+// 각 항목의 `feature` 는 **역할 분리**에 쓰입니다.
+// 음악만 맡은 봇에게 읽어주기 채널을 물어봐야 소용이 없으므로,
+// activeKeys() 가 자기 역할의 것만 골라 줍니다.
 export const KEYS = {
   musicTextChannelId: {
     label: '음악 채팅방',
+    feature: 'music',
     hint: '유튜브 링크를 붙여넣으면 재생되는 채팅방',
     kind: 'text',
     envValue: () => config.music.textChannelId,
@@ -32,6 +36,7 @@ export const KEYS = {
   },
   musicVoiceChannelId: {
     label: '음악 음성채널',
+    feature: 'music',
     hint: '음악을 틀 음성채널 (지정 안 하면 명령한 사람을 따라감)',
     kind: 'voice',
     envValue: () => config.music.voiceChannelId,
@@ -39,6 +44,7 @@ export const KEYS = {
   },
   ttsTextChannelId: {
     label: '읽어주기 채팅방',
+    feature: 'tts',
     hint: '여기에 쓴 글을 음성채널에서 읽어줍니다',
     kind: 'text',
     envValue: () => config.tts.textChannelId,
@@ -46,6 +52,7 @@ export const KEYS = {
   },
   ttsVoiceChannelId: {
     label: '읽어주기 음성채널',
+    feature: 'tts',
     hint: '읽어줄 음성채널 (지정 안 하면 말한 사람을 따라감)',
     kind: 'voice',
     envValue: () => config.tts.voiceChannelId,
@@ -53,6 +60,7 @@ export const KEYS = {
   },
   imageChannelIds: {
     label: '이미지 채널',
+    feature: 'images',
     hint: '비워두면 봇이 볼 수 있는 모든 채널. 지정하면 그 채널들만',
     kind: 'text',
     multi: true,
@@ -68,12 +76,33 @@ export const KEYS = {
  * 서버에 SSH로 들어가 프로세스를 끄지 않고도 디스코드에서 기능별로 끌 수 있어야 합니다.
  * (개선하면서 켜고 끄기를 반복할 수 있게)
  */
+/**
+ * 이 봇이 맡은 기능인가? (`BOT_ROLE` 로 정합니다)
+ *
+ * "켜져 있는가"(`featureEnabled`)와 **다른 것입니다.**
+ *   - 역할에 없는 기능 → 이 봇에는 아예 없습니다. 명령어도 등록되지 않습니다.
+ *   - 역할에 있지만 꺼진 기능 → 명령어는 있고, 쓰면 "꺼져 있습니다" 라고 답합니다.
+ */
+export function inRole(feature) {
+  return config.roleFeatures.includes(feature);
+}
+
+/** 이 역할이 물어볼 만한 설정 항목만 골라 줍니다. */
+export function activeKeys() {
+  return Object.fromEntries(Object.entries(KEYS).filter(([, spec]) => inRole(spec.feature)));
+}
+
 export const FEATURES = {
   music: { label: '음악', emoji: '🎵', hint: '유튜브 링크 감지 + /재생 등' },
   tts: { label: '읽어주기', emoji: '🗣️', hint: '채팅을 음성으로 읽어주기' },
   timer: { label: '타이머', emoji: '⏰', hint: '/타이머 · /알람등록' },
   images: { label: '이미지 정리', emoji: '🖼️', hint: '사진 자동 저장 (갤러리 열람은 계속 됩니다)' },
 };
+
+/** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */
+export function activeFeatures() {
+  return Object.fromEntries(Object.entries(FEATURES).filter(([key]) => inRole(key)));
+}
 
 /** 기본값은 "켜짐" 입니다. 명시적으로 끈 것만 저장합니다. */
 export function featureEnabled(guildId, key) {

@@ -12,7 +12,7 @@
 //                  **새 소리를 다 준비한 뒤에 바꿔치기**하므로 끊기지 않습니다.
 //                  대신 누른 뒤 1~2초쯤 지나 바뀝니다.
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
-import { volumePercent, setVolume, VOLUME_MAX } from './settings.js';
+import { volumePercent, setVolume, VOLUME_MAX, inRole } from './settings.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 
 /** 0~200 을 막대로. 한눈에 크기를 보여줍니다. */
@@ -22,36 +22,45 @@ function bar(percent) {
   return '█'.repeat(filled) + '░'.repeat(10 - filled) + over;
 }
 
+// 봇을 나눠 돌릴 때(BOT_ROLE), 이 봇이 안 내는 소리는 조절해봐야 소용없습니다.
+// 음악 봇의 `/음량` 에 읽어주기 칸이 있으면, 맞춰놓고 "왜 안 바뀌지" 가 됩니다.
+const HAS_MUSIC = inRole('music');
+const HAS_TTS = inRole('tts');
+
 function status(guildId) {
-  const m = volumePercent(guildId, 'music');
-  const t = volumePercent(guildId, 'tts');
-  return [
-    `🎵 음악      \`${bar(m)}\` **${m}%**`,
-    `🗣️ 읽어주기  \`${bar(t)}\` **${t}%**`,
-    '',
-    '`/음량 음악:70` 처럼 바꿉니다. 100이 원음이고 200까지 올릴 수 있습니다.',
-  ].join('\n');
+  const lines = [];
+  if (HAS_MUSIC) {
+    const m = volumePercent(guildId, 'music');
+    lines.push(`🎵 음악      \`${bar(m)}\` **${m}%**`);
+  }
+  if (HAS_TTS) {
+    const t = volumePercent(guildId, 'tts');
+    lines.push(`🗣️ 읽어주기  \`${bar(t)}\` **${t}%**`);
+  }
+  lines.push('', `\`/음량 ${HAS_MUSIC ? '음악' : '읽어주기'}:70\` 처럼 바꿉니다. 100이 원음이고 200까지 올릴 수 있습니다.`);
+  return lines.join('\n');
 }
 
 export const commands = [
   {
-    data: new SlashCommandBuilder()
-      .setName('음량')
-      .setDescription('음악과 읽어주기의 소리 크기를 따로 맞춥니다 (비우면 현재 값만 봅니다)')
-      .addIntegerOption((o) =>
-        o.setName('음악').setDescription('0~200 (100이 원음)').setRequired(false).setMinValue(0).setMaxValue(VOLUME_MAX)
-      )
-      .addIntegerOption((o) =>
-        o
-          .setName('읽어주기')
-          .setDescription('0~200 (100이 원음)')
-          .setRequired(false)
-          .setMinValue(0)
-          .setMaxValue(VOLUME_MAX)
-      ),
+    data: (() => {
+      const b = new SlashCommandBuilder()
+        .setName('음량')
+        .setDescription(
+          HAS_MUSIC && HAS_TTS
+            ? '음악과 읽어주기의 소리 크기를 따로 맞춥니다 (비우면 현재 값만 봅니다)'
+            : `${HAS_MUSIC ? '음악' : '읽어주기'} 소리 크기를 맞춥니다 (비우면 현재 값만 봅니다)`
+        );
+      const amount = (o, name) =>
+        o.setName(name).setDescription('0~200 (100이 원음)').setRequired(false).setMinValue(0).setMaxValue(VOLUME_MAX);
+      if (HAS_MUSIC) b.addIntegerOption((o) => amount(o, '음악'));
+      if (HAS_TTS) b.addIntegerOption((o) => amount(o, '읽어주기'));
+      return b;
+    })(),
     async execute(interaction) {
-      const music = interaction.options.getInteger('음악');
-      const tts = interaction.options.getInteger('읽어주기');
+      // 없는 옵션은 getInteger 가 null 을 줍니다. 역할에 없으면 아예 묻지 않은 것과 같습니다.
+      const music = HAS_MUSIC ? interaction.options.getInteger('음악') : null;
+      const tts = HAS_TTS ? interaction.options.getInteger('읽어주기') : null;
 
       // 인자 없이 실행하면 지금 값만 보여줍니다.
       if (music === null && tts === null) {

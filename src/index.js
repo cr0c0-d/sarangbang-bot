@@ -26,7 +26,7 @@ import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './pa
 import { initTimers, handleTimerComponent } from './timer/index.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
-import { featureEnabled, FEATURES } from './settings.js';
+import { featureEnabled, FEATURES, inRole } from './settings.js';
 
 /** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
 function featureOffMessage(key) {
@@ -45,6 +45,8 @@ const client = new Client({
 
 client.once(Events.ClientReady, (c) => {
   console.log(`✅ 로그인 완료: ${c.user.tag}`);
+  // 봇을 나눠 돌리면 로그가 두 벌 나옵니다. 어느 쪽인지 바로 보이게 찍습니다.
+  console.log(`   맡은 역할: ${config.role} (${config.roleFeatures.join(', ')})`);
   // 서버마다 설정이 다를 수 있으므로 서버별로 찍습니다.
   for (const guild of c.guilds.cache.values()) {
     const s = (key) => {
@@ -54,14 +56,14 @@ client.once(Events.ClientReady, (c) => {
       return `${Array.isArray(value) ? value.join(', ') : value} (${where})`;
     };
     console.log(`   [${guild.name}]`);
-    console.log(`     음악 채팅방  : ${s('musicTextChannelId')}`);
-    console.log(`     읽어주기 채팅방: ${s('ttsTextChannelId')}`);
-    console.log(`     이미지 채널  : ${s('imageChannelIds')}`);
+    if (inRole('music')) console.log(`     음악 채팅방  : ${s('musicTextChannelId')}`);
+    if (inRole('tts')) console.log(`     읽어주기 채팅방: ${s('ttsTextChannelId')}`);
+    if (inRole('images')) console.log(`     이미지 채널  : ${s('imageChannelIds')}`);
   }
   console.log('   설정을 바꾸려면 디스코드에서 /채널설정 을 쓰세요.');
 
   // 저장된 타이머를 되살립니다. (배포로 재시작해도 타이머가 사라지지 않게)
-  initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));
+  if (inRole('timer')) initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));
   // 재시작 전에 띄워둔 제어판을 정리합니다.
   //   음악 제어판 → 지웁니다 (재시작하면 음악이 이어지지 않으므로 "재생 중" 이 거짓말)
   //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)
@@ -70,7 +72,7 @@ client.once(Events.ClientReady, (c) => {
 
   // TTS 연결을 미리 데워둡니다.
   // 식은 연결에서 첫 발화는 약 1초, 따뜻하면 50~80ms 입니다 (실측).
-  if ([...c.guilds.cache.keys()].some((id) => ttsEnabled(id))) {
+  if (inRole('tts') && [...c.guilds.cache.keys()].some((id) => ttsEnabled(id))) {
     prewarmTts(config.tts.voice).then((ok) =>
       console.log(ok ? '   TTS 예열 완료 (첫 발화도 빠릅니다)' : '   TTS 예열 실패 (첫 발화만 조금 느립니다)')
     );
@@ -101,6 +103,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isImage = interaction.customId.startsWith('g:');
     const isChannel = interaction.customId.startsWith('c:');
     if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel) return;
+
+    // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
+    if ((isMusic && !inRole('music')) || (isTimer && !inRole('timer')) || (isImage && !inRole('images'))) return;
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
     const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : null;
@@ -164,13 +169,17 @@ client.on(Events.MessageCreate, async (message) => {
   try {
     // 이미지 저장은 다른 기능을 막지 않습니다.
     // (사진에 설명글을 달아 올리면, 저장도 하고 그 글을 읽어주기도 해야 하므로)
-    await handleImageMessage(message);
+    if (inRole('images')) await handleImageMessage(message);
 
     // 반면 아래 둘은 서로 배타적입니다.
     // 유튜브 링크는 "재생"이 맞지, 링크를 소리내어 읽는 건 의미가 없기 때문입니다.
     // 따라서 음악이 처리한 메시지는 TTS로 넘어가지 않습니다.
-    if (await handleMusicMessage(message)) return;
-    await handleTtsMessage(message);
+    //
+    // 봇을 나눠 돌리면(BOT_ROLE) 이 배타 관계가 **봇 사이에서는 성립하지 않습니다.**
+    // 음악 봇이 링크를 처리해도 나머지 봇은 그 사실을 모르므로, 링크를 읽어버립니다.
+    // 그래서 읽어주기 쪽에서 링크를 '링크' 로 바꿔 읽는 정제(cleanText)가 그대로 필요합니다.
+    if (inRole('music') && (await handleMusicMessage(message))) return;
+    if (inRole('tts')) await handleTtsMessage(message);
   } catch (err) {
     console.error('[메시지 처리]', err);
   }
@@ -181,7 +190,7 @@ client.on(Events.MessageCreate, async (message) => {
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   // 누군가 음성채널에 들어오면 곧 읽어주기를 쓸 가능성이 높습니다.
   // 그때 미리 데워두면 첫 메시지도 즉시 나옵니다.
-  if (newState?.channel && !newState.member?.user?.bot && ttsEnabled(newState.guild.id)) {
+  if (inRole('tts') && newState?.channel && !newState.member?.user?.bot && ttsEnabled(newState.guild.id)) {
     prewarmTts(config.tts.voice).catch(() => {});
   }
 
@@ -200,13 +209,19 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
 
 // ── 시작 ────────────────────────────────────────────────────
 
-// 채널 설정은 명령어로 언제든 바뀔 수 있으므로, 저장소와 웹서버는 항상 준비해둡니다.
+// 채널 설정은 명령어로 언제든 바뀔 수 있으므로, 저장소는 항상 준비해둡니다.
 await initSettings();
-await initStore();
 await initPanelRegistry();
-await initHistory();
-const webServer = await startWebServer();
-startAutoCleanup();
+if (inRole('music')) await initHistory();
+
+// 갤러리 웹서버는 **이미지를 맡은 봇만** 띄웁니다.
+// 둘 다 띄우면 나중에 뜬 쪽이 "포트가 이미 쓰이고 있다" 로 죽습니다.
+let webServer = null;
+if (inRole('images')) {
+  await initStore();
+  webServer = await startWebServer();
+  startAutoCleanup();
+}
 
 await client.login(config.token).catch((err) => {
   console.error('❌ 로그인 실패:', err.message);

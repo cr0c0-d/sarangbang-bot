@@ -17,9 +17,11 @@ import {
   ChannelType,
   MessageFlags,
 } from 'discord.js';
-import { KEYS, getWithSource, set, clear } from './settings.js';
+import { KEYS, activeKeys, getWithSource, set, clear } from './settings.js';
 
-const CHOICES = Object.entries(KEYS).map(([key, spec]) => ({ name: spec.label, value: key }));
+// 이 봇이 맡은 항목만 물어봅니다.
+// 음악만 맡은 봇에게 읽어주기 채널을 지정하게 해봐야, 그 봇은 읽어주지 않습니다.
+const CHOICES = Object.entries(activeKeys()).map(([key, spec]) => ({ name: spec.label, value: key }));
 
 const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const VOICE_TYPES = [ChannelType.GuildVoice, ChannelType.GuildStageVoice];
@@ -48,7 +50,7 @@ function panel(guildId) {
   const lines = [];
   const clearable = [];
 
-  for (const [key, spec] of Object.entries(KEYS)) {
+  for (const [key, spec] of Object.entries(activeKeys())) {
     const { value, source } = getWithSource(guildId, key);
     // 값이 어디서 왔는지 반드시 같이 보여줍니다.
     // 이게 없으면 .env 를 고쳤는데 안 바뀌는 이유를 알 수 없습니다.

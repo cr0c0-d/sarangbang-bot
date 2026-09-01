@@ -431,6 +431,69 @@ sudo iptables -I INPUT 6 -m state --state NEW -p tcp --dport 3000 -j ACCEPT && s
 
 ---
 
+## 음악만 따로 떼서 봇 두 개로 돌리기
+
+**하지 않아도 됩니다.** 기본은 봇 하나가 전부 합니다. 아래는 나누고 싶을 때만 보세요.
+
+나누면 이런 게 달라집니다.
+
+| | 봇 하나 (기본) | 봇 둘 |
+|---|---|---|
+| 음악 중에 채팅이 오면 | 음악이 **잠깐 멈추고** 읽어준 뒤 이어집니다 | 음악 위에 **겹쳐서** 읽어줍니다 |
+| 음악만 껐다 켜기 | `/기능` 으로 | 음악 봇만 재시작하면 됩니다 |
+| 재시작할 때 | 전부 같이 멈춥니다 | 한쪽만 멈춥니다 |
+| 명령어 목록 | 한 벌 | `/도움말` `/기능` `/채널설정` `/음량` 이 **두 번** 보입니다 (봇 아이콘으로 구분) |
+
+### 1. 디스코드에서 봇을 하나 더 만듭니다
+
+[Developer Portal](https://discord.com/developers/applications) → **New Application** →
+이름은 `사랑이 음악` 처럼. 처음 봇을 만들 때와 똑같이 하시면 됩니다.
+
+- **Bot** 탭 → Reset Token → 복사
+- **Bot** 탭 → `MESSAGE CONTENT INTENT` **켜기** (유튜브 링크를 읽어야 합니다)
+- **Installation** 탭 → 초대해서 서버에 넣기 (연결·말하기·메시지 관리 권한)
+
+> ⚠️ **꼭 새로 만드세요.** 같은 토큰을 두 번 쓰면 모든 명령에 두 번 답하고,
+> 명령어 등록이 서로를 지웁니다. (봇이 알아서 잡아내고 실행을 멈춥니다)
+
+### 2. 설정 파일을 만듭니다
+
+```bash
+cp .env.music.example .env.music
+```
+
+`.env.music` 을 열어 새 봇의 **토큰**과 **CLIENT_ID** 를 넣습니다. 그 외에는 건드릴 게 없습니다.
+그리고 원래 `.env` 에서 한 줄만 바꿉니다.
+
+```
+BOT_ROLE=home
+```
+
+### 3. 명령어를 등록하고 띄웁니다
+
+```bash
+npm run deploy && npm run deploy:music
+```
+
+```bash
+npm start
+```
+
+```bash
+npm run start:music
+```
+
+서버(리눅스)에서 돌린다면 **systemd 서비스도 두 개**가 됩니다.
+기존 서비스 파일을 복사해서 `ExecStart` 만 `npm run start:music` 으로 바꾸면 됩니다.
+이후로는 `sudo systemctl restart sarangbang-bot-music` 처럼 따로 재시작합니다.
+
+### 되돌리려면
+
+`.env` 의 `BOT_ROLE` 을 `all` 로 되돌리고 `npm run deploy` → `npm start`.
+음악 봇은 끄고 서버에서 추방하면 됩니다. 데이터는 `data/music/` 에 그대로 남습니다.
+
+---
+
 ## 여러 서버에서 쓰기
 
 봇 하나를 서버 2~3개에서 같이 쓸 수 있습니다. 서버마다 설정이 따로 저장되고,

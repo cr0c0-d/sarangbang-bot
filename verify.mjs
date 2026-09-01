@@ -604,6 +604,74 @@ ok('이동: 암호 없으면 401',
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 
+// 6t) 봇 나눠 돌리기 (BOT_ROLE)
+//
+// 역할마다 **실제로 프로세스를 띄워** 확인합니다. config.js 가 import 시점에 한 번만
+// 읽히므로, 같은 프로세스 안에서는 역할을 바꿔 볼 수 없기 때문입니다.
+// 덤으로 "그 역할로 모듈이 전부 로드되는가" 까지 같이 검사됩니다.
+{
+  const { execFileSync } = await import('node:child_process');
+  const namesFor = (role) => {
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e', "const m = await import('./src/commands.js'); console.log(JSON.stringify(m.allCommands.map((c) => c.data.toJSON().name)));"],
+      { env: { ...process.env, BOT_ROLE: role, DATA_DIR: './data/verify-role-' + role }, encoding: 'utf8' }
+    );
+    return JSON.parse(out.trim().split('\n').pop());
+  };
+
+  const all = namesFor('all');
+  const music = namesFor('music');
+  const home = namesFor('home');
+
+  ok('all 은 지금과 같음 (18개)', all.length === 18, `${all.length}개`);
+  ok('음악 봇은 음악 명령어만', music.includes('재생') && !music.includes('읽어주기') && !music.includes('갤러리'),
+    music.join(' '));
+  ok('나머지 봇에는 음악 명령어 없음', !home.includes('재생') && !home.includes('대기열') && home.includes('갤러리'),
+    home.join(' '));
+
+  // 둘을 합치면 빠짐없이 전부여야 합니다. 하나라도 빠지면 그 기능이 사라집니다.
+  ok('둘을 합치면 전부', new Set([...music, ...home]).size === all.length &&
+    all.every((n) => music.includes(n) || home.includes(n)));
+
+  // 겹치는 것은 **봇마다 따로 있어야 하는 조종 명령어 4개뿐**이어야 합니다.
+  const shared = music.filter((n) => home.includes(n)).sort();
+  ok('겹치는 건 조종 명령어 4개뿐', JSON.stringify(shared) === JSON.stringify(['기능', '도움말', '음량', '채널설정'].sort()),
+    shared.join(' '));
+
+  // 잘못된 역할 이름은 조용히 넘어가면 안 됩니다 (전부 꺼진 봇이 됩니다)
+  let rejected = false;
+  try {
+    execFileSync(process.execPath, ['--input-type=module', '-e', "await import('./src/config.js');"],
+      { env: { ...process.env, BOT_ROLE: '음악' }, stdio: 'pipe' });
+  } catch {
+    rejected = true;
+  }
+  ok('잘못된 BOT_ROLE 은 실행을 멈춤', rejected);
+
+  fs.rmSync('./data/verify-role-all', { recursive: true, force: true });
+  fs.rmSync('./data/verify-role-music', { recursive: true, force: true });
+  fs.rmSync('./data/verify-role-home', { recursive: true, force: true });
+
+  // 같은 애플리케이션으로 두 번 돌리면 모든 명령에 두 번 답합니다. 반드시 막아야 합니다.
+  const cfg = fs.readFileSync('./src/config.js', 'utf8');
+  ok('같은 토큰·CLIENT_ID 를 쓰면 막음', cfg.includes('assertDifferentApplications()') &&
+    cfg.includes("['DISCORD_TOKEN', 'CLIENT_ID']"));
+
+  // 웹서버를 둘 다 띄우면 나중 쪽이 포트 충돌로 죽습니다
+  const ix = fs.readFileSync('./src/index.js', 'utf8');
+  ok('갤러리 웹서버는 이미지 담당만', ix.includes("if (inRole('images')) {") && ix.includes('webServer = await startWebServer()'));
+  ok('맡지 않은 기능은 메시지도 안 봄', ix.includes("if (inRole('images')) await handleImageMessage") &&
+    ix.includes("if (inRole('tts')) await handleTtsMessage"));
+
+  const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
+  ok('음악 봇 실행·등록 스크립트', Boolean(pkg.scripts['start:music'] && pkg.scripts['deploy:music']));
+  ok('역할 파일이 .env 를 이김 (--env-file)', pkg.scripts['start:music'].includes('--env-file=.env.music'));
+  ok('.env.music 은 커밋되지 않음', fs.readFileSync('./.gitignore', 'utf8').includes('.env.*'));
+  ok('.env.music.example 은 남김', fs.readFileSync('./.gitignore', 'utf8').includes('!.env.music.example') &&
+    fs.existsSync('./.env.music.example'));
+}
+
 // 6r) 지난 재생 목록
 {
   const h = await import('./src/music/history.js');

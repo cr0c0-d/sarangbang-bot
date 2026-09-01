@@ -14,7 +14,7 @@ import {
   ButtonStyle,
   MessageFlags,
 } from 'discord.js';
-import { FEATURES, featureEnabled, setFeature, setAllFeatures } from './settings.js';
+import { FEATURES, activeFeatures, featureEnabled, setFeature, setAllFeatures } from './settings.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 
 function panel(guildId) {
@@ -22,7 +22,7 @@ function panel(guildId) {
     .setTitle('⚙️ 기능 켜고 끄기')
     .setColor(0x5865f2)
     .setDescription(
-      Object.entries(FEATURES)
+      Object.entries(activeFeatures())
         .map(([key, f]) => {
           const on = featureEnabled(guildId, key);
           return `${on ? '🟢' : '⚪'} ${f.emoji} **${f.label}** — ${on ? '켜짐' : '꺼짐'}\n　${f.hint}`;
@@ -33,7 +33,7 @@ function panel(guildId) {
 
   const rows = [
     new ActionRowBuilder().addComponents(
-      Object.entries(FEATURES).map(([key, f]) =>
+      Object.entries(activeFeatures()).map(([key, f]) =>
         new ButtonBuilder()
           .setCustomId(`f:${key}`)
           .setEmoji(f.emoji)
