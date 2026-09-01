@@ -42,6 +42,17 @@ const LEAD_PIPE_SEC = 3.5;   // 유튜브에서 다시 뽑는 경우 (2단계, �
 /** 로그에 단계 번호만 찍으면 나중에 아무도 못 읽습니다. */
 const SRC_LABEL = ['직접 수신', '뽑아둔 주소', '전체 추출'];
 
+/**
+ * 곡을 **처음부터 다시 틀 수 있는 상태**로 되돌립니다.
+ *
+ * `srcLevel`(어느 단계로 틀지)·`resumeAt`(몇 초부터 틀지) 은 **한 번의 시도에만**
+ * 붙는 값입니다. 그대로 들고 다니면 이렇게 됩니다.
+ *   · 🔁 반복·⏮️ 이전 이 곡 **중간**(듣다 만 지점)부터 다시 시작한다
+ *   · 한 번 실패한 곡이 그 실행 동안 **가장 느린 단계로 고정된다** —
+ *     미리 뽑아둔 주소가 생겨도 빠른 단계로 못 올라온다
+ */
+const rewind = (item) => ({ track: item.track, requestedBy: item.requestedBy });
+
 /** 준비에 걸리는 시간만큼 앞을 내다봐야 바꿔치기가 매끄럽습니다. (restartAtCurrentPosition) */
 function leadFor(level) {
   if (level === SRC_DIRECT) return LEAD_REMOTE_SEC;
@@ -264,7 +275,8 @@ export class GuildAudio {
   }
 
   pushHistory(item) {
-    this.history.push(item);
+    // 기록에서 꺼내 다시 틀 때도 처음부터 나와야 합니다. (rewind 설명 참고)
+    this.history.push(rewind(item));
     if (this.history.length > 30) this.history.shift();
   }
 
@@ -278,12 +290,14 @@ export class GuildAudio {
     const outgoing = this.current;
     this.current = null;
 
+    // ★ 되돌릴 때는 rewind() 를 반드시 통과시킵니다. 안 그러면 반복·이전이
+    //   곡 중간부터 시작하고, 한 번 실패한 곡이 느린 단계에 갇힙니다.
     if (outgoing) {
       if (intent === 'previous') {
         // 이전 곡으로 돌아가므로 현재 곡은 대기열 맨 앞으로 되돌립니다.
-        this.queue.unshift(outgoing);
+        this.queue.unshift(rewind(outgoing));
       } else if (this.loop && intent === 'auto') {
-        this.queue.unshift(outgoing);
+        this.queue.unshift(rewind(outgoing));
       } else {
         this.pushHistory(outgoing);
       }
@@ -569,7 +583,7 @@ export class GuildAudio {
         // 오류 내용을 안 찍으면 왜 실패하는지 영영 알 수 없습니다.
         const nextLevel = this.srcLevel + 1;
         console.warn(
-          `[music] ${SRC_LABEL[this.srcLevel]} 실패 → ${SRC_LABEL[nextLevel]} 로 재시도: ${item.track.title}` +
+          `[music] ${SRC_LABEL[this.srcLevel]} 실패 → ${SRC_LABEL[nextLevel]}로 재시도: ${item.track.title}` +
             (this.lastStreamError ? `
         ${this.lastStreamError.slice(0, 200)}` : '')
         );

@@ -1383,6 +1383,14 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 재시도가 곡을 처음으로 되돌리지 않는가
   ok('재시도할 때 듣던 위치를 넘김', ga.includes('srcLevel: nextLevel, resumeAt: this.positionSec()'));
+  // ★ 반대쪽도 지켜야 합니다. srcLevel·resumeAt 을 곡에 계속 붙여두면
+  //   🔁 반복·⏮️ 이전 이 곡 **중간**부터 시작하고, 한 번 실패한 곡이
+  //   그 실행 동안 가장 느린 단계에 갇힙니다 (미리 뽑아둔 주소가 있어도 못 올라옴).
+  ok('반복·이전은 처음부터 (시도 정보를 떼어냄)',
+    ga.includes('this.queue.unshift(rewind(outgoing))') && !/unshift\(outgoing\)/.test(ga));
+  ok('기록에도 시도 정보를 안 남김', ga.includes('this.history.push(rewind(item))'));
+  ok('되돌릴 때 track 과 요청자만 남김',
+    ga.includes('const rewind = (item) => ({ track: item.track, requestedBy: item.requestedBy });'));
   ok('재생 실패 판정은 이번 시도만 봄', ga.includes('const played = this.currentResource?.playbackDuration ?? 0;'));
   ok('이어듣기는 남은 길이로 판정', ga.includes('return trackLen - this.currentOffsetSec > 5;'));
   ok('음량 버튼 연타는 모아서 한 번만', ga.includes('clearTimeout(this.volumeTimer)') && ga.includes('this.restartAtCurrentPosition()'));
