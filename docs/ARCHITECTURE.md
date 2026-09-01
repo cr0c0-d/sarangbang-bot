@@ -873,7 +873,7 @@ await handleTtsMessage(message);
 | 질문 | `TextInput` Short | 필수 |
 | 선택지 | `TextInput` Paragraph | 한 줄에 하나. 필수 |
 | 질문 사진 | `FileUpload` (1장) | 질문 아래에 **크게**(`setImage`) |
-| 선택지 사진 | `FileUpload` (5장) | **순서대로** 작게(`setThumbnail`) |
+| 선택지 사진 | `FileUpload` (5장) | **순서대로** 크게(`setImage`) |
 
 **★ 모달에 파일 업로드 칸을 넣을 수 있다** (`FileUploadBuilder`, `ComponentType.FileUpload`).
 오래된 자료에는 "모달은 글자만 받는다" 고 되어 있어서 처음엔 사진을 명령어 칸으로 받았다.
@@ -912,7 +912,7 @@ await handleTtsMessage(message);
 
 | | |
 |---|---|
-| 사진은 `setThumbnail` | 선택지 5개가 전부 큰 이미지면 메시지가 너무 길어진다. 눌러서 크게 볼 수 있다 |
+| 사진은 `setImage` (썸네일 아님) | **모바일에서는 썸네일을 눌러도 확대되지 않는다**(PC 는 된다 — 실사용 확인). 사진을 보고 고르는 기능인데 폰에서 크게 못 보면 쓸모가 없다. 메시지가 길어지는 것보다 보이는 쪽이 낫다. **되돌리지 말 것** |
 | 표는 **익명** | 누가 뭘 골랐는지는 안 보이고 수만 보인다. 본인에게만 ephemeral 로 알린다 |
 | 같은 버튼 다시 = 취소 | "취소" 버튼을 따로 두지 않아도 되므로 버튼이 하나 준다 |
 | 마감은 만든 사람 + `ManageMessages` | 아무나 마감하면 곤란하고, 만든 사람이 자리에 없을 수도 있다 |

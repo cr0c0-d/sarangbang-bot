@@ -132,14 +132,19 @@ export function buildPoll(poll) {
   const embeds = [head];
 
   // 사진이 있는 선택지는 임베드를 하나씩 더 붙입니다.
-  // 작게(썸네일) 붙여야 선택지가 여럿일 때도 한눈에 들어옵니다. 눌러서 크게 볼 수 있습니다.
+  //
+  // ★ 썸네일(setThumbnail)이 아니라 **큰 이미지(setImage)** 를 씁니다.
+  //   처음에는 메시지가 길어지지 않게 썸네일로 붙였는데, **모바일에서는 썸네일을 눌러도
+  //   확대되지 않습니다**(PC 는 됩니다 — 소유자 확인). 사진을 보고 고르는 기능인데
+  //   폰에서 크게 못 보면 쓸모가 없습니다. 길어지는 것보다 보이는 쪽이 낫습니다.
+  //   되돌리지 말 것.
   for (const [i, opt] of poll.options.entries()) {
     if (!opt.image) continue;
     embeds.push(
       new EmbedBuilder()
         .setColor(poll.closed ? 0x99aab5 : 0x5865f2)
-        .setDescription(`${NUM[i]} ${opt.label}`)
-        .setThumbnail(`attachment://${opt.image}`)
+        .setDescription(`${NUM[i]} **${opt.label}**`)
+        .setImage(`attachment://${opt.image}`)
     );
   }
 

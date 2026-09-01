@@ -712,6 +712,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   withImg.options[0].image = 'poll-1.png';
   const imgJson = JSON.stringify(poll.buildPoll(withImg).embeds.map((e) => e.toJSON()));
   ok('사진은 attachment:// 로 참조', imgJson.includes('attachment://poll-1.png'));
+  // ★ 모바일에서는 썸네일을 눌러도 확대되지 않습니다. 큰 이미지여야 합니다.
+  ok('선택지 사진은 눌러서 크게 볼 수 있어야 함 (썸네일 금지)',
+    imgJson.includes('"image":{"url":"attachment://poll-1.png"') && !imgJson.includes('thumbnail'));
   ok('사진 있는 선택지만 임베드 추가', poll.buildPoll(withImg).embeds.length === 2);
   const src2 = fs.readFileSync('./src/poll/index.js', 'utf8');
   ok('첨부를 다시 올림 (주소 만료 대비)', src2.includes('new AttachmentBuilder(att.url'));
@@ -721,7 +724,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   withQ.options[0].image = 'poll-1.png';
   const qj = JSON.stringify(poll.buildPoll(withQ).embeds.map((e) => e.toJSON()));
   ok('질문 사진은 크게 (image)', qj.includes('"image":{"url":"attachment://poll-q.png"'));
-  ok('선택지 사진은 작게 (thumbnail)', qj.includes('"thumbnail":{"url":"attachment://poll-1.png"'));
+  ok('선택지 사진도 큰 이미지 (모바일에서 확대 가능)', qj.includes('"image":{"url":"attachment://poll-1.png"'));
   ok('질문 사진 이름이 선택지와 안 겹침', src2.includes('index < 0 ? `poll-q${ext}`'));
 
   // ★ 만들기 창(모달). 슬래시 명령어 칸이 일곱 개라 헷갈린다는 피드백으로 바꿨습니다.
