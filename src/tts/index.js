@@ -25,6 +25,18 @@ function isEnabled(guildId) {
 
 const URL_RE = /https?:\/\/\S+/gi;
 
+/** 디스코드 커스텀 이모지. `<:이름:123>` / 움직이는 것은 `<a:이름:123>` */
+const CUSTOM_EMOJI_RE = /<a?:\w+:\d+>/g;
+
+/**
+ * 유니코드 이모지.
+ *
+ * 피부톤(👍🏽), ZWJ 조합(👨‍👩‍👧‍👦), 국기(🇰🇷), 키캡(1️⃣), 변형선택자(❤️)까지 잡습니다.
+ * ⚠️ `ㅋㅋㅋ` 같은 한글 자음은 이모지가 아니므로 지워지면 안 됩니다 — verify 에 검사가 있습니다.
+ */
+const EMOJI_RE =
+  /(?:\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|️)?(?:‍\p{Extended_Pictographic}(?:\p{Emoji_Modifier}|️)?)*|\p{Regional_Indicator}{2}|[0-9#*]️?⃣)/gu;
+
 /**
  * 디스코드 메시지를 "읽어도 되는 문장"으로 다듬습니다.
  * 멘션 ID, 이모지 코드, 링크를 그대로 읽으면 알아들을 수 없기 때문입니다.
@@ -46,8 +58,13 @@ export function cleanText(message, maxChars) {
     return c ? `${c.name} 채널 ` : '채널 ';
   });
 
-  // <:이름:123> 커스텀 이모지 → 이름만
-  text = text.replace(/<a?:(\w+):\d+>/g, '$1 ');
+  // ── 이모지는 읽지 않습니다 ──
+  // 이모지 이름("kekw")이나 유니코드 설명을 소리내어 읽으면 알아들을 수 없고 시끄럽습니다.
+  // 그래서 전부 지우고, 지울 게 있었는지만 기억해둡니다.
+  const before = text;
+  text = text.replace(CUSTOM_EMOJI_RE, ' '); // <:이름:123>, <a:이름:123>
+  text = text.replace(EMOJI_RE, ' '); // 😀 👍🏽 👨‍👩‍👧‍👦 🇰🇷 1️⃣ …
+  const hadEmoji = text !== before;
 
   // 링크는 통째로 읽으면 끔찍하므로 한 단어로 줄입니다.
   text = text.replace(URL_RE, ' 링크 ');
@@ -59,6 +76,9 @@ export function cleanText(message, maxChars) {
   text = text.replace(/(.)\1{2,}/g, '$1$1$1');
 
   text = text.replace(/\s+/g, ' ').trim();
+
+  // 이모지만 보낸 경우. 지우고 나면 읽을 게 없으므로 이렇게 알려줍니다.
+  if (!text && hadEmoji) return '이모지를 보냈어요.';
 
   if (text.length > maxChars) text = text.slice(0, maxChars) + ' 이하 생략';
   return text;

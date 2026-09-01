@@ -119,7 +119,23 @@ ok('4순위 날짜 (채널 이름을 모를 때)',
 const { cleanText } = await import('./src/tts/index.js');
 const g = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } };
 const got = cleanText({ content: '<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵게** ㅋㅋㅋㅋㅋ', guild: g }, 200);
-ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.stringify(got));
+ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.stringify(got));
+
+// 6a) 이모지는 읽지 않는다
+{
+  const say = (s) => cleanText({ content: s, guild: g }, 200);
+  ok('이모지만 보내면 안내 문구', say('😀') === '이모지를 보냈어요.', say('😀'));
+  ok('이모지 여러 개도 한 번만', say('😀😀😀') === '이모지를 보냈어요.');
+  ok('복합 이모지(가족·국기·키캡)', say('👨‍👩‍👧‍👦 🇰🇷 1️⃣') === '이모지를 보냈어요.');
+  ok('커스텀 이모지만 보내도 안내 문구', say('<:kekw:123>') === '이모지를 보냈어요.');
+  ok('움직이는 커스텀 이모지도', say('<a:dance:987>') === '이모지를 보냈어요.');
+  ok('글에 섞이면 이모지만 빼고 읽음', say('안녕 😀') === '안녕', say('안녕 😀'));
+  ok('커스텀 이모지도 빼고 읽음', say('안녕하세요 <:kekw:123> 반가워요') === '안녕하세요 반가워요');
+  ok('이모지 이름을 읽지 않음', !say('<:kekw:123> 안녕').includes('kekw'));
+  ok('한글 자음은 이모지가 아님 (지우면 안 됨)', say('ㅋㅋㅋㅋㅋ') === 'ㅋㅋㅋ', say('ㅋㅋㅋㅋㅋ'));
+  ok('평범한 문장은 그대로', say('오늘 날씨 좋다') === '오늘 날씨 좋다');
+  ok('빈 메시지는 여전히 빈 값 (안 읽음)', say('   ') === '');
+}
 
 // 6b) /목소리 선택지가 Edge TTS 에 실제로 존재하는 목소리인가
 // (이 검사가 없어서 실재하지 않는 목소리 6개가 들어간 적이 있습니다)
