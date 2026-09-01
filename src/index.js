@@ -224,8 +224,25 @@ if (inRole('images')) {
 }
 
 await client.login(config.token).catch((err) => {
-  console.error('❌ 로그인 실패:', err.message);
-  console.error('   → .env 의 DISCORD_TOKEN 을 확인해주세요.');
+  // 봇이 둘이므로 **어느 파일을 고쳐야 하는지**까지 알려줘야 합니다.
+  const envFile = config.role === 'music' ? '.env.music' : '.env';
+  const msg = String(err.message ?? '');
+
+  console.error(`❌ 로그인 실패 (${config.botName}): ${msg}`);
+
+  if (/disallowed intents|privileged intent/i.test(msg)) {
+    // 토큰은 멀쩡한데 개발자 포털에서 인텐트를 안 켠 경우입니다.
+    // 예전에는 여기서도 "토큰을 확인하세요" 라고 해서 엉뚱한 곳을 뒤지게 만들었습니다.
+    console.error('   → 토큰 문제가 아닙니다. 이 봇의 **MESSAGE CONTENT INTENT** 가 꺼져 있습니다.');
+    console.error('      Discord Developer Portal → 이 애플리케이션 → Bot →');
+    console.error('      Privileged Gateway Intents → MESSAGE CONTENT INTENT 켜기 → Save Changes');
+    console.error(`      (${envFile} 의 토큰에 해당하는 앱입니다. 봇마다 따로 켜야 합니다)`);
+  } else if (/token|unauthorized|401/i.test(msg)) {
+    console.error(`   → ${envFile} 의 DISCORD_TOKEN 을 확인해주세요.`);
+    console.error('      Developer Portal → Bot → Reset Token 으로 새로 받으면 됩니다.');
+  } else {
+    console.error(`   → ${envFile} 의 DISCORD_TOKEN 과 서버의 인터넷 연결을 확인해주세요.`);
+  }
   process.exit(1);
 });
 

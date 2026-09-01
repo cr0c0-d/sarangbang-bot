@@ -678,6 +678,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('맡지 않은 기능은 메시지도 안 봄', ix.includes("if (inRole('images')) await handleImageMessage") &&
     ix.includes("if (inRole('tts')) await handleTtsMessage"));
 
+  // 로그인 실패는 원인이 갈립니다. 전부 "토큰을 확인하세요" 로 안내하면
+  // 인텐트를 안 켠 경우에 엉뚱한 곳을 뒤지게 됩니다 (실제로 겪음).
+  ok('인텐트 미설정을 따로 안내', ix.includes('disallowed intents|privileged intent') &&
+    ix.includes('MESSAGE CONTENT INTENT'));
+  ok('어느 설정 파일인지까지 알려줌', ix.includes("config.role === 'music' ? '.env.music' : '.env'"));
+
   const pkg = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
   ok('음악 봇 실행·등록 스크립트', Boolean(pkg.scripts['start:music'] && pkg.scripts['deploy:music']));
   ok('역할 파일이 .env 를 이김 (--env-file)', pkg.scripts['start:music'].includes('--env-file=.env.music'));

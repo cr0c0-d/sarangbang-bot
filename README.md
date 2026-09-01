@@ -131,7 +131,10 @@ npm start
 이름은 `노래하는 망고`. **1~2단계와 똑같이** 하시면 됩니다.
 
 - **Bot** 탭 → Reset Token → 복사
-- **Bot** 탭 → `MESSAGE CONTENT INTENT` **켜기** (유튜브 링크를 읽어야 합니다)
+- **Bot** 탭 → `MESSAGE CONTENT INTENT` **켜기** → **Save Changes**
+  > 🔴 **가장 많이 빠뜨리는 곳입니다.** 안 켜면 봇이 아예 로그인을 못 하고
+  > `로그인 실패: Used disallowed intents` 로 계속 재시작합니다.
+  > 망고에서 켰어도 **새 앱에서 또 켜야 합니다.**
 - **Installation** 탭 → 권한 체크 → 초대 링크로 서버에 넣기
   (`Manage Messages` 도 꼭 — 링크 메시지를 지우는 데 필요합니다)
 
@@ -620,6 +623,7 @@ GUILD_ID=123456789012345678,987654321098765432
 | **음악이 갑자기 안 나옴** | `npm run update-ytdlp` 실행 후 재시작. 원인의 90%입니다 |
 | `Sign in to confirm you're not a bot` | 아래 "유튜브가 막힐 때" 참고 |
 | **읽어주기가 무반응 (에러도 없음)** | 1단계 6번 **MESSAGE CONTENT INTENT** 를 안 켰습니다 |
+| **`로그인 실패: Used disallowed intents`** | 토큰 문제가 **아닙니다.** 그 앱의 **MESSAGE CONTENT INTENT** 가 꺼져 있습니다. 봇마다 따로 켜야 합니다 (노래하는 망고를 새로 만들면 특히 빠뜨리기 쉽습니다) |
 | **슬래시 명령어가 안 보임** | `npm run deploy` 실행. 그래도 안 되면 2단계 초대 링크로 재초대 |
 | `이 애플리케이션에 지원되지 않는 설치 유형` | 2-1단계 **Guild Install** 을 안 켰습니다 |
 | **Public Bot 을 끌 수 없음 (회색)** | Installation → Install Link 를 먼저 `None` 으로 바꿔야 합니다 |

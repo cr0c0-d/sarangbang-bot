@@ -867,6 +867,7 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | `git pull` 이 매번 아이디·토큰을 물어봄 | 5단계의 **배포 키(SSH)** 설정을 하세요. 문서 「매번 아이디·토큰을 물어보지 않게 하기」 |
 | `git@github.com: Permission denied (publickey)` | 배포 키가 GitHub 에 등록되지 않았거나 `~/.ssh/config` 가 없습니다. `ssh -T git@github.com` 으로 확인 |
 | 봇이 켜지자마자 죽음 | `journalctl -u sarangbang-bot -n 50` 확인 (음악은 `music-sarangbang-bot`). 대개 `.env` 값 문제 |
+| `로그인 실패: Used disallowed intents` | 그 앱의 **MESSAGE CONTENT INTENT** 가 꺼져 있습니다. Developer Portal → Bot → Privileged Gateway Intents. **봇마다 따로** 켜야 합니다 |
 | 모든 명령에 봇이 **두 번** 답함 | `.env` 와 `.env.music` 의 토큰이 같습니다. 애플리케이션을 따로 만드세요 (봇이 잡아내고 실행을 멈춥니다) |
 | 갤러리 접속 안 됨 (B안) | 방화벽 두 겹 중 하나만 열었을 가능성 (함정 3) |
 | 갤러리 접속 안 됨 (A안) | SSH 터널 창을 닫았거나, `.env` 의 `WEB_BIND` 가 `127.0.0.1` 인지 확인 |
