@@ -57,6 +57,30 @@ const lines = (raw) =>
 export const kakaoMapUrl = (q) => `https://map.kakao.com/?q=${encodeURIComponent(q)}`;
 export const naverMapUrl = (q) => `https://map.naver.com/p/search/${encodeURIComponent(q)}`;
 
+/**
+ * 길찾기 — **출발지·도착지가 채워진 채로** 열립니다.
+ * 첫 곳은 출발지를 비워서 **현재 위치에서** 안내하게 합니다.
+ *
+ * ★ 왜 구글 지도인가 — 카카오·네이버가 아니라서 아쉽지만, **이름만으로는 그쪽이 안 됩니다.**
+ *   2026-09-01 에 브라우저로 직접 확인했습니다:
+ *
+ *   | 시도한 주소 | 결과 |
+ *   |---|---|
+ *   | `map.kakao.com/?sName=출발&eName=도착` | 길찾기 **화면만** 열리고 칸은 비어 있음 (파라미터 버려짐) |
+ *   | `map.kakao.com/?target=car&rt1=..&rt2=..` | 같음 |
+ *   | `map.naver.com/index.nhn?stext=..&etext=..` | 301 로 날아가며 파라미터 버려짐 |
+ *   | `google.com/maps/dir/?api=1&origin=..&destination=..` | **출발·도착이 채워지고 경로·소요시간까지 나옴** |
+ *
+ *   카카오·네이버로 길찾기를 채우려면 **좌표**가 필요하고, 좌표를 얻으려면
+ *   카카오 REST API 키를 하나 더 발급해 장소를 검색해야 합니다.
+ *   그래서 **길찾기는 구글, 장소 보기는 카카오·네이버**로 나눠 뒀습니다.
+ */
+export function directionsUrl(to, from = null) {
+  const p = new URLSearchParams({ api: '1', destination: to });
+  if (from) p.set('origin', from);
+  return `https://www.google.com/maps/dir/?${p.toString()}`;
+}
+
 // ── 판 ────────────────────────────────────────────────────
 
 export function buildPanel(plan) {
@@ -71,11 +95,18 @@ export function buildPanel(plan) {
   const stops = plan.stops ?? [];
   if (stops.length > 0) {
     body.push('', '**📍 일정표**');
+    // 길찾기 출발지는 **바로 앞에서 장소가 적힌 곳**입니다.
+    // 앞 항목에 장소가 없으면(예: "저녁 2차") 그보다 더 앞을 출발지로 씁니다.
+    let prevPlace = null;
     for (const st of stops) {
       const time = st.at === null ? '⬥' : `**${formatTimeKo(st.at)}**`;
-      const maps = st.place
-        ? `\n　　📍 ${st.place} — [카카오맵](${kakaoMapUrl(st.place)}) · [네이버](${naverMapUrl(st.place)})`
-        : '';
+      let maps = '';
+      if (st.place) {
+        maps =
+          `\n　　📍 ${st.place} — [🧭 길찾기](${directionsUrl(st.place, prevPlace)})` +
+          ` · [카카오맵](${kakaoMapUrl(st.place)}) · [네이버](${naverMapUrl(st.place)})`;
+        prevPlace = st.place;
+      }
       body.push(`${time}　${st.name}${maps}`);
     }
   }

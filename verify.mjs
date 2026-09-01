@@ -997,6 +997,26 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('일정표가 여러 곳을 보여줌', pe.includes('일정표') && pe.includes('점심') && pe.includes('카페') && pe.includes('방탈출'));
   ok('곳마다 지도 링크', (pe.match(/map.kakao.com/g) ?? []).length === 2 && pe.includes('map.naver.com'));
   ok('지도는 버튼이 아니라 링크 글자', !pj.includes('map.kakao.com'));
+
+  // ★ 길찾기: 첫 곳은 **도착지만**, 두 번째부터는 **이전 장소가 출발지**.
+  //   카카오·네이버는 이름만으로 길찾기 칸을 못 채웁니다 (브라우저로 직접 확인).
+  //   그래서 길찾기만 구글을 쓰고, 장소 보기는 카카오·네이버로 둡니다.
+  const { directionsUrl } = await import('./src/plan/index.js');
+  ok('첫 곳은 출발지 없음 (현재 위치에서)',
+    directionsUrl('A') === 'https://www.google.com/maps/dir/?api=1&destination=A');
+  ok('둘째부터 이전 장소가 출발지',
+    directionsUrl('B', 'A').includes('origin=A') && directionsUrl('B', 'A').includes('destination=B'));
+  ok('판에 길찾기 링크가 순서대로', (() => {
+    const d = panel3.embeds[0].toJSON().description;
+    const dirs = [...d.matchAll(/maps\/dir\/\?([^)]+)/g)].map((m) => decodeURIComponent(m[1]));
+    // 점심(첫 곳) → 출발지 없음 / 카페 → 점심 장소가 출발지 / 방탈출 → 카페 장소가 출발지
+    return (
+      dirs.length === 2 &&
+      !dirs[0].includes('origin=') &&
+      dirs[1].includes('origin=홍대+스시로')
+    );
+  })(), JSON.stringify([...panel3.embeds[0].toJSON().description.matchAll(/maps\/dir\/\?([^)]+)/g)].map((m) => decodeURIComponent(m[1]))));
+  ok('장소를 인코딩해서 넘김', directionsUrl('강남 & 역삼').includes('%26'));
   ok('장소 없는 항목도 됨', pe.includes('방탈출'));
   ok('할 일 토글 버튼', pj.includes('"pl:todo:0"') && pj.includes('"pl:todo:2"'));
   ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind', 'pl:del'].every((id) => pj.includes(`"${id}"`)));
