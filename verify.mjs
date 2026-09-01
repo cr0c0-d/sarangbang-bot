@@ -684,6 +684,21 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('.env.music 은 커밋되지 않음', fs.readFileSync('./.gitignore', 'utf8').includes('.env.*'));
   ok('.env.music.example 은 남김', fs.readFileSync('./.gitignore', 'utf8').includes('!.env.music.example') &&
     fs.existsSync('./.env.music.example'));
+
+  // yt-dlp 는 음악 봇만 돌립니다. 쿠키 설정이 음악 쪽 예시에 없으면
+  // "쿠키를 어디 적지?" 가 되고, 안내도 엉뚱한 파일을 가리킵니다.
+  const musicEnv = fs.readFileSync('./.env.music.example', 'utf8');
+  for (const key of ['YTDLP_COOKIES_FILE', 'YTDLP_PROXY', 'YTDLP_EXTRA_ARGS', 'YTDLP_JS_RUNTIME']) {
+    ok(`.env.music.example 에 ${key}`, musicEnv.includes(key));
+  }
+  // 안내가 `.env` 를 가리키면 엉뚱한 파일을 고치게 됩니다.
+  // `.env.music` 을 지운 뒤에도 `.env` 가 쿠키 안내에 남아 있으면 실패입니다.
+  const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+  const stripped = yt.split('`.env.music`').join('〈음악설정〉');
+  ok('쿠키 안내가 .env.music 을 가리킴',
+    stripped.includes('〈음악설정〉 의 YTDLP_COOKIES_FILE') &&
+    !stripped.includes('.env 의 YTDLP_COOKIES_FILE') &&
+    !stripped.includes('`.env` 의 `YTDLP_COOKIES_FILE`'));
 }
 
 // 6r) 지난 재생 목록

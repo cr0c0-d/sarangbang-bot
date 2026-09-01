@@ -7,7 +7,9 @@ import { ROOT } from '../config.js';
 
 const YTDLP = path.join(ROOT, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
-// 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다. (.env 로 설정)
+// 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다.
+// yt-dlp 는 **노래하는 망고만** 돌리므로, 이 값들의 제자리는 `.env.music` 입니다.
+// (.env 에 적어도 상속되어 동작은 합니다)
 function extraArgs() {
   const args = [];
 
@@ -126,12 +128,12 @@ async function run(args, { timeouts = TIMEOUT_LADDER } = {}) {
         const timedOut = err.message.includes('타임아웃');
         err.message += timedOut
           ? `\n\n${attempts}번 시도했지만 모두 시간을 초과했습니다. **서버가 느린 것**이지 차단은 아닙니다.` +
-            '\n· `.env` 에 `YTDLP_JS_RUNTIME=false` 를 넣고 재시작해보세요. (가장 효과 큼)' +
+            '\n· `.env.music` 에 `YTDLP_JS_RUNTIME=false` 를 넣고 재시작해보세요. (가장 효과 큼)' +
             '\n· 메모리 부족일 수 있습니다. 서버에서 `free -h` 로 swap 사용량을 확인하세요.' +
             '\n· 진단: 서버에서 `time ./bin/yt-dlp --version` — 5초를 넘으면 기동 자체가 느린 것입니다.'
           : `\n\n${attempts}번 다시 시도했지만 계속 실패했습니다. 일시적 문제가 아닐 수 있습니다.` +
             '\n· 클라우드 서버(Oracle·AWS 등)에서 돌리고 있다면 **유튜브가 그 서버 IP를 차단**한 것일 수 있습니다.' +
-            '\n· `.env` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
+            '\n· `.env.music` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
             '\n· 진단: 서버에서 `./bin/yt-dlp --simulate -v <링크>` 를 실행해 `LOGIN_REQUIRED` 가 있는지 보세요.';
         throw err;
       }
@@ -163,7 +165,7 @@ export function friendlyError(stderr) {
       ? '유튜브가 이 서버를 봇으로 판단해 차단했습니다.\n' +
           '쿠키는 설정되어 있으니 **만료된 것으로 보입니다.** 새로 뽑아서 교체해주세요.\n' +
           '(시크릿 창에서 로그인 → 영상 재생 → 쿠키 저장 → **로그아웃하지 말고** 창 닫기)'
-      : '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
+      : '유튜브가 이 서버를 봇으로 판단해 차단했습니다. `.env.music` 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
   }
   // n challenge(서명 계산)는 자바스크립트 런타임이 있어야 풀립니다.
   // 이게 실패하면 곧바로 "The page needs to be reloaded" 가 뒤따라 나오므로
@@ -171,7 +173,7 @@ export function friendlyError(stderr) {
   if (s.includes('n challenge solving failed') || s.includes('javascript runtime')) {
     return (
       '유튜브 서명 계산에 필요한 자바스크립트 런타임이 없습니다.\n' +
-      '`.env` 에 `YTDLP_JS_RUNTIME=false` 가 있다면 지우거나 `true` 로 바꾸고 재시작해주세요.'
+      '`.env.music` 에 `YTDLP_JS_RUNTIME=false` 가 있다면 지우거나 `true` 로 바꾸고 재시작해주세요.'
     );
   }
   if (s.includes('the page needs to be reloaded')) {
@@ -187,7 +189,7 @@ export function friendlyError(stderr) {
     return '지원하지 않는 링크입니다.';
   }
   if (s.includes('cookies') && (s.includes('unable to open') || s.includes('no such file'))) {
-    return '.env 의 YTDLP_COOKIES_FILE 경로에 파일이 없습니다. 경로를 확인해주세요.';
+    return '`.env.music` 의 YTDLP_COOKIES_FILE 경로에 파일이 없습니다. 경로를 확인해주세요. (`.env` 에 적어두셨다면 그쪽입니다 — 음악 봇은 두 파일을 다 읽습니다)';
   }
   const line = stderr.split('\n').find((l) => l.includes('ERROR'));
   return line ? line.trim() : '';

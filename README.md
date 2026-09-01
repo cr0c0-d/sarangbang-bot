@@ -663,12 +663,13 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 `LOGIN_REQUIRED` 가 보이면 IP 차단이 확정입니다.
 
 > ✅ **쿠키와 JS 런타임이 둘 다 있어야 합니다.** 봇은 JS 런타임을 자동으로 붙이므로
-> `.env` 의 `YTDLP_JS_RUNTIME` 을 건드리지 않았다면 **쿠키만 넣으면 됩니다.**
+> `.env.music` 의 `YTDLP_JS_RUNTIME` 을 건드리지 않았다면 **쿠키만 넣으면 됩니다.**
 > 쿠키만 넣고 JS 런타임이 없으면 `n challenge solving failed` 가 납니다.
 
 **해결: 쿠키 넣기**
 
-브라우저에서 유튜브 쿠키를 파일로 뽑아 `.env` 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
+브라우저에서 유튜브 쿠키를 파일로 뽑아 **`.env.music`** 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
+(음악은 노래하는 망고가 돌립니다. `.env` 에 적어도 동작하지만 나중에 찾기 어렵습니다)
 (브라우저 확장 프로그램 "Get cookies.txt LOCALLY" 계열로 `cookies.txt` 를 저장하면 됩니다)
 
 > 🔴 **본인 주계정을 쓰지 마세요.** 데이터센터 IP에서 쿠키를 쓰다가
@@ -685,9 +686,13 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 | **음악만 집 PC에서 돌리기** | 가장 확실. 가정용 IP는 차단되지 않음. 대신 PC를 켜둬야 함 |
 | **주거용 프록시** (`YTDLP_PROXY`) | 동작하지만 유료이고 느림 |
 
+`.env.music` 에 이렇게 적습니다. (집 PC 기준 경로 예시)
+
 ```
 YTDLP_COOKIES_FILE=C:\sarangbang-bot\cookies.txt
 ```
+
+서버라면 절대경로로: `/home/ubuntu/sarangbang-bot/cookies.txt`
 
 ---
 

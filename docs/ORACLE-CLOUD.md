@@ -758,16 +758,16 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
    scp -i ssh-key.key cookies.txt ubuntu@<서버IP>:~/sarangbang-bot/cookies.txt
    ```
 
-3. 서버의 `.env` 에 경로를 적습니다:
+3. 서버의 **`.env.music`** 에 경로를 적습니다 (음악은 노래하는 망고가 돌립니다):
 
    ```ini
    YTDLP_COOKIES_FILE=/home/ubuntu/sarangbang-bot/cookies.txt
    ```
 
-4. 봇을 재시작합니다:
+4. 음악 봇을 재시작합니다:
 
    ```bash
-   sudo systemctl restart sarangbang-bot
+   sudo systemctl restart music-sarangbang-bot
    ```
 
 > 🔒 **이 파일은 본인 유튜브 계정의 로그인 정보입니다.**
@@ -859,7 +859,7 @@ scp -i ssh-key.key -r ubuntu@<서버IP>:~/sarangbang-bot/data ./data-backup
 | SSH 접속 시 `Connection timed out` | 방화벽/라우팅 문제. **3단계의 진단 스크립트**를 돌려보세요 |
 | SSH 접속 시 `Connection refused` | 서버까지는 닿음. 인스턴스가 아직 부팅 중일 수 있으니 1~2분 뒤 재시도 |
 | `npm run verify` 실패 | 파일이 덜 올라갔거나 `npm install` 미실행 |
-| `n challenge solving failed` | JS 런타임 없음. `.env` 의 `YTDLP_JS_RUNTIME=false` 를 지우고 재시작 |
+| `n challenge solving failed` | JS 런타임 없음. `.env.music` 의 `YTDLP_JS_RUNTIME=false` 를 지우고 재시작 |
 | `.env` 를 고쳤는데 반영 안 됨 | 같은 항목이 여러 줄일 수 있습니다. 봇 시작 로그의 "중복된 항목" 경고 확인 |
 | 갤러리 `ERR_ADDRESS_UNREACHABLE` | 서버 안 `iptables` 의 `reject-with icmp-host-prohibited` 에 막힌 것. 8단계 (2) 참고. (주소에 사설 IP(10.x)를 넣은 경우에도 같은 에러) |
 | 갤러리 `ERR_CONNECTION_TIMED_OUT` | 클라우드 쪽 **보안목록**이 안 열린 것. 8단계 (1) 참고 |
