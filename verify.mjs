@@ -439,6 +439,9 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('추출 결과 캐시', yt.includes('function cacheGet'));
   ok('캐시본을 복사해서 반환 (오염 방지)', yt.includes('cached.map((t) => ({ ...t }))'));
   ok('JS런타임 끄는 스위치', yt.includes('YTDLP_JS_RUNTIME'));
+  ok('제한시간을 늘려가며 재시도', yt.includes('TIMEOUT_LADDER = [20_000, 60_000]'));
+  ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
+  ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
   const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
   ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([getTracks(query), audio.connect(voiceChannel)])'));
   ok('링크 감지 즉시 반응', mc2.includes("message.react('⏳')"));

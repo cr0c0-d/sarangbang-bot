@@ -75,7 +75,7 @@ function runOnce(args, timeoutMs) {
 
     const timer = setTimeout(() => {
       child.kill();
-      fail('yt-dlp 응답이 너무 오래 걸립니다 (타임아웃).', true);
+      fail(`yt-dlp 가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다 (타임아웃).`, true);
     }, timeoutMs);
 
     child.stdout.on('data', (d) => (out += d));
@@ -97,12 +97,20 @@ function runOnce(args, timeoutMs) {
 }
 
 /**
- * yt-dlp 를 실행합니다. 일시적인 오류면 스스로 다시 시도합니다.
- * 최악의 경우 25초 × 3회 ≈ 75초. /재생 은 deferReply 를 하므로 안전합니다.
+ * yt-dlp 를 실행합니다. 시도마다 제한시간을 **늘려가며** 재시도합니다.
+ *
+ * 왜 같은 시간으로 3번 하면 안 되는가:
+ * 서버가 느려서 30초가 걸리는 상황이라면, 25초 제한으로 세 번 해봐야 세 번 다 실패하고
+ * 75초를 버립니다. 실제로 그런 일이 있었습니다.
+ * 첫 시도는 짧게 끊어 빠른 실패를 잡고, 그다음은 넉넉히 줘서 느린 서버도 성공하게 합니다.
  */
-async function run(args, { timeoutMs = 25_000, attempts = 3 } = {}) {
+const TIMEOUT_LADDER = [20_000, 60_000];
+
+async function run(args, { timeouts = TIMEOUT_LADDER } = {}) {
+  const attempts = timeouts.length;
   let lastErr;
   for (let i = 1; i <= attempts; i++) {
+    const timeoutMs = timeouts[i - 1];
     try {
       return await runOnce(args, timeoutMs);
     } catch (err) {
@@ -113,15 +121,24 @@ async function run(args, { timeoutMs = 25_000, attempts = 3 } = {}) {
         // 실제 사례: 클라우드 서버에서 IP가 차단되면 유튜브가
         // "The page needs to be reloaded" 를 뱉기도 합니다 — 겉보기만 일시적입니다.
         // 그래서 "잠시 뒤 다시" 라고만 안내하면 원인을 영원히 못 찾습니다.
-        err.message +=
-          `\n\n${attempts}번 다시 시도했지만 계속 실패했습니다. 일시적 문제가 아닐 수 있습니다.` +
-          '\n· 클라우드 서버(Oracle·AWS 등)에서 돌리고 있다면 **유튜브가 그 서버 IP를 차단**한 것일 수 있습니다.' +
-          '\n· `.env` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
-          '\n· 진단: 서버에서 `./bin/yt-dlp --simulate -v <링크>` 를 실행해 `LOGIN_REQUIRED` 가 있는지 보세요.';
+        // 타임아웃과 차단은 원인이 완전히 달라서 안내도 달라야 합니다.
+        // 예전에는 둘 다 "IP 차단일 수 있다" 로 안내해서 엉뚱한 곳을 뒤지게 만들었습니다.
+        const timedOut = err.message.includes('타임아웃');
+        err.message += timedOut
+          ? `\n\n${attempts}번 시도했지만 모두 시간을 초과했습니다. **서버가 느린 것**이지 차단은 아닙니다.` +
+            '\n· `.env` 에 `YTDLP_JS_RUNTIME=false` 를 넣고 재시작해보세요. (가장 효과 큼)' +
+            '\n· 메모리 부족일 수 있습니다. 서버에서 `free -h` 로 swap 사용량을 확인하세요.' +
+            '\n· 진단: 서버에서 `time ./bin/yt-dlp --version` — 5초를 넘으면 기동 자체가 느린 것입니다.'
+          : `\n\n${attempts}번 다시 시도했지만 계속 실패했습니다. 일시적 문제가 아닐 수 있습니다.` +
+            '\n· 클라우드 서버(Oracle·AWS 등)에서 돌리고 있다면 **유튜브가 그 서버 IP를 차단**한 것일 수 있습니다.' +
+            '\n· `.env` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
+            '\n· 진단: 서버에서 `./bin/yt-dlp --simulate -v <링크>` 를 실행해 `LOGIN_REQUIRED` 가 있는지 보세요.';
         throw err;
       }
-      console.warn(`[music] 일시적 오류로 재시도 (${i}/${attempts - 1}): ${err.message}`);
-      await sleep(1500);
+      console.warn(
+        `[music] 재시도 ${i}/${attempts - 1} (다음 제한시간 ${timeouts[i] / 1000}초): ${err.message}`
+      );
+      await sleep(1000);
     }
   }
   throw lastErr;
@@ -173,11 +190,9 @@ const STREAM_URL_TTL_MS = 90 * 60 * 1000; // 90분
  * 링크 또는 검색어 → 재생 목록.
  * 재생목록 링크면 안에 있는 곡을 전부 담아옵니다.
  *
- * ⚡ 속도에 대해: 유튜브 추출은 무엇을 요청하든 약 2.8초가 걸립니다(응답 대기).
- *    그래서 **한 번의 추출로 제목과 재생 주소를 같이 받아옵니다.**
- *    예전에는 메타데이터에서 한 번, 재생할 때 또 한 번 추출해서 5.5초가 걸렸습니다.
- *    주소를 재사용하면 재생 시작은 ffmpeg 몫(약 150ms)만 남습니다.
+ * ⚡ 속도: 한 번의 추출로 제목과 재생 주소를 같이 받아옵니다. (3.1-2 절)
  */
+
 /**
  * 최근에 뽑아본 결과를 잠깐 들고 있습니다.
  *
