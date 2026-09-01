@@ -716,6 +716,34 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const src2 = fs.readFileSync('./src/poll/index.js', 'utf8');
   ok('첨부를 다시 올림 (주소 만료 대비)', src2.includes('new AttachmentBuilder(att.url'));
 
+  // 질문에도 사진을 붙일 수 있습니다. 선택지 사진과 **파일 이름이 겹치면 안 됩니다.**
+  const withQ = { ...make(2), image: 'poll-q.png' };
+  withQ.options[0].image = 'poll-1.png';
+  const qj = JSON.stringify(poll.buildPoll(withQ).embeds.map((e) => e.toJSON()));
+  ok('질문 사진은 크게 (image)', qj.includes('"image":{"url":"attachment://poll-q.png"'));
+  ok('선택지 사진은 작게 (thumbnail)', qj.includes('"thumbnail":{"url":"attachment://poll-1.png"'));
+  ok('질문 사진 이름이 선택지와 안 겹침', src2.includes('index < 0 ? `poll-q${ext}`'));
+
+  // ★ 만들기 창(모달). 슬래시 명령어 칸이 일곱 개라 헷갈린다는 피드백으로 바꿨습니다.
+  //   모달에 **파일 업로드 칸**을 넣을 수 있어서 사진까지 한 화면에서 받습니다.
+  const modal = poll.buildCreateModal().toJSON();
+  ok('만들기 창이 v:new', modal.custom_id === 'v:new');
+  ok('창은 4칸 (디스코드 한도 5)', modal.components.length === 4, `${modal.components.length}칸`);
+  const inner = modal.components.map((c) => c.component ?? {});
+  ok('질문·선택지는 글자 칸', inner[0].custom_id === 'q' && inner[1].custom_id === 'opts');
+  ok('질문 사진 칸 (한 장)', inner[2].custom_id === 'qimg' && inner[2].max_values === 1);
+  ok('선택지 사진 칸 (여러 장)', inner[3].custom_id === 'imgs' && inner[3].max_values === 5);
+  ok('사진은 안 넣어도 됨', inner[2].required === false && inner[3].required === false);
+  ok('모달 제출이 index 에 연결됨',
+    fs.readFileSync('./src/index.js', 'utf8').includes('interaction.isModalSubmit()') &&
+    fs.readFileSync('./src/index.js', 'utf8').includes('handlePollModal(interaction)'));
+
+  // 창이 안 뜨는 환경이 있을 때를 대비해 인자로도 만들 수 있어야 합니다.
+  const cmd = poll.commands[0].data.toJSON();
+  ok('/투표 는 칸을 비우면 창이 뜸', cmd.options.every((o) => o.required !== true), '필수 인자 없음');
+  ok('인자로도 만들 수 있음 (창이 안 될 때 대비)', cmd.options.length === 2,
+    cmd.options.map((o) => o.name).join(' '));
+
   // 10개면 버튼이 두 줄로 나뉘어야 합니다 (한 줄에 5개 제한)
   const big = poll.buildPoll(make(10));
   ok('버튼은 한 줄에 5개까지', big.components.length === 3, `${big.components.length}줄`);

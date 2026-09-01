@@ -21,6 +21,11 @@ import {
   AttachmentBuilder,
   MessageFlags,
   PermissionsBitField,
+  ModalBuilder,
+  LabelBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  FileUploadBuilder,
 } from 'discord.js';
 import fs from 'node:fs/promises';
 import path from 'node:path';
@@ -120,6 +125,10 @@ export function buildPoll(poll) {
         : `총 ${total}표 · 버튼을 누르면 투표합니다 (다시 누르면 취소)`,
     });
 
+  // 질문 사진은 **크게** 붙입니다. 무엇을 고르는 건지 보여주는 주인공이기 때문입니다.
+  // (선택지 사진은 여러 장이라 작게 붙입니다 — 다 크면 메시지가 끝없이 길어집니다)
+  if (poll.image) head.setImage(`attachment://${poll.image}`);
+
   const embeds = [head];
 
   // 사진이 있는 선택지는 임베드를 하나씩 더 붙입니다.
@@ -166,76 +175,171 @@ const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 /** 첨부 파일 이름을 안전하게. 확장자만 살리고 번호로 다시 짓습니다. */
 function imageName(attachment, index) {
   const ext = (attachment.name?.match(/\.(png|jpe?g|gif|webp)$/i)?.[0] ?? '.png').toLowerCase();
-  return `poll-${index + 1}${ext}`;
+  // index 가 -1 이면 질문 사진입니다. 선택지 번호와 겹치면 안 됩니다.
+  return index < 0 ? `poll-q${ext}` : `poll-${index + 1}${ext}`;
+}
+
+/**
+ * 투표 만들기 창(모달).
+ *
+ * 예전에는 슬래시 명령어 칸에 전부 적어야 했는데, 칸이 일곱 개라 **헷갈리고 번거로웠습니다**
+ * (소유자 피드백). 이제 `/투표` 만 치면 이 창이 뜨고, 한 화면에서 다 채웁니다.
+ *
+ * ⚠️ 모달에 **파일 업로드 칸을 넣을 수 있습니다**(`FileUploadBuilder`).
+ *    예전 디스코드에서는 글자만 받을 수 있어서 사진을 명령어 칸으로 받아야 했습니다.
+ *    이 컴포넌트를 빼면 다시 그 불편으로 돌아갑니다.
+ */
+export function buildCreateModal() {
+  return new ModalBuilder()
+    .setCustomId('v:new')
+    .setTitle('투표 만들기')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('질문')
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('q')
+            .setStyle(TextInputStyle.Short)
+            .setPlaceholder('점심 뭐 먹지?')
+            .setMaxLength(200)
+            .setRequired(true)
+        ),
+      new LabelBuilder()
+        .setLabel('선택지')
+        .setDescription(`한 줄에 하나씩 적어주세요. 최대 ${MAX_OPTIONS}개.`)
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('opts')
+            .setStyle(TextInputStyle.Paragraph)
+            .setPlaceholder('피자\n치킨\n초밥')
+            .setRequired(true)
+        ),
+      new LabelBuilder()
+        .setLabel('질문 사진 (선택)')
+        .setDescription('질문 아래에 크게 붙습니다. 한 장.')
+        .setFileUploadComponent(
+          new FileUploadBuilder().setCustomId('qimg').setRequired(false).setMinValues(0).setMaxValues(1)
+        ),
+      new LabelBuilder()
+        .setLabel('선택지 사진 (선택)')
+        .setDescription(`안 넣어도 됩니다. 넣으면 **선택지 순서대로** 붙습니다. 최대 ${MAX_IMAGES}장.`)
+        .setFileUploadComponent(
+          new FileUploadBuilder().setCustomId('imgs').setRequired(false).setMinValues(0).setMaxValues(MAX_IMAGES)
+        )
+    );
+}
+
+/**
+ * 투표 메시지를 만들어 띄웁니다. 모달과 명령어 인자 양쪽에서 같이 씁니다.
+ *
+ * @param {string[]} labels 선택지 글자
+ * @param {Array<{url: string, contentType?: string, name?: string}>} images 선택지 순서대로
+ * @param {{url: string, name?: string}|null} questionImage 질문 아래에 크게 붙일 사진
+ */
+async function createPoll(interaction, question, labels, images, questionImage = null) {
+  const options = labels.map((label) => ({ label, image: null }));
+  const files = [];
+  let headImage = null;
+
+  if (questionImage?.url) {
+    headImage = imageName(questionImage, -1); // poll-q.png
+    files.push(new AttachmentBuilder(questionImage.url, { name: headImage }));
+  }
+
+  // 사진은 받은 주소를 그대로 쓰지 않고 **투표 메시지에 다시 올립니다.**
+  // 업로드로 받은 주소는 만료되어 나중에 사진이 깨집니다.
+  for (let i = 0; i < Math.min(labels.length, MAX_IMAGES, images.length); i++) {
+    const att = images[i];
+    if (!att?.url) continue;
+    const name = imageName(att, i);
+    options[i].image = name;
+    files.push(new AttachmentBuilder(att.url, { name }));
+  }
+
+  const poll = {
+    question: cut(question.trim(), 200),
+    image: headImage,
+    options,
+    votes: {},
+    createdBy: interaction.user.id,
+    guildId: interaction.guildId,
+    closed: false,
+    createdAt: Date.now(),
+  };
+
+  const message = await interaction.editReply({ ...buildPoll(poll), files });
+  store[message.id] = poll;
+  save();
+  return poll;
+}
+
+/** 선택지가 모자랄 때 보여줄 안내. 어디서 잘못됐는지 알려줘야 합니다. */
+function tooFewOptions(interaction, hint) {
+  return interaction.reply({
+    content: `선택지가 2개 이상이어야 합니다.\n${hint}`,
+    flags: MessageFlags.Ephemeral,
+  });
+}
+
+/** 모달에서 올린 파일. 버전에 따라 배열/컬렉션 어느 쪽으로도 올 수 있어 둘 다 받습니다. */
+function uploadedFiles(fields, id) {
+  try {
+    const got = fields.getUploadedFiles?.(id);
+    if (!got) return [];
+    return typeof got.values === 'function' ? [...got.values()] : [...got];
+  } catch {
+    return []; // 안 올렸으면 없는 칸입니다
+  }
 }
 
 export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('투표')
-      .setDescription('선택지를 만들어 투표를 받습니다 (선택지에 사진도 붙일 수 있습니다)')
-      .addStringOption((o) => o.setName('질문').setDescription('무엇을 물어볼지').setRequired(true))
+      .setDescription('투표를 만듭니다 (창이 뜨면 질문·선택지·사진을 채우면 됩니다)')
+      // 칸을 비우고 실행하면 창이 뜹니다. 아래 둘은 **한 줄로 빨리** 만들고 싶을 때만 씁니다.
+      .addStringOption((o) => o.setName('질문').setDescription('비우면 만들기 창이 뜹니다').setRequired(false))
       .addStringOption((o) =>
-        o
-          .setName('선택')
-          .setDescription('쉼표로 구분해서 쓰세요.  예: 피자, 치킨, 초밥')
-          .setRequired(true)
-      )
-      .addAttachmentOption((o) => o.setName('사진1').setDescription('첫 번째 선택지 사진 (선택)'))
-      .addAttachmentOption((o) => o.setName('사진2').setDescription('두 번째 선택지 사진 (선택)'))
-      .addAttachmentOption((o) => o.setName('사진3').setDescription('세 번째 선택지 사진 (선택)'))
-      .addAttachmentOption((o) => o.setName('사진4').setDescription('네 번째 선택지 사진 (선택)'))
-      .addAttachmentOption((o) => o.setName('사진5').setDescription('다섯 번째 선택지 사진 (선택)')),
+        o.setName('선택').setDescription('쉼표로 구분.  예: 피자, 치킨, 초밥').setRequired(false)
+      ),
 
     async execute(interaction) {
-      const question = interaction.options.getString('질문').trim();
-      const labels = parseOptions(interaction.options.getString('선택'));
+      const question = interaction.options.getString('질문');
+      const choices = interaction.options.getString('선택');
 
+      // 기본 경로: 칸을 비우고 실행 → 만들기 창.
+      if (!question || !choices) {
+        return interaction.showModal(buildCreateModal());
+      }
+
+      // 빠른 경로: 인자를 다 채워서 실행 (사진은 창으로만 붙일 수 있습니다).
+      const labels = parseOptions(choices);
       if (labels.length < 2) {
-        return interaction.reply({
-          content:
-            '선택지가 2개 이상이어야 합니다.\n**쉼표로 구분해서** 써주세요.  예: `선택:피자, 치킨, 초밥`',
-          flags: MessageFlags.Ephemeral,
-        });
+        return tooFewOptions(interaction, '**쉼표로 구분해서** 써주세요.  예: `선택:피자, 치킨, 초밥`');
       }
-
-      // 사진은 첨부를 그대로 쓰지 않고 **다시 올립니다.**
-      // 명령어로 받은 첨부 주소는 만료되어 나중에 사진이 깨집니다.
-      const files = [];
-      const options = labels.map((label) => ({ label, image: null }));
-      for (let i = 0; i < Math.min(labels.length, MAX_IMAGES); i++) {
-        const att = interaction.options.getAttachment(`사진${i + 1}`);
-        if (!att) continue;
-        if (!att.contentType?.startsWith('image/')) {
-          return interaction.reply({
-            content: `사진${i + 1} 이 이미지가 아닙니다. png·jpg·gif·webp 를 올려주세요.`,
-            flags: MessageFlags.Ephemeral,
-          });
-        }
-        const name = imageName(att, i);
-        options[i].image = name;
-        files.push(new AttachmentBuilder(att.url, { name }));
-      }
-
-      // 사진을 다시 올리는 데 시간이 걸립니다. 먼저 응답을 잡아둡니다.
       await interaction.deferReply();
-
-      const poll = {
-        question: cut(question, 200),
-        options,
-        votes: {},
-        createdBy: interaction.user.id,
-        guildId: interaction.guildId,
-        closed: false,
-        createdAt: Date.now(),
-      };
-
-      const message = await interaction.editReply({ ...buildPoll(poll), files });
-      store[message.id] = poll;
-      save();
+      await createPoll(interaction, question, labels, []);
     },
   },
 ];
+
+/** 만들기 창을 제출했을 때. customId 가 `v:new` 입니다. */
+export async function handlePollModal(interaction) {
+  const question = interaction.fields.getTextInputValue('q');
+  const labels = parseOptions(interaction.fields.getTextInputValue('opts'));
+
+  if (labels.length < 2) {
+    return tooFewOptions(interaction, '**한 줄에 하나씩** 적어주세요.');
+  }
+
+  const onlyImages = (list) => list.filter((f) => !f.contentType || f.contentType.startsWith('image/'));
+  const images = onlyImages(uploadedFiles(interaction.fields, 'imgs'));
+  const questionImage = onlyImages(uploadedFiles(interaction.fields, 'qimg'))[0] ?? null;
+
+  // 사진을 다시 올리는 데 시간이 걸립니다. 먼저 응답을 잡아둡니다.
+  await interaction.deferReply();
+  await createPoll(interaction, question, labels, images, questionImage);
+}
 
 /** 투표 버튼 처리. customId 가 `v:` 로 시작하는 것만 옵니다. */
 export async function handlePollComponent(interaction) {

@@ -24,7 +24,7 @@ import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
-import { initPolls, handlePollComponent, flushPolls } from './poll/index.js';
+import { initPolls, handlePollComponent, handlePollModal, flushPolls } from './poll/index.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES, inRole } from './settings.js';
@@ -92,6 +92,25 @@ client.on(Events.InteractionCreate, async (interaction) => {
       } catch (err) {
         console.error(`[자동완성 ${interaction.commandName}]`, err.message);
       }
+    }
+    return;
+  }
+
+  // 입력 창(모달) 제출. 지금은 투표 만들기 창 하나뿐입니다.
+  if (interaction.isModalSubmit()) {
+    if (!interaction.customId.startsWith('v:') || !inRole('poll')) return;
+    if (!featureEnabled(interaction.guildId, 'poll')) {
+      return interaction
+        .reply({ content: featureOffMessage('poll'), flags: MessageFlags.Ephemeral })
+        .catch(() => {});
+    }
+    try {
+      await handlePollModal(interaction);
+    } catch (err) {
+      console.error('[투표 만들기]', err);
+      const content = `⚠️ ${err.message ?? '투표를 만들지 못했습니다.'}`;
+      if (interaction.deferred) await interaction.editReply(content).catch(() => {});
+      else if (!interaction.replied) await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
     }
     return;
   }
