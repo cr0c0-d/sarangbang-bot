@@ -6,6 +6,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { config } from '../config.js';
 import {
@@ -124,6 +125,11 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('정리')
+      // ★ **사진을 영구히 지우는** 명령어라 **관리자(서버 관리 권한)만** 쓸 수 있게 합니다.
+      //   setDefaultMemberPermissions 는 디스코드가 직접 막아줍니다. 코드에서 검사하면
+      //   새 명령어를 추가할 때 반드시 빠뜨립니다. 서버 주인이 필요하면
+      //   서버 설정 → 연동 에서 명령어별로 다시 열어줄 수 있습니다.
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .setDescription('사진 용량을 보고, 오래된 것부터 정리합니다')
       .addBooleanOption((o) =>
         o

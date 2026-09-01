@@ -32,6 +32,22 @@ for (const need of ['채널설정', '나가기', '타이머', '타이머목록',
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
+
+// 1a) 서버 설정을 바꾸거나 데이터를 지우는 명령어는 **관리자만**.
+//     setDefaultMemberPermissions 는 디스코드가 직접 막아줍니다. 코드에서 검사하면
+//     새 명령어를 추가할 때 반드시 빠뜨립니다 (3.7-1 과 같은 발상).
+{
+  const { PermissionFlagsBits } = await import('discord.js');
+  const perms = new Map(allCommands.map((c) => [c.data.toJSON().name, c.data.toJSON().default_member_permissions]));
+  const MANAGE = String(PermissionFlagsBits.ManageGuild);
+  for (const name of ['채널설정', '기능', '정리']) {
+    ok(`/${name} 은 관리자만`, perms.get(name) === MANAGE, String(perms.get(name)));
+  }
+  // 친구들이 늘 쓰는 것은 막으면 안 됩니다.
+  for (const name of ['도움말', '일정', '일정새로', '정산', '투표', '영화', '타이머', '목소리', '갤러리']) {
+    ok(`/${name} 은 누구나`, !perms.get(name), String(perms.get(name)));
+  }
+}
 // 버튼으로 대체해 없앤 명령어들이 되살아나지 않았는지 (명령어 수 줄이기의 회귀 검사)
 for (const gone of ['핑', '다음', '정지', '일시정지', '이어재생', '반복', '이전곡',
                     '대기열제거', '대기열비우기', '목소리목록', '폴더확인', '채널확인', '채널해제',
@@ -975,6 +991,13 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('카테고리 설정 항목', (await import('./src/settings.js')).KEYS.planCategoryId?.kind === 'category');
   ok('/채널설정 이 카테고리를 받음',
     fs.readFileSync('./src/channel-commands.js', 'utf8').includes('CATEGORY_TYPES'));
+  // ⚠️ `/채널설정` 의 채널 칸은 텍스트·음성·카테고리를 한 목록에 **섞어** 보여줍니다.
+  //   디스코드가 "종류" 선택에 따라 목록을 바꿔주지 못합니다.
+  //   그래서 /일정새로 는 **카테고리만** 나오는 드롭다운을 따로 씁니다.
+  ok('카테고리를 안 정했으면 그 자리에서 고르게', pl.includes('ChannelSelectMenuBuilder') &&
+    pl.includes('addChannelTypes(ChannelType.GuildCategory)'));
+  ok('고른 뒤 바로 만들기 창으로', pl.includes("action === 'cat'") && pl.includes('buildCreateChannelModal()'));
+  ok('카테고리 고르기는 일정이 없어도 동작', pl.indexOf("action === 'cat'") < pl.indexOf('const plan = getPlan(interaction.channelId);\n  if (!plan)'));
 
   // 자동 감지를 하지 않는 것이 요구사항입니다.
   ok('메시지 자동 감지 안 함', !fs.readFileSync('./src/index.js', 'utf8').includes('handlePlanMessage'));

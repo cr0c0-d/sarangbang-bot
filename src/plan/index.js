@@ -17,6 +17,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   StringSelectMenuBuilder,
+  ChannelSelectMenuBuilder,
   ModalBuilder,
   LabelBuilder,
   TextInputBuilder,
@@ -29,7 +30,7 @@ import {
 } from 'discord.js';
 import { parseWhen, formatWhen, yymmdd, titleFromChannelName } from './parse-when.js';
 import { getPlan, setPlan, updatePlan, removePlan, scheduleReminder, cancelReminder } from './store.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, set as setSetting } from '../settings.js';
 
 /** 할 일 버튼은 한 줄에 5개씩 두 줄까지. 그 이상은 목록으로만 보여줍니다. */
 const TODO_BUTTONS = 10;
@@ -172,6 +173,30 @@ function formatWhenForEdit(plan) {
   return plan.hasTime ? `${date} ${p(d.getHours())}:${p(d.getMinutes())}` : date;
 }
 
+/**
+ * 일정 카테고리를 고르는 판.
+ *
+ * `/채널설정` 의 채널 칸은 텍스트·음성·카테고리를 **한 목록에 섞어** 보여줍니다.
+ * 디스코드가 "종류" 선택에 따라 목록을 바꿔주지 못하기 때문입니다.
+ * 그래서 여기서는 **카테고리만** 나오는 드롭다운을 씁니다.
+ */
+function buildCategoryPicker() {
+  return {
+    content:
+      '먼저 **일정 채널을 만들 카테고리**를 골라주세요. 한 번만 고르면 됩니다.\n' +
+      '(나중에 바꾸려면 `/채널설정` 에서 「일정 카테고리」 를 고르시면 됩니다)',
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ChannelSelectMenuBuilder()
+          .setCustomId('pl:cat')
+          .setPlaceholder('카테고리 고르기')
+          .addChannelTypes(ChannelType.GuildCategory)
+      ),
+    ],
+    flags: MessageFlags.Ephemeral,
+  };
+}
+
 /** 새 채널을 만드는 창. 사람과 **역할** 둘 다 고를 수 있습니다. */
 function buildCreateChannelModal() {
   return new ModalBuilder()
@@ -227,14 +252,10 @@ export const commands = [
       .setDescription('일정용 비공개 채널을 새로 만듭니다 (참여자·역할만 볼 수 있게)'),
     async execute(interaction) {
       const categoryId = getSetting(interaction.guildId, 'planCategoryId');
-      if (!categoryId) {
-        return interaction.reply({
-          content:
-            '먼저 **일정 카테고리**를 지정해주세요.\n`/채널설정 종류:일정 카테고리 채널:<카테고리>` 로 지정하면 됩니다.\n' +
-            '그 카테고리 밑에 일정 채널이 생깁니다.',
-          flags: MessageFlags.Ephemeral,
-        });
-      }
+      // 아직 안 정했으면 **여기서 바로 고르게** 합니다.
+      // `/채널설정` 으로 보내면, 그쪽 채널 목록에는 텍스트·음성 채널이 섞여 나와서
+      // "카테고리를 고르라는데 채널만 보인다" 가 됩니다. 여기서는 카테고리만 보여줍니다.
+      if (!categoryId) return interaction.reply(buildCategoryPicker());
       await interaction.showModal(buildCreateChannelModal());
     },
   },
@@ -322,6 +343,14 @@ export function makeReminderFire(client) {
 
 export async function handlePlanComponent(interaction, client) {
   const [, action, arg] = interaction.customId.split(':');
+
+  // 카테고리 고르기는 **일정이 없어도** 동작해야 합니다 (일정을 만들기 전 단계입니다).
+  if (action === 'cat') {
+    setSetting(interaction.guildId, 'planCategoryId', interaction.values[0]);
+    // 고른 뒤 바로 만들기 창을 띄웁니다. 명령어를 다시 치게 하지 않습니다.
+    return interaction.showModal(buildCreateChannelModal());
+  }
+
   const plan = getPlan(interaction.channelId);
   if (!plan) {
     return interaction.reply({

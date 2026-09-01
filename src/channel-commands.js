@@ -16,6 +16,7 @@ import {
   ButtonStyle,
   ChannelType,
   MessageFlags,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { KEYS, activeKeys, getWithSource, set, clear } from './settings.js';
 
@@ -101,6 +102,11 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('채널설정')
+      // ★ 서버 설정을 바꾸는 명령어라 **관리자(서버 관리 권한)만** 쓸 수 있게 합니다.
+      //   setDefaultMemberPermissions 는 디스코드가 직접 막아줍니다. 코드에서 검사하면
+      //   새 명령어를 추가할 때 반드시 빠뜨립니다. 서버 주인이 필요하면
+      //   서버 설정 → 연동 에서 명령어별로 다시 열어줄 수 있습니다.
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .setDescription('각 기능이 사용할 채널을 보고 지정합니다 (비우면 현재 상태만 봅니다)')
       .addStringOption((o) =>
         o.setName('종류').setDescription('무엇을 지정할지').setRequired(false).addChoices(...CHOICES)
