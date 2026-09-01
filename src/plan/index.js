@@ -126,19 +126,22 @@ export function buildPanel(plan) {
 // ── 모달 ──────────────────────────────────────────────────
 
 /** 이 채널에 일정을 등록하는 창. 제목은 채널 이름에서 뽑아 미리 채웁니다. */
-function buildRegisterModal(channel, plan = null) {
-  const t = (id, label, opts = {}) =>
-    new LabelBuilder()
-      .setLabel(label)
-      .setDescription(opts.hint ?? null)
-      .setTextInputComponent(
-        new TextInputBuilder()
-          .setCustomId(id)
-          .setStyle(opts.long ? TextInputStyle.Paragraph : TextInputStyle.Short)
-          .setRequired(Boolean(opts.required))
-          .setPlaceholder(opts.placeholder ?? '')
-          .setValue(opts.value ?? '')
-      );
+export function buildRegisterModal(channel, plan = null) {
+  // ⚠️ **`setDescription(null)` 을 부르면 안 됩니다.** 검증기가 거부하고
+  //    `Received one or more errors` 로 창이 아예 안 뜹니다 (실제로 겪음).
+  //    값이 없으면 **아예 부르지 않아야** 합니다. setValue·setPlaceholder 도 같습니다.
+  const t = (id, label, opts = {}) => {
+    const input = new TextInputBuilder()
+      .setCustomId(id)
+      .setStyle(opts.long ? TextInputStyle.Paragraph : TextInputStyle.Short)
+      .setRequired(Boolean(opts.required));
+    if (opts.placeholder) input.setPlaceholder(opts.placeholder);
+    if (opts.value) input.setValue(opts.value);
+
+    const lbl = new LabelBuilder().setLabel(label);
+    if (opts.hint) lbl.setDescription(opts.hint);
+    return lbl.setTextInputComponent(input);
+  };
 
   return new ModalBuilder()
     .setCustomId('pl:save')
@@ -180,7 +183,7 @@ function formatWhenForEdit(plan) {
  * 디스코드가 "종류" 선택에 따라 목록을 바꿔주지 못하기 때문입니다.
  * 그래서 여기서는 **카테고리만** 나오는 드롭다운을 씁니다.
  */
-function buildCategoryPicker() {
+export function buildCategoryPicker() {
   return {
     content:
       '먼저 **일정 채널을 만들 카테고리**를 골라주세요. 한 번만 고르면 됩니다.\n' +
@@ -198,7 +201,7 @@ function buildCategoryPicker() {
 }
 
 /** 새 채널을 만드는 창. 사람과 **역할** 둘 다 고를 수 있습니다. */
-function buildCreateChannelModal() {
+export function buildCreateChannelModal() {
   return new ModalBuilder()
     .setCustomId('pl:mk')
     .setTitle('일정 채널 만들기')

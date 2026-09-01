@@ -1357,6 +1357,48 @@ TMDB 의 provider ID 는 지역·시점에 따라 바뀔 수 있다. 그런데 �
 
 ---
 
+## 7-1. ★ 빌더에 `null` · `''` 을 넘기지 말 것 — 창이 아예 안 뜬다
+
+discord.js 빌더는 **`toJSON()` 안에서** 값을 검사한다. 잘못된 값을 넣어도 그 자리에서는
+조용하고, 실제로 보낼 때 `Received one or more errors` 로 터진다.
+사용자에게는 **버튼을 눌렀는데 아무 일도 안 일어나는 것**으로 보인다.
+
+2026-09-01 실측으로 확인한 것:
+
+| 호출 | 결과 |
+|---|---|
+| `LabelBuilder.setDescription(null)` | **거부** |
+| `LabelBuilder.setDescription('')` | **거부** |
+| `EmbedBuilder.setDescription('')` | **거부** |
+| `TextInputBuilder.setValue('')` | 통과 |
+| `TextInputBuilder.setPlaceholder('')` | 통과 |
+| 선택지의 `description: undefined` | 통과 (키가 지워진다) |
+
+**값이 없으면 그 메서드를 아예 부르지 않는다.**
+
+```js
+// ✗ 이렇게 하면 hint 가 없을 때 터진다
+new LabelBuilder().setLabel(label).setDescription(hint ?? null)
+
+// ✓ 있을 때만 부른다
+const lbl = new LabelBuilder().setLabel(label);
+if (hint) lbl.setDescription(hint);
+```
+
+`?? ` 는 `null`·`undefined` 만 잡는다. **빈 문자열은 통과**하므로 `||` 를 써야 하는 곳이 있다
+(`cut(overview) || '줄거리 정보가 없습니다.'`).
+
+### 그래서 verify 가 **화면 만드는 함수를 전부 조립해본다**
+
+`verify.mjs` 의 6x) 절이 판·창 16개를 만들고 `toJSON()` 을 실제로 부른다.
+**값이 하나도 없는 경우**(장소 없음, 할 일 없음)를 반드시 같이 넣는다 — 그때 `null` 이 흘러간다.
+
+**화면 만드는 함수를 새로 만들면 그 목록에 한 줄 추가할 것.**
+이 검사를 넣기 전에 `LabelBuilder.setDescription(null)` 이 그대로 배포됐고,
+「고치기」 와 `/일정` 등록 창이 **둘 다** 안 떴다.
+
+---
+
 ## 8. 검증 방법 (토큰 없이 가능한 것들)
 
 디스코드 토큰 없이도 아래는 전부 확인할 수 있다. 큰 변경 후 돌려볼 것.

@@ -59,7 +59,7 @@ function parseId(customId) {
  * 무엇을 볼지 고르는 판. **나만 보입니다.**
  * @param {string[]} enabled 이 서버에서 쓰는 OTT (설정 안 했으면 빈 배열 = 전체)
  */
-function buildPicker(guildId, genreKey, providers) {
+export function buildPicker(guildId, genreKey, providers) {
   const enabled = movieProviders(guildId);
   // 서버에서 쓰는 OTT 만 고를 수 있게 합니다. 설정 전이면 전부 보여줍니다.
   const usable = enabled.length > 0 ? PROVIDERS.filter((p) => enabled.includes(p.id)) : PROVIDERS;
@@ -140,14 +140,14 @@ function buildPicker(guildId, genreKey, providers) {
 
 // ── 뽑기 결과 ─────────────────────────────────────────────
 
-function buildResult(item, genreKey, providers) {
+export function buildResult(item, genreKey, providers) {
   const gk = genreKey ?? NONE;
   const gp = encodeProviders(providers);
 
   const embed = new EmbedBuilder()
     .setColor(0x5865f2)
     .setTitle(`${item.kind === 'tv' ? '📺' : '🎬'} ${item.title}`)
-    .setDescription(cut(item.overview, 600) ?? '줄거리 정보가 없습니다.')
+    .setDescription(cut(item.overview, 600) || '줄거리 정보가 없습니다.')
     .setFooter({
       text: [
         item.year,
@@ -182,7 +182,7 @@ function buildResult(item, genreKey, providers) {
 }
 
 /** 조건에 맞는 게 없을 때. 무엇을 바꾸면 되는지까지 알려줍니다. */
-function buildEmpty(guildId, genreKey, providers) {
+export function buildEmpty(guildId, genreKey, providers) {
   const genre = genreByKey(genreKey);
   const chosen = providers.length > 0 ? providers : movieProviders(guildId);
   const sparse = chosen.map(providerById).filter((p) => p?.sparse);
@@ -226,7 +226,7 @@ function buildEmpty(guildId, genreKey, providers) {
 
 // ── 서버에서 쓰는 OTT 설정 ────────────────────────────────
 
-function buildOttSettings(guildId) {
+export function buildOttSettings(guildId) {
   const enabled = movieProviders(guildId);
   return {
     embeds: [

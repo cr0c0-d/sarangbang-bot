@@ -1046,6 +1046,72 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   fs.rmSync('./data/verify-data/settlements.json', { force: true });
 }
 
+// 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
+//
+// 디스코드 빌더는 `toJSON()` 안에서 값을 검사한다. 부르지 않으면 아무것도 확인하지 못한다.
+// 실제로 `LabelBuilder.setDescription(null)` 이 통과해서 나갔고,
+// 「고치기」 를 누르면 `Received one or more errors` 로 창이 아예 안 떴다.
+//
+// **화면 만드는 함수를 새로 만들면 여기에 한 줄 추가할 것.**
+{
+  const dj = await import('discord.js');
+  // 빌더가 거부하는 값들 — 왜 조건부로 불러야 하는지 남겨둔다 (2026-09-01 실측)
+  const rejects = (fn) => {
+    try { fn(); return false; } catch { return true; }
+  };
+  ok('Label.setDescription(null) 은 거부됨 (그래서 조건부로 불러야 함)',
+    rejects(() => new dj.LabelBuilder().setLabel('x').setDescription(null)
+      .setTextInputComponent(new dj.TextInputBuilder().setCustomId('a').setStyle(1)).toJSON()));
+  ok('빈 문자열도 거부됨', rejects(() => new dj.EmbedBuilder().setDescription('').toJSON()));
+
+  const plan = await import('./src/plan/index.js');
+  const movie = await import('./src/movie/index.js');
+  const poll = await import('./src/poll/index.js');
+  const settle = await import('./src/plan/settle.js');
+
+  const samplePlan = {
+    title: '오사카', at: Date.now() + 86400_000, hasTime: true, place: '스타필드 하남',
+    todos: [{ text: '숙소', doneBy: 'u1' }], notes: ['메모'], refs: [{ label: 'x', url: 'https://a.b' }],
+    panelMessageId: null, remindAt: null, createdBy: 'u1',
+  };
+  // 값이 하나도 없는 경우가 **가장 위험하다.** 그때 null·'' 이 빌더로 흘러간다.
+  const emptyPlan = { ...samplePlan, place: null, todos: [], notes: [], refs: [], remindAt: 12345 };
+  const sampleItem = { id: 'movie-1', kind: 'movie', title: '영화', year: '2026', overview: null, rating: 7.5, votes: 100, poster: 'https://image.tmdb.org/t/p/w500/a.jpg' };
+
+  const screens = {
+    '일정 판': () => plan.buildPanel(samplePlan),
+    '일정 판 (빈 값)': () => plan.buildPanel(emptyPlan),
+    '일정 등록 창': () => plan.buildRegisterModal({ name: '251003-오사카' }),
+    '일정 고치기 창': () => plan.buildRegisterModal({ name: 'x' }, samplePlan),
+    '일정 고치기 창 (빈 값)': () => plan.buildRegisterModal({ name: 'x' }, emptyPlan),
+    '카테고리 고르기': () => plan.buildCategoryPicker(),
+    '일정 채널 만들기 창': () => plan.buildCreateChannelModal(),
+    '영화 고르기 판': () => movie.buildPicker('g', null, []),
+    '영화 고르기 판 (장르·OTT 고름)': () => movie.buildPicker('g', 'action', [8, 1881]),
+    '영화 결과': () => movie.buildResult(sampleItem, null, []),
+    '영화 결과 (줄거리 없음)': () => movie.buildResult({ ...sampleItem, overview: '', poster: null }, 'action', [8]),
+    '영화 결과 없음': () => movie.buildEmpty('g', 'action', [1881]),
+    'OTT 설정': () => movie.buildOttSettings('g'),
+    '투표 판': () => poll.buildPoll({ question: 'Q', options: [{ label: 'A', image: null }], votes: {}, closed: false, createdBy: 'u', createdAt: Date.now() }),
+    '투표 만들기 창': () => poll.buildCreateModal(),
+    '정산 판': () => settle.buildSettlement({ title: 'T', payerId: 'p', total: 100, shares: [{ userId: 'p', amount: 50, sent: false }, { userId: 'a', amount: 50, sent: false }], createdAt: Date.now() }),
+  };
+
+  const broken = [];
+  for (const [name, make] of Object.entries(screens)) {
+    try {
+      const out = make();
+      // 임베드·컴포넌트·모달 무엇이든 toJSON 을 실제로 불러 검사를 돌린다.
+      if (typeof out.toJSON === 'function') out.toJSON();
+      for (const e of out.embeds ?? []) e.toJSON();
+      for (const r of out.components ?? []) r.toJSON();
+    } catch (err) {
+      broken.push(`${name}: ${String(err.message).split('\n')[0].slice(0, 60)}`);
+    }
+  }
+  ok(`화면 ${Object.keys(screens).length}개가 전부 조립됨`, broken.length === 0, broken.join(' | '));
+}
+
 // 6t) 봇 나눠 돌리기 (BOT_ROLE)
 //
 // 역할마다 **실제로 프로세스를 띄워** 확인합니다. config.js 가 import 시점에 한 번만
