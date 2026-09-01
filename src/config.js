@@ -1,6 +1,7 @@
 // .env 파일을 읽어서 설정값으로 정리합니다.
 // 값이 빠졌으면 여기서 미리 잡아서, 봇이 이상하게 도는 대신 명확한 에러를 냅니다.
 import 'dotenv/config';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -30,6 +31,34 @@ function list(key) {
     .map((s) => s.trim())
     .filter(Boolean);
 }
+
+/**
+ * .env 에 같은 항목이 여러 번 적혀 있으면 알려줍니다.
+ *
+ * `echo "KEY=값" >> .env` 로 설정을 덧붙이다 보면 같은 줄이 쌓이는데,
+ * dotenv 는 조용히 하나만 쓰기 때문에 "분명히 고쳤는데 안 바뀐다" 가 됩니다.
+ * 실제로 YTDLP_COOKIES_FILE 이 3줄 쌓여서 진단을 헤맨 적이 있습니다.
+ */
+function warnDuplicateEnvKeys() {
+  try {
+    const text = readFileSync(path.join(ROOT, '.env'), 'utf8');
+    const seen = new Map();
+    for (const line of text.split('\n')) {
+      const m = line.match(/^\s*([A-Z0-9_]+)\s*=/);
+      if (m) seen.set(m[1], (seen.get(m[1]) ?? 0) + 1);
+    }
+    const dups = [...seen].filter(([, n]) => n > 1);
+    if (dups.length > 0) {
+      console.warn(
+        `[설정] .env 에 중복된 항목이 있습니다: ${dups.map(([k, n]) => `${k}(${n}번)`).join(', ')}\n` +
+          '       마지막 값만 적용됩니다. 헷갈리니 중복 줄을 지워주세요.'
+      );
+    }
+  } catch {
+    // .env 가 없어도 됩니다 (환경변수로만 넘길 수도 있으므로)
+  }
+}
+warnDuplicateEnvKeys();
 
 const required = ['DISCORD_TOKEN', 'CLIENT_ID', 'GUILD_ID'];
 const missing = required.filter((k) => str(k) === '' || str(k).startsWith('여기에'));

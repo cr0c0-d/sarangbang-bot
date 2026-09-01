@@ -445,6 +445,8 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('구분자 기반 파싱 (줄 밀림 방지)', yt.includes("const SEP = '|::|'"));
   ok('재생주소 http 검증', yt.includes('isHttp(na(p[5]))'));
   ok('직접수신 끄는 스위치', yt.includes('MUSIC_DIRECT_STREAM'));
+  const cfg = fs.readFileSync('./src/config.js', 'utf8');
+  ok('.env 중복 항목 경고', cfg.includes('warnDuplicateEnvKeys'));
   ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
   ok('추출 결과 캐시', yt.includes('function cacheGet'));
   ok('캐시본을 복사해서 반환 (오염 방지)', yt.includes('cached.map((t) => ({ ...t }))'));
