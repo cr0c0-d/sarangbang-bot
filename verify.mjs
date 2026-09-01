@@ -24,11 +24,11 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 14개 로드', allCommands.length === 14, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 15개 로드', allCommands.length === 15, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '내목소리', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -437,7 +437,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 4개', Object.keys(st.FEATURES).length === 4, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 5개', Object.keys(st.FEATURES).length === 5, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -644,6 +644,68 @@ ok('이동: 암호 없으면 401',
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 
+// 6u) 투표
+{
+  const poll = await import('./src/poll/index.js');
+  await poll.initPolls();
+
+  // 선택지는 한 칸에 쉼표로 씁니다. 칸을 열 개 만들면 아무도 안 씁니다.
+  ok('쉼표로 나눔', JSON.stringify(poll.parseOptions('피자, 치킨, 초밥')) === JSON.stringify(['피자', '치킨', '초밥']));
+  ok('줄바꿈으로 써도 됨', poll.parseOptions('피자\n치킨').length === 2);
+  ok('빈 칸·공백은 버림', JSON.stringify(poll.parseOptions('피자,  , 치킨,')) === JSON.stringify(['피자', '치킨']));
+  ok('10개까지만', poll.parseOptions(Array.from({ length: 15 }, (_, i) => `항목${i}`).join(',')).length === 10);
+
+  const make = (n) => ({
+    question: '점심 뭐?',
+    options: Array.from({ length: n }, (_, i) => ({ label: `선택${i + 1}`, image: null })),
+    votes: {},
+    createdBy: 'u0',
+    closed: false,
+    createdAt: Date.now(),
+  });
+
+  const p = make(3);
+  p.votes = { a: 0, b: 0, c: 1 };
+  const { counts, total } = poll.tally(p);
+  ok('표 세기', counts[0] === 2 && counts[1] === 1 && counts[2] === 0 && total === 3, counts.join('/'));
+
+  const built = poll.buildPoll(p);
+  const json = JSON.stringify(built.components.map((r) => r.toJSON()));
+  ok('선택지마다 버튼', json.includes('"v:0"') && json.includes('"v:1"') && json.includes('"v:2"'));
+  ok('마감 버튼', json.includes('"v:close"'));
+  ok('결과가 임베드에 보임', JSON.stringify(built.embeds[0].toJSON()).includes('2표'));
+
+  // 사진이 있는 선택지는 임베드를 하나 더 붙입니다. 첨부를 그대로 참조하면
+  // 주소가 만료되므로 **투표 메시지에 다시 올린 파일**(attachment://)을 씁니다.
+  const withImg = make(2);
+  withImg.options[0].image = 'poll-1.png';
+  const imgJson = JSON.stringify(poll.buildPoll(withImg).embeds.map((e) => e.toJSON()));
+  ok('사진은 attachment:// 로 참조', imgJson.includes('attachment://poll-1.png'));
+  ok('사진 있는 선택지만 임베드 추가', poll.buildPoll(withImg).embeds.length === 2);
+  const src2 = fs.readFileSync('./src/poll/index.js', 'utf8');
+  ok('첨부를 다시 올림 (주소 만료 대비)', src2.includes('new AttachmentBuilder(att.url'));
+
+  // 10개면 버튼이 두 줄로 나뉘어야 합니다 (한 줄에 5개 제한)
+  const big = poll.buildPoll(make(10));
+  ok('버튼은 한 줄에 5개까지', big.components.length === 3, `${big.components.length}줄`);
+  for (const row of big.components) {
+    if (row.toJSON().components.length > 5) ok('한 줄 5개 초과', false);
+  }
+
+  // 마감하면 누를 수 없어야 합니다
+  const closed = make(2);
+  closed.closed = true;
+  const cj = JSON.stringify(poll.buildPoll(closed).components.map((r) => r.toJSON()));
+  ok('마감하면 버튼이 잠김', cj.includes('"disabled":true') && !cj.includes('"v:close"'));
+
+  // 재시작을 견뎌야 합니다 (버튼은 메시지에 계속 남아 있으므로)
+  ok('저장 완료를 기다릴 수 있음', typeof poll.flushPolls === 'function');
+  ok('버튼 앞머리가 index 에 등록됨', fs.readFileSync('./src/index.js', 'utf8').includes("startsWith('v:')"));
+  ok('/기능 으로 끌 수 있음', (await import('./src/settings.js')).FEATURES.poll !== undefined);
+
+  fs.rmSync('./data/verify-data/polls.json', { force: true });
+}
+
 // 6t) 봇 나눠 돌리기 (BOT_ROLE)
 //
 // 역할마다 **실제로 프로세스를 띄워** 확인합니다. config.js 가 import 시점에 한 번만
@@ -664,7 +726,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 18개', union.length === 18, `${union.length}개`);
+  ok('둘을 합쳐 19개', union.length === 19, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

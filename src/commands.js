@@ -10,6 +10,7 @@ import { commands as ttsCommands } from './tts/index.js';
 import { commands as imageCommands } from './images/commands.js';
 import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
+import { commands as pollCommands } from './poll/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
@@ -64,6 +65,17 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'poll',
+            name: '🗳️ 투표',
+            value: [
+              '`/투표 질문:점심 뭐 먹지 선택:피자, 치킨, 초밥`',
+              '선택지는 **쉼표로 구분**해서 한 칸에 쓰면 됩니다. (최대 10개)',
+              '`사진1` `사진2` … 로 선택지에 **사진을 붙일 수 있습니다.** (앞에서부터 5개까지)',
+              '고르는 건 **버튼**입니다. 같은 걸 다시 누르면 취소, 다른 걸 누르면 옮겨집니다.',
+              '누가 뭘 골랐는지는 안 보이고 표 수만 보입니다. 만든 사람이 🔒 마감할 수 있습니다.',
+            ].join('\n'),
+          },
+          {
             feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
@@ -114,6 +126,7 @@ const taggedCommands = [
   ...tag('tts', ttsCommands),
   ...tag('timer', timerCommands),
   ...tag('images', imageCommands),
+  ...tag('poll', pollCommands),
 ];
 
 /**

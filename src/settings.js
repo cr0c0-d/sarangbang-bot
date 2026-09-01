@@ -97,6 +97,7 @@ export const FEATURES = {
   tts: { label: '읽어주기', emoji: '🗣️', hint: '채팅을 음성으로 읽어주기' },
   timer: { label: '타이머', emoji: '⏰', hint: '/타이머 · /알람등록' },
   images: { label: '이미지 정리', emoji: '🖼️', hint: '사진 자동 저장 (갤러리 열람은 계속 됩니다)' },
+  poll: { label: '투표', emoji: '🗳️', hint: '/투표 로 선택지를 만들고 버튼으로 고르기' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */

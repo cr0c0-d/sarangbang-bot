@@ -121,7 +121,7 @@ const dataDirRaw = str('DATA_DIR', './data');
  * 자세한 건 docs/ARCHITECTURE.md 2.1절.
  */
 const BOTS = {
-  mango: { name: '망고', features: ['tts', 'timer', 'images'] },
+  mango: { name: '망고', features: ['tts', 'timer', 'images', 'poll'] },
   music: { name: '노래하는 망고', features: ['music'] },
 };
 
