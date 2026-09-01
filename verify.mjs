@@ -569,6 +569,8 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   const cfg = fs.readFileSync('./src/config.js', 'utf8');
   ok('.env 중복 항목 경고', cfg.includes('warnDuplicateEnvKeys'));
   ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
+  // 재생 중에 재생목록을 담으면, 곡이 끝난 뒤에야 추출이 시작되어 그만큼 조용해졌습니다.
+  ok('담을 때도 미리 추출', ga.includes('if (this.isPlaying) this.prefetchNext();'));
   ok('추출 결과 캐시', yt.includes('function cacheGet'));
   // 캐시본을 그대로 주면 호출한 쪽에서 streamUrl 을 덮어쓸 때 서로 간섭합니다.
   ok('캐시본을 복사해서 반환 (오염 방지)',

@@ -209,6 +209,16 @@ export class GuildAudio {
   add(tracks, requestedBy) {
     for (const track of tracks) this.queue.push({ track, requestedBy });
     this.cancelLeaveTimer();
+
+    // 듣고 있는 중에 담았다면 **다음 곡 주소를 지금** 미리 뽑아둡니다.
+    //
+    // 왜 여기도 필요한가: 재생목록에서 담은 곡은 주소가 비어 있습니다(--flat-playlist).
+    // prefetchNext() 는 playNext() 끝에서만 불렸으므로, 재생 중에 재생목록을 담으면
+    // **지금 곡이 끝난 뒤에야** 추출이 시작되어 그만큼 조용해졌습니다.
+    //
+    // 대기 중일 때는 하지 않습니다 — 곧 playNext() 가 그 곡을 바로 틀 텐데,
+    // 1코어 서버에서는 쓸데없는 yt-dlp 하나가 opus 인코딩과 CPU를 다툽니다.
+    if (this.isPlaying) this.prefetchNext();
   }
 
   get isPaused() {
