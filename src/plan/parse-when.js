@@ -113,6 +113,84 @@ export function parseWhen(raw, now = new Date()) {
   return { at: at.getTime(), hasTime };
 }
 
+/**
+ * 일정표 한 줄을 읽습니다. **한 일정에 여러 곳을 도는 것이 기본**입니다.
+ *
+ *   12:00 점심 | 홍대 스시로
+ *   오후 2시 카페 | 어니언 홍대
+ *   16:00 방탈출            ← 장소는 없어도 됩니다
+ *   저녁                    ← 시간도 없어도 됩니다 (적은 순서대로 맨 뒤에)
+ *
+ * `|` 뒤가 **지도에 넣을 장소**입니다. 이름과 장소를 나누는 이유는,
+ * "점심" 을 지도에 검색해봐야 소용이 없기 때문입니다.
+ *
+ * @param {string} raw 여러 줄
+ * @param {number} baseAt 일정 날짜 (시간만 적힌 줄은 이 날짜를 씁니다)
+ * @returns {Array<{at: number|null, name: string, place: string|null}>}
+ */
+export function parseStops(raw, baseAt) {
+  const base = new Date(baseAt);
+
+  const stops = String(raw ?? '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      // `|` 로 장소를 떼어냅니다. 없으면 장소 없음.
+      const bar = line.indexOf('|');
+      const head = (bar >= 0 ? line.slice(0, bar) : line).trim();
+      const place = bar >= 0 ? line.slice(bar + 1).trim() || null : null;
+
+      // 맨 앞의 시간을 읽습니다. "12:00" "오후 2시" "14시 30분"
+      //
+      // ⚠️ **`:` 나 `시` 가 반드시 있어야** 시간으로 봅니다. 맨숫자를 시간으로 읽으면
+      //    `저녁 2차` 가 **오후 2시 "차"** 가 됩니다 (실제로 겪은 버그).
+      //    애매하면 시간이 아닌 쪽으로 두는 게 낫습니다 — 안내에 `12:00` 형식을 적어뒀습니다.
+      const m = head.match(/^((?:오전|오후|아침|저녁|밤)?\s*\d{1,2}\s*(?::\s*\d{1,2}|시(?:\s*\d{1,2}\s*분?)?))\s*(.*)$/);
+      let at = null;
+      let name = head;
+      if (m) {
+        const when = parseWhen(`${base.getFullYear()}-${base.getMonth() + 1}-${base.getDate()} ${m[1]}`);
+        // 시간을 못 읽었으면 그 부분도 이름으로 봅니다 ("2차" 같은 것)
+        if (when?.hasTime) {
+          at = when.at;
+          name = m[2].trim();
+        }
+      }
+      return { at, name: name || '(이름 없음)', place };
+    });
+
+  // 시간이 있는 것은 시간순, 없는 것은 적은 순서대로 맨 뒤.
+  // 나들이는 시간순으로 보는 게 당연하고, 나중에 하나를 끼워 넣어도 제자리에 들어갑니다.
+  const timed = stops.filter((s) => s.at !== null).sort((a, b) => a.at - b.at);
+  const untimed = stops.filter((s) => s.at === null);
+  return [...timed, ...untimed];
+}
+
+/** 일정표 줄을 다시 편집할 수 있는 글자로. (고치기 창에 채워 넣습니다) */
+export function stopsToText(stops) {
+  return (stops ?? [])
+    .map((s) => {
+      const t = s.at === null ? '' : `${formatTimeOnly(s.at)} `;
+      return `${t}${s.name}${s.place ? ` | ${s.place}` : ''}`;
+    })
+    .join('\n');
+}
+
+/** "14:30" — 고치기 창에 다시 넣을 때는 24시간제가 헷갈리지 않습니다. */
+export function formatTimeOnly(at) {
+  const d = new Date(at);
+  return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/** 보여줄 때는 "오후 2:30" 이 읽기 좋습니다. */
+export function formatTimeKo(at) {
+  const d = new Date(at);
+  const h = d.getHours();
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h < 12 ? '오전' : '오후'} ${h12}:${pad(d.getMinutes())}`;
+}
+
 const WEEKDAY = ['일', '월', '화', '수', '목', '금', '토'];
 
 /** 사람이 읽을 형태로. "10월 3일 (금) 오후 6:30" */

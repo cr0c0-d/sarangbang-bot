@@ -917,6 +917,39 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     pw.formatWhen(pw.parseWhen('10/3 18:30', now).at, true));
   ok('채널 이름용 yymmdd', pw.yymmdd(pw.parseWhen('10/3', now).at) === '261003');
 
+  // ── 일정표: 한 일정에 여러 곳 ──
+  // `시간 이름 | 장소` — `|` 뒤가 지도에 검색됩니다.
+  // "점심" 을 지도에 검색해봐야 소용이 없으므로 이름과 장소를 나눕니다.
+  const base = pw.parseWhen('9/1', now).at;
+  const stopCases = [
+    ['12:00 점심 | 홍대 스시로', '12:00', '점심', '홍대 스시로'],
+    ['오후 2시 카페 | 어니언 홍대', '14:00', '카페', '어니언 홍대'],
+    ['16:00 방탈출', '16:00', '방탈출', null],
+    ['14시 30분 산책', '14:30', '산책', null],
+    // ★ 맨숫자를 시간으로 읽으면 "저녁 2차" 가 **오후 2시 "차"** 가 됩니다 (실제로 겪은 버그).
+    ['저녁 2차', null, '저녁 2차', null],
+    ['3차', null, '3차', null],
+    ['점심 | 스시로', null, '점심', '스시로'],
+    ['9:00 아침 | 카페 | 추가', '09:00', '아침', '카페 | 추가'],
+  ];
+  const stopBad = stopCases.filter(([line, wantT, wantN, wantP]) => {
+    const [s] = pw.parseStops(line, base);
+    const t = s.at === null ? null : `${p2(new Date(s.at).getHours())}:${p2(new Date(s.at).getMinutes())}`;
+    return t !== wantT || s.name !== wantN || s.place !== wantP;
+  });
+  ok('일정표 한 줄 읽기', stopBad.length === 0, stopBad.map(([l]) => l).join(' / ') || `${stopCases.length}가지 확인`);
+
+  // 나들이는 시간순으로 보는 게 당연합니다. 시간 없는 것은 적은 순서대로 맨 뒤.
+  const sorted = pw.parseStops(['16:00 저녁', '12:00 점심', '2차', '14:00 카페'].join('\n'), base);
+  ok('시간순 정렬, 시간 없는 건 맨 뒤',
+    sorted.map((s) => s.name).join(',') === '점심,카페,저녁,2차', sorted.map((s) => s.name).join(','));
+
+  // 고치기 창에 다시 채워 넣을 수 있어야 합니다 (되돌려 읽어도 같아야 함).
+  const roundTrip = pw.stopsToText(sorted);
+  ok('되돌려 읽어도 같음',
+    pw.stopsToText(pw.parseStops(roundTrip, base)) === roundTrip, JSON.stringify(roundTrip));
+  ok('빈 일정표는 빈 배열', pw.parseStops('', base).length === 0 && pw.parseStops(null, base).length === 0);
+
   // 이미 채널 이름에 적어둔 것을 또 타이핑하지 않게 합니다.
   const titleCases = [
     ['[251003-오사카]', '오사카'],
@@ -946,14 +979,25 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // 판: 할 일 버튼은 한 줄에 5개, 두 줄까지. 넘치면 조용히 자르지 말고 알려야 합니다.
   const { buildPanel } = await import('./src/plan/index.js');
   const mkPlan = (n) => ({
-    title: '오사카', at: pw.parseWhen('10/3 18:30', now).at, hasTime: true, place: '스타필드 하남',
+    title: '홍대 나들이', at: pw.parseWhen('10/3', now).at, hasTime: false,
+    stops: pw.parseStops(
+      ['12:00 점심 | 홍대 스시로', '오후 2시 카페 | 어니언 홍대', '16:00 방탈출'].join('\n'),
+      pw.parseWhen('10/3', now).at
+    ),
     todos: Array.from({ length: n }, (_, i) => ({ text: `할일${i}`, doneBy: i === 0 ? 'u1' : null })),
     notes: ['체크인 15시'], refs: [{ label: '숙소', url: 'https://discord.com/channels/1/2/3' }],
     panelMessageId: null, remindAt: null, createdBy: 'u1',
   });
   const panel3 = buildPanel(mkPlan(3));
   const pj = JSON.stringify(panel3.components.map((r) => r.toJSON()));
-  ok('지도 버튼 2개', pj.includes('map.kakao.com') && pj.includes('map.naver.com'));
+  const pe = JSON.stringify(panel3.embeds[0].toJSON());
+
+  // ★ **한 일정에 여러 곳.** 지도는 버튼이 아니라 **링크 글자**입니다 —
+  //   항목마다 버튼 2개를 달면 3곳만 돌아도 줄 한도(5줄)를 잡아먹습니다.
+  ok('일정표가 여러 곳을 보여줌', pe.includes('일정표') && pe.includes('점심') && pe.includes('카페') && pe.includes('방탈출'));
+  ok('곳마다 지도 링크', (pe.match(/map.kakao.com/g) ?? []).length === 2 && pe.includes('map.naver.com'));
+  ok('지도는 버튼이 아니라 링크 글자', !pj.includes('map.kakao.com'));
+  ok('장소 없는 항목도 됨', pe.includes('방탈출'));
   ok('할 일 토글 버튼', pj.includes('"pl:todo:0"') && pj.includes('"pl:todo:2"'));
   ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind', 'pl:del'].every((id) => pj.includes(`"${id}"`)));
 

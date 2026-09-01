@@ -1,4 +1,4 @@
-// 일정 — 시간·장소·할 일을 한 판에 모아두고, 채널 생성까지 해줍니다.
+// 일정 — 하루에 도는 여러 곳(일정표) · 할 일 · 메모를 한 판에 모아두고, 채널 생성까지 해줍니다.
 //
 // 소유자의 실제 사용 방식을 그대로 옮긴 기능입니다 (docs/일정-정산-기획.md):
 //   「일정」 카테고리 아래 [yymmdd-일정명] 비공개 채널 → 참여자만 권한 →
@@ -28,7 +28,15 @@ import {
   PermissionFlagsBits,
   MessageFlags,
 } from 'discord.js';
-import { parseWhen, formatWhen, yymmdd, titleFromChannelName } from './parse-when.js';
+import {
+  parseWhen,
+  parseStops,
+  stopsToText,
+  formatWhen,
+  formatTimeKo,
+  yymmdd,
+  titleFromChannelName,
+} from './parse-when.js';
 import { getPlan, setPlan, updatePlan, removePlan, scheduleReminder, cancelReminder } from './store.js';
 import { get as getSetting, set as setSetting } from '../settings.js';
 
@@ -55,8 +63,22 @@ export function buildPanel(plan) {
   const done = plan.todos.filter((t) => t.doneBy).length;
 
   const body = [`🕘 ${formatWhen(plan.at, plan.hasTime)} · <t:${Math.floor(plan.at / 1000)}:R>`];
-  if (plan.place) body.push(`📍 ${plan.place}`);
 
+  // ★ **한 일정에 여러 곳**을 도는 것이 기본입니다 (홍대 나들이 → 점심 · 카페 · 방탈출).
+  //   지도는 **버튼이 아니라 링크 글자**로 붙입니다. 항목마다 버튼 2개를 달면
+  //   3곳만 돌아도 버튼이 6개가 되어 줄 한도(5줄)를 잡아먹습니다.
+  //   링크 글자는 개수 제한이 없고 모바일에서도 눌러서 지도 앱으로 열립니다.
+  const stops = plan.stops ?? [];
+  if (stops.length > 0) {
+    body.push('', '**📍 일정표**');
+    for (const st of stops) {
+      const time = st.at === null ? '⬥' : `**${formatTimeKo(st.at)}**`;
+      const maps = st.place
+        ? `\n　　📍 ${st.place} — [카카오맵](${kakaoMapUrl(st.place)}) · [네이버](${naverMapUrl(st.place)})`
+        : '';
+      body.push(`${time}　${st.name}${maps}`);
+    }
+  }
   if (plan.todos.length > 0) {
     body.push(
       '',
@@ -83,17 +105,7 @@ export function buildPanel(plan) {
 
   const rows = [];
 
-  // 1줄: 지도 (장소가 있을 때만)
-  if (plan.place) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('🗺️').setLabel('카카오맵').setURL(kakaoMapUrl(plan.place)),
-        new ButtonBuilder().setStyle(ButtonStyle.Link).setEmoji('🧭').setLabel('네이버지도').setURL(naverMapUrl(plan.place))
-      )
-    );
-  }
-
-  // 2~3줄: 할 일 토글
+  // 할 일 토글 (한 줄에 5개, 두 줄까지)
   const shown = plan.todos.slice(0, TODO_BUTTONS);
   for (let i = 0; i < shown.length; i += 5) {
     rows.push(
@@ -157,9 +169,11 @@ export function buildRegisterModal(channel, plan = null) {
         hint: '예: 10/3 18:30 · 2026-10-03 · 10월 3일 오후 6시 · 내일 19시',
         value: plan ? formatWhenForEdit(plan) : '',
       }),
-      t('place', '장소', {
-        hint: '가게 이름이나 주소. 지도 버튼이 붙습니다. 비워도 됩니다.',
-        value: plan?.place ?? '',
+      t('stops', '일정표', {
+        long: true,
+        hint: '한 줄에 한 곳씩.  시간 이름 | 장소   (| 뒤가 지도에 검색됩니다)',
+        placeholder: '12:00 점심 | 홍대 스시로\n오후 2시 카페 | 어니언 홍대\n16:00 방탈출',
+        value: plan ? stopsToText(plan.stops) : '',
       }),
       t('todos', '할 일', { long: true, hint: '한 줄에 하나씩. 비워도 됩니다.',
         value: plan ? plan.todos.map((x) => x.text).join('\n') : '' }),
@@ -215,11 +229,16 @@ export function buildCreateChannelModal() {
         .setTextInputComponent(
           new TextInputBuilder().setCustomId('when').setStyle(TextInputStyle.Short).setRequired(true).setPlaceholder('10/3 18:30')
         ),
+      // 만들 때부터 여러 곳을 넣을 수 있어야 합니다. 나들이는 한 곳만 가는 일이 드뭅니다.
       new LabelBuilder()
-        .setLabel('장소')
-        .setDescription('비워도 됩니다.')
+        .setLabel('일정표')
+        .setDescription('한 줄에 한 곳씩.  시간 이름 | 장소   (비워도 됩니다)')
         .setTextInputComponent(
-          new TextInputBuilder().setCustomId('place').setStyle(TextInputStyle.Short).setRequired(false)
+          new TextInputBuilder()
+            .setCustomId('stops')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setPlaceholder('12:00 점심 | 홍대 스시로\n오후 2시 카페 | 어니언 홍대\n16:00 방탈출')
         ),
       new LabelBuilder()
         .setLabel('참여자')
@@ -522,7 +541,8 @@ export async function handlePlanModal(interaction, client) {
       title: cut(interaction.fields.getTextInputValue('title').trim(), 100),
       at: when.at,
       hasTime: when.hasTime,
-      place: interaction.fields.getTextInputValue('place').trim() || null,
+      // 일정표. 날짜를 바꿨으면 시간만 적힌 줄도 **새 날짜**로 다시 읽힙니다.
+      stops: parseStops(interaction.fields.getTextInputValue('stops'), when.at),
       todos: newTodos.map((text) => ({ text: cut(text, 80), doneBy: doneMap.get(text) ?? null })),
       notes: lines(interaction.fields.getTextInputValue('notes')).map((n) => cut(n, 200)),
       refs: before?.refs ?? [],
@@ -559,7 +579,7 @@ export async function handlePlanModal(interaction, client) {
       });
     }
     const name = interaction.fields.getTextInputValue('name').trim();
-    const place = interaction.fields.getTextInputValue('place')?.trim() || null;
+    const stops = parseStops(interaction.fields.getTextInputValue('stops'), when.at);
     const users = pickIds(interaction.fields, 'users');
     const roles = pickIds(interaction.fields, 'roles');
 
@@ -571,7 +591,7 @@ export async function handlePlanModal(interaction, client) {
       title: cut(name, 100),
       at: when.at,
       hasTime: when.hasTime,
-      place,
+      stops,
       todos: [],
       notes: [],
       refs: [],
