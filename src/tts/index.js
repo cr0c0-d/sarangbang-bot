@@ -2,20 +2,25 @@
 import { SlashCommandBuilder, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio } from '../audio/guild-audio.js';
-import { synthesize, listVoices } from './synth.js';
-import { get as getSetting, ttsEnabled, featureEnabled } from '../settings.js';
+import { synthesize } from './synth.js';
+import {
+  get as getSetting,
+  ttsEnabled,
+  featureEnabled,
+  voiceFor,
+  setGuildVoice,
+  setUserVoice,
+  clearUserVoice,
+  userVoice,
+  guildVoice,
+} from '../settings.js';
+import { VOICES, VOICE_CHOICES, voiceLabel, isKoreanOnly } from './voices.js';
 
 // 서버별 on/off 상태. 기본값은 켜짐.
 const enabledByGuild = new Map();
-// 서버별 목소리 설정. 없으면 .env 기본값.
-const voiceByGuild = new Map();
 
 function isEnabled(guildId) {
   return enabledByGuild.get(guildId) ?? true;
-}
-
-function voiceFor(guildId) {
-  return voiceByGuild.get(guildId) ?? config.tts.voice;
 }
 
 const URL_RE = /https?:\/\/\S+/gi;
@@ -107,7 +112,8 @@ export async function handleTtsMessage(message) {
   try {
     const audio = getGuildAudio(message.guild);
     await audio.connect(voiceChannel);
-    const voice = voiceFor(message.guildId);
+    // 글쓴이가 자기 목소리를 정해뒀으면 그걸 씁니다.
+    const voice = voiceFor(message.guildId, message.author.id);
     audio.speak(() => synthesize(spoken, voice), voiceChannel.id);
   } catch (err) {
     console.error('[tts] 실패:', err.message);
@@ -141,46 +147,84 @@ export const commands = [
 
   {
     data: new SlashCommandBuilder()
-      .setName('목소리')
-      .setDescription('읽어주기 목소리를 바꿉니다')
+      .setName('내목소리')
+      .setDescription('내 글을 읽을 목소리를 고릅니다 (사람마다 다르게 쓸 수 있습니다)')
       .addStringOption((o) =>
         o
-          .setName('이름')
-          .setDescription('예: ko-KR-SunHiNeural')
-          .setRequired(true)
-          .addChoices(
-            // Edge TTS 가 실제로 제공하는 한국어 목소리는 이 셋뿐입니다.
-            // (2026-08-31 실측. 다른 이름을 넣으면 런타임에 실패합니다)
-            { name: '현수 — 남성, 다국어 (기본·권장)', value: 'ko-KR-HyunsuMultilingualNeural' },
-            { name: '선희 — 여성, 한국어 전용', value: 'ko-KR-SunHiNeural' },
-            { name: '인준 — 남성, 한국어 전용', value: 'ko-KR-InJoonNeural' }
-          )
+          .setName('목소리')
+          .setDescription('고르지 않으면 서버 기본 목소리를 씁니다')
+          .setRequired(false)
+          .addChoices(...VOICE_CHOICES)
       ),
     async execute(interaction) {
-      const name = interaction.options.getString('이름');
-      voiceByGuild.set(interaction.guildId, name);
-      // 한국어 전용 목소리는 일본어를 만나면 소리를 아예 내지 않습니다. 미리 알려줍니다.
-      const warn = name.includes('Multilingual')
-        ? ''
-        : '\n⚠️ 이 목소리는 한국어 전용입니다. 일본어가 섞이면 그 부분은 소리 없이 넘어가고,' +
-          ' 영어는 한국어 발음으로 읽습니다.';
-      await interaction.reply(`🗣️ 목소리를 **${name}** 로 바꿨습니다.${warn}`);
+      const picked = interaction.options.getString('목소리');
+
+      if (!picked) {
+        // 비우고 실행하면 내 설정을 지웁니다 (서버 기본값으로 돌아감).
+        const had = clearUserVoice(interaction.guildId, interaction.user.id);
+        const now = voiceFor(interaction.guildId, interaction.user.id);
+        return interaction.reply({
+          content: had
+            ? `🔄 내 목소리 설정을 지웠습니다. 이제 서버 기본값 **${voiceLabel(now)}** 를 씁니다.`
+            : `지금 서버 기본값 **${voiceLabel(now)}** 를 쓰고 있습니다.`,
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      setUserVoice(interaction.guildId, interaction.user.id, picked);
+      await interaction.reply({
+        content: `🗣️ 앞으로 내 글은 **${voiceLabel(picked)}** 로 읽습니다.${koreanOnlyWarning(picked)}`,
+        flags: MessageFlags.Ephemeral,
+      });
+    },
+  },
+
+  {
+    data: new SlashCommandBuilder()
+      .setName('목소리')
+      .setDescription('서버 기본 목소리를 바꿉니다 (개인 설정이 없는 사람에게 적용)')
+      .addStringOption((o) =>
+        o.setName('목소리').setDescription('서버 기본으로 쓸 목소리').setRequired(true).addChoices(...VOICE_CHOICES)
+      ),
+    async execute(interaction) {
+      const picked = interaction.options.getString('목소리');
+      setGuildVoice(interaction.guildId, picked);
+      await interaction.reply(
+        `🗣️ 서버 기본 목소리를 **${voiceLabel(picked)}** 로 바꿨습니다.` +
+          koreanOnlyWarning(picked) +
+          '\n(개인 목소리는 `/내목소리` 로 따로 정할 수 있습니다)'
+      );
     },
   },
 
   {
     data: new SlashCommandBuilder()
       .setName('목소리목록')
-      .setDescription('사용 가능한 한국어 목소리를 모두 봅니다'),
+      .setDescription('쓸 수 있는 목소리와 지금 내 설정을 봅니다'),
     async execute(interaction) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      try {
-        const voices = await listVoices('ko-');
-        const text = voices.map((v) => `- \`${v.shortName}\` (${v.gender})`).join('\n');
-        await interaction.editReply(`**한국어 목소리 목록**\n${text || '없음'}`);
-      } catch (err) {
-        await interaction.editReply(`목록을 가져오지 못했습니다: ${err.message}`);
-      }
+      const mine = userVoice(interaction.guildId, interaction.user.id);
+      const server = guildVoice(interaction.guildId) ?? config.tts.voice;
+
+      const lines = VOICES.map((v) => {
+        const marks = [];
+        if (v.value === mine) marks.push('👤 내 목소리');
+        if (v.value === server) marks.push('🏠 서버 기본');
+        return `• **${v.label}** — ${v.note}${marks.length ? `  ← ${marks.join(', ')}` : ''}`;
+      }).join('\n');
+
+      await interaction.reply({
+        content:
+          `**쓸 수 있는 목소리 ${VOICES.length}종**\n${lines}\n\n` +
+          '`/내목소리` 로 내 목소리만 바꿀 수 있습니다. 비우고 실행하면 서버 기본값으로 돌아갑니다.\n' +
+          '"다국어" 목소리는 영어·일본어가 섞여도 자연스럽게 읽습니다.',
+        flags: MessageFlags.Ephemeral,
+      });
     },
   },
 ];
+
+/** 한국어 전용 목소리를 골랐을 때만 붙이는 경고. */
+function koreanOnlyWarning(voice) {
+  if (!isKoreanOnly(voice)) return '';
+  return '\n⚠️ 이 목소리는 한국어 전용입니다. 일본어가 섞이면 그 부분은 소리 없이 넘어가고, 영어는 한국어 발음으로 읽습니다.';
+}

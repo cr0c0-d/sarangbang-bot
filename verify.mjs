@@ -22,11 +22,11 @@ const { initSettings } = await import('./src/settings.js');
 await initSettings();
 const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
-ok('명령어 28개 로드', allCommands.length === 28, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('명령어 29개 로드', allCommands.length === 29, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능']) {
+for (const need of ['채널설정', '채널확인', '채널해제', '재생', '핑', '나가기', '이전곡', '대기열제거', '순서이동', '대기열비우기', '타이머', '타이머목록', '알람등록', '기능', '내목소리']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -120,13 +120,26 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
 // (이 검사가 없어서 실재하지 않는 목소리 6개가 들어간 적이 있습니다)
 {
   const { listVoices } = await import('./src/tts/synth.js');
-  const real = new Set((await listVoices('ko-')).map((v) => v.shortName));
-  const cmd = allCommands.find((c) => c.data.toJSON().name === '목소리');
-  const choices = cmd.data.toJSON().options[0].choices.map((c) => c.value);
-  for (const v of choices) ok(`목소리 실재 ${v}`, real.has(v));
+  const { VOICES } = await import('./src/tts/voices.js');
+  const real = new Set((await listVoices('')).map((v) => v.shortName));
+  let missing = VOICES.filter((v) => !real.has(v.value));
+  ok(`목소리 ${VOICES.length}종 전부 실재`, missing.length === 0, missing.map((v) => v.value).join(','));
+  ok('목소리가 3종보다 많음 (다국어 확장)', VOICES.length > 3, String(VOICES.length));
+
   const { config } = await import('./src/config.js');
   ok('기본 목소리 실재', real.has(config.tts.voice), config.tts.voice);
   ok('기본 목소리가 다국어', config.tts.voice.includes('Multilingual'), config.tts.voice);
+
+  // 사람별 목소리
+  const st = await import('./src/settings.js');
+  const G = 'voiceguild', U = 'user1', U2 = 'user2';
+  ok('기본은 .env 값', st.voiceFor(G, U) === config.tts.voice);
+  st.setGuildVoice(G, 'ko-KR-SunHiNeural');
+  ok('서버 기본이 .env 를 덮음', st.voiceFor(G, U) === 'ko-KR-SunHiNeural');
+  st.setUserVoice(G, U, 'en-US-AvaMultilingualNeural');
+  ok('내 목소리가 서버 기본을 덮음', st.voiceFor(G, U) === 'en-US-AvaMultilingualNeural');
+  ok('다른 사람은 서버 기본 그대로', st.voiceFor(G, U2) === 'ko-KR-SunHiNeural');
+  ok('내 목소리 해제하면 서버 기본으로', st.clearUserVoice(G, U) && st.voiceFor(G, U) === 'ko-KR-SunHiNeural');
 }
 
 // 6c) GUILD_ID 를 쉼표 목록으로 읽는가 (여러 서버 지원)
@@ -384,6 +397,32 @@ ok('TTS 정제', got === '누군가 야 링크 봐 kek 굵게 ㅋㅋㅋ', JSON.s
     ok(`${file} 메시지 처리 차단`, fs.readFileSync(file, 'utf8').includes(`featureEnabled(message.guildId, '${key}')`));
   }
 
+}
+
+// 6q) 음악 재생 실패 자가복구 + 갤러리 패널
+{
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  ok('재생 실패 감지 함수', ga.includes('playedNothing()'));
+  ok('직접수신 실패 시 파이프로 재시도', ga.includes('forcePipe: true'));
+  ok('두 방식 다 실패하면 사용자에게 알림', ga.includes('재생에 실패했습니다'));
+
+  const ff = fs.readFileSync('./src/audio/ffmpeg.js', 'utf8');
+  ok('ffmpeg 오류를 호출부로 전달', ff.includes('onError?.(msg)'));
+
+  const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+  ok('구분자 기반 파싱 (줄 밀림 방지)', yt.includes("const SEP = '|::|'"));
+  ok('재생주소 http 검증', yt.includes('isHttp(na(p[5]))'));
+  ok('직접수신 끄는 스위치', yt.includes('MUSIC_DIRECT_STREAM'));
+  ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
+  ok('미리추출: 대기열 변경 확인', ga.includes('this.queue.includes(next)'));
+
+  const ip = fs.readFileSync('./src/images/panel.js', 'utf8');
+  ok('갤러리 패널: 알림 억제', ip.includes('MessageFlags.SuppressNotifications'));
+  ok('갤러리 패널: 맨 아래 확인', ip.includes('isAtBottom'));
+  ok('갤러리 패널: 밀려나면 다시 띄움', ip.includes('existing.delete()'));
+  ok('갤러리 패널: 사진 없으면 안 띄움', ip.includes('files.length === 0'));
+  ok('갤러리 패널: 링크 버튼', ip.includes('ButtonStyle.Link'));
+  ok('이미지 저장 후 패널 호출', fs.readFileSync('./src/images/commands.js', 'utf8').includes('showGalleryPanel('));
 }
 
 // 7) 유튜브 링크 감지

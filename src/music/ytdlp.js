@@ -201,32 +201,46 @@ export async function getTracks(input) {
       .filter((t) => t.url);
   }
 
-  // 단일 영상 / 검색: --print 로 필요한 값만 받습니다. 한 줄에 하나씩 순서대로 나옵니다.
-  // %(urls)s 를 마지막에 두는 이유: 혹시 여러 줄이 나와도 앞의 항목들이 밀리지 않게.
-  const fields = ['%(title)s', '%(duration)s', '%(thumbnail)s', '%(uploader)s', '%(webpage_url)s', '%(urls)s'];
+  // 단일 영상 / 검색: --print 로 필요한 값만 받습니다.
+  //
+  // ⚠️ 항목을 **한 줄에 구분자로** 붙여서 받습니다. 예전에는 항목당 한 줄씩 받았는데,
+  //    출력에 줄이 하나라도 더 끼면 순서가 통째로 밀려서 엉뚱한 값이 재생 주소로 들어갔습니다.
+  //    (그러면 재생이 즉시 실패하고 "재생 중인 곡 없음" 으로 돌아갑니다)
+  const SEP = '|::|';
+  const template = ['%(title)s', '%(duration)s', '%(thumbnail)s', '%(uploader)s', '%(webpage_url)s', '%(urls)s'].join(SEP);
+
   const out = await run([
     '-f', AUDIO_FORMAT,
     '--no-warnings',
     '--ignore-config',
     '--no-playlist',
-    ...fields.flatMap((f) => ['--print', f]),
+    '--print', template,
     ...extraArgs(),
     target,
   ]);
 
-  const lines = out.split('\n').map((l) => l.trim());
+  const line = out.split('\n').find((l) => l.includes(SEP));
+  if (!line) throw new Error('영상 정보를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+
+  const p = line.split(SEP).map((s) => s.trim());
   const na = (v) => (!v || v === 'NA' ? null : v);
-  const url = na(lines[4]);
-  if (!url) throw new Error('영상 정보를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+  const isHttp = (v) => typeof v === 'string' && /^https?:\/\//i.test(v);
+
+  const url = na(p[4]);
+  if (!isHttp(url)) throw new Error('영상 주소를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+
+  // 재생 주소가 http 로 시작하지 않으면 믿지 않습니다.
+  // null 이면 재생할 때 yt-dlp 로 다시 뽑습니다 (느리지만 확실).
+  const streamUrl = isHttp(na(p[5])) ? na(p[5]).split(/\s+/)[0] : null;
 
   return [
     {
-      title: na(lines[0]) ?? '제목 없음',
-      duration: Number.isFinite(Number(lines[1])) ? Number(lines[1]) : null,
-      thumbnail: na(lines[2]),
-      uploader: na(lines[3]),
+      title: na(p[0]) ?? '제목 없음',
+      duration: Number.isFinite(Number(p[1])) ? Number(p[1]) : null,
+      thumbnail: isHttp(na(p[2])) ? na(p[2]) : null,
+      uploader: na(p[3]),
       url,
-      streamUrl: na(lines[5]),
+      streamUrl,
       extractedAt: Date.now(),
     },
   ];
@@ -245,8 +259,12 @@ export function hasFreshStreamUrl(track) {
  *   input 이 문자열이면 ffmpeg 이 그 주소를 직접 받으면 됩니다 (yt-dlp 재추출 없음 = 빠름).
  *   Readable 이면 yt-dlp 가 흘려보내는 스트림입니다 (주소가 만료됐거나 없을 때).
  */
-export function createSource(track) {
-  if (hasFreshStreamUrl(track)) {
+export function createSource(track, { forcePipe = false } = {}) {
+  // .env 로 직접 수신을 아예 끌 수 있습니다.
+  // 서버 환경에 따라 재생 주소가 거부될 수 있어, 문제가 생기면 이걸로 즉시 되돌립니다.
+  const allowDirect = (process.env.MUSIC_DIRECT_STREAM ?? 'true').toLowerCase() !== 'false';
+
+  if (!forcePipe && allowDirect && hasFreshStreamUrl(track)) {
     // 이미 뽑아둔 주소를 그대로 씁니다. 추출을 한 번 건너뛰므로 약 2.8초가 절약됩니다.
     return { input: track.streamUrl, remote: true, kill: () => {} };
   }

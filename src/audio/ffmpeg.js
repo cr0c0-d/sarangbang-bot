@@ -13,7 +13,7 @@ import ffmpegPath from 'ffmpeg-static';
  * @returns {{ stream: import('node:stream').Readable, kill: () => void }}
  */
 export function toOggOpus(input, opts = {}) {
-  const { volume = 1, seekSec = 0, remote = false } = opts;
+  const { volume = 1, seekSec = 0, remote = false, onError = null } = opts;
   const isStream = typeof input !== 'string';
 
   const args = ['-hide_banner', '-loglevel', 'error'];
@@ -62,8 +62,12 @@ export function toOggOpus(input, opts = {}) {
     if (stderr.length > 4000) stderr = stderr.slice(-2000);
   });
   child.on('close', (code) => {
-    if (code !== 0 && code !== null && stderr.trim()) {
-      console.error('[ffmpeg]', stderr.trim().split('\n').slice(-3).join(' | '));
+    // 실패했는데 아무 데도 안 알리면 "곡이 조용히 사라지는" 증상이 됩니다.
+    // 여기서 잡아 호출한 쪽(guild-audio)이 사용자에게 알릴 수 있게 넘겨줍니다.
+    if (code !== 0 && code !== null) {
+      const msg = stderr.trim().split('\n').slice(-3).join(' | ') || `ffmpeg 종료 코드 ${code}`;
+      console.error('[ffmpeg]', msg);
+      onError?.(msg);
     }
   });
 

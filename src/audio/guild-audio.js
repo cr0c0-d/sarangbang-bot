@@ -16,7 +16,7 @@ import {
   NoSubscriberBehavior,
 } from '@discordjs/voice';
 import { config } from '../config.js';
-import { createSource } from '../music/ytdlp.js';
+import { createSource, hasFreshStreamUrl, getTracks } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
 import { showPanel } from '../music/panel.js';
 
@@ -57,6 +57,9 @@ export class GuildAudio {
     /** 다음 곡으로 넘어갈 때의 의도. requestPlay() 참고 */
     this.nextIntent = null;
     this.current = null;
+    this.currentResource = null;   // 실제로 얼마나 재생됐는지 확인용
+    this.usedDirect = false;       // 이번 곡을 "직접 수신" 으로 틀었는지
+    this.lastStreamError = null;   // ffmpeg 이 남긴 마지막 오류
     this.killCurrent = null;
     this.loop = false;
     this.volume = 1;
@@ -209,17 +212,30 @@ export class GuildAudio {
 
     try {
       // 이미 뽑아둔 재생 주소가 살아 있으면 ffmpeg 이 직접 받습니다 (yt-dlp 재추출 생략).
-      const src = createSource(item.track);
-      const { stream, kill } = toOggOpus(src.input, { volume: this.volume, remote: src.remote });
+      // item.forcePipe 는 "직접 받기가 실패해서 다시 시도하는 중" 이라는 뜻입니다.
+      const src = createSource(item.track, { forcePipe: Boolean(item.forcePipe) });
+      this.usedDirect = src.remote;
+      this.lastStreamError = null;
+
+      const { stream, kill } = toOggOpus(src.input, {
+        volume: this.volume,
+        remote: src.remote,
+        onError: (msg) => {
+          this.lastStreamError = msg;
+        },
+      });
       this.killCurrent = () => {
         kill();
         src.kill();
       };
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
+      this.currentResource = resource;
       this.musicPlayer.play(resource);
       // 텍스트 알림 대신 버튼이 달린 제어판을 보여줍니다. (기존 제어판이 있으면 수정)
       showPanel(this, this.textChannel);
+      // 지금 곡을 트는 동안 다음 곡 주소를 미리 뽑아둡니다 → 곡 전환이 즉시.
+      this.prefetchNext();
     } catch (err) {
       console.error('[music] 스트림 생성 실패:', err);
       this.notify('⚠️ **' + item.track.title + '** 을(를) 재생할 수 없어 건너뜁니다.\n' + err.message);
@@ -227,10 +243,77 @@ export class GuildAudio {
     }
   }
 
+  /**
+   * 대기열의 다음 곡 주소를 **미리** 뽑아둡니다.
+   *
+   * 왜: yt-dlp 는 켜지기만 해도 약 1초가 걸리고(PyInstaller 번들), 유튜브 응답까지
+   * 합치면 곡당 약 2.7초입니다. 이걸 곡이 끝난 뒤에 하면 그 시간만큼 조용해집니다.
+   * 지금 곡을 트는 동안 미리 해두면 **곡 전환이 사실상 즉시**가 됩니다.
+   * (첫 곡은 어쩔 수 없이 기다려야 합니다)
+   */
+  prefetchNext() {
+    const next = this.queue[0];
+    if (!next || next.prefetching || hasFreshStreamUrl(next.track)) return;
+
+    next.prefetching = true;
+    getTracks(next.track.url)
+      .then(([fresh]) => {
+        // 미리 뽑는 사이에 대기열이 바뀌었을 수 있으니 아직 그 자리에 있는지 확인합니다.
+        if (fresh?.streamUrl && this.queue.includes(next)) {
+          next.track.streamUrl = fresh.streamUrl;
+          next.track.extractedAt = fresh.extractedAt;
+        }
+      })
+      .catch(() => {
+        // 미리 뽑기는 실패해도 괜찮습니다. 재생할 때 정상 경로로 다시 시도합니다.
+      })
+      .finally(() => {
+        next.prefetching = false;
+      });
+  }
+
+  /**
+   * 방금 끝난 곡이 사실은 **재생되지 못한 것**인지 판단합니다.
+   *
+   * 증상: 대기열에 들어가자마자 사라지고 아무 소리도 안 남. 오류 메시지도 없음.
+   * 원인은 보통 재생 주소가 거부되는 것인데(서버 환경에 따라 다름), 조용히 실패하면
+   * 사용자는 영영 원인을 알 수 없습니다. 그래서 (1) 파이프 방식으로 자동 재시도하고,
+   * (2) 그것도 실패하면 **디스코드에 이유를 알립니다.**
+   */
+  playedNothing() {
+    const played = this.currentResource?.playbackDuration ?? 0;
+    const trackLen = this.current?.track?.duration ?? 0;
+    // 3초 미만만 재생됐는데 원곡이 그보다 길면 실패로 봅니다.
+    return played < 3000 && (trackLen === 0 || trackLen > 5);
+  }
+
   onTrackEnd() {
     if (this.destroyed) return;
     const intent = this.nextIntent ?? 'auto';
     this.nextIntent = null;
+
+    // 사용자가 넘긴 게 아니라 "스스로 끝난" 경우에만 실패인지 따집니다.
+    if (intent === 'auto' && this.current && this.playedNothing()) {
+      const item = this.current;
+
+      if (this.usedDirect && !item.forcePipe) {
+        // 재생 주소가 거부된 것으로 보입니다. 느리지만 확실한 방식으로 다시 시도합니다.
+        console.warn(`[music] 직접 수신 실패 → yt-dlp 방식으로 재시도: ${item.track.title}`);
+        this.current = null;
+        this.queue.unshift({ ...item, forcePipe: true });
+        this.playNext('auto');
+        return;
+      }
+
+      // 두 방식 다 실패했습니다. 이제는 조용히 넘어가면 안 됩니다.
+      console.error(`[music] 재생 실패: ${item.track.title} ${this.lastStreamError ?? ''}`);
+      this.notify(
+        `⚠️ **${item.track.title}** 재생에 실패했습니다.\n` +
+          (this.lastStreamError ? `\`${this.lastStreamError.slice(0, 300)}\`\n` : '') +
+          '유튜브가 서버를 막고 있을 수 있습니다. 계속되면 `npm run update-ytdlp` 를 해보세요.'
+      );
+      this.current = null;
+    }
 
     // 이전곡 요청은 대기열이 비어 있어도 처리해야 합니다 (기록에서 꺼내오므로).
     if (intent === 'previous' || this.queue.length > 0 || (this.loop && this.current)) {

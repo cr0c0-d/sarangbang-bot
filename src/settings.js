@@ -99,6 +99,45 @@ export function featureStates(guildId) {
   return Object.fromEntries(Object.keys(FEATURES).map((k) => [k, featureEnabled(guildId, k)]));
 }
 
+// ── TTS 목소리 (사람마다 다르게) ──────────────────────────────
+//
+// 우선순위: 내가 정한 목소리 > 서버 기본 목소리 > .env 기본값
+// 예전에는 서버 목소리를 메모리에만 뒀더니 재시작하면 초기화됐습니다. 이제 저장합니다.
+
+export function guildVoice(guildId) {
+  return store[guildId]?.voice ?? null;
+}
+
+export function setGuildVoice(guildId, voice) {
+  store[guildId] ??= {};
+  store[guildId].voice = voice;
+  save();
+}
+
+export function userVoice(guildId, userId) {
+  return store[guildId]?.userVoices?.[userId] ?? null;
+}
+
+export function setUserVoice(guildId, userId, voice) {
+  store[guildId] ??= {};
+  store[guildId].userVoices ??= {};
+  store[guildId].userVoices[userId] = voice;
+  save();
+}
+
+export function clearUserVoice(guildId, userId) {
+  if (!store[guildId]?.userVoices?.[userId]) return false;
+  delete store[guildId].userVoices[userId];
+  if (Object.keys(store[guildId].userVoices).length === 0) delete store[guildId].userVoices;
+  save();
+  return true;
+}
+
+/** 이 사람의 글을 읽을 때 쓸 목소리. */
+export function voiceFor(guildId, userId) {
+  return userVoice(guildId, userId) ?? guildVoice(guildId) ?? config.tts.voice;
+}
+
 export async function initSettings() {
   await fs.mkdir(config.dataDir, { recursive: true });
   try {

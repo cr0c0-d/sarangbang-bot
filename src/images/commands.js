@@ -12,6 +12,7 @@ import {
   baseDir,
 } from './store.js';
 import { imageChannelAllowed, featureEnabled } from '../settings.js';
+import { showGalleryPanel } from './panel.js';
 
 /**
  * 감시 대상 채널에 올라온 이미지를 저장합니다.
@@ -33,6 +34,8 @@ export async function handleImageMessage(message) {
     if (saved.length === 0) return false;
     await message.react('✅').catch(() => {});
     console.log(`[images] ${saved.length}장 저장 → ${folder}`);
+    // 갤러리 버튼을 채팅방 맨 아래로 올립니다. (매번 /갤러리 를 치지 않아도 되도록)
+    showGalleryPanel(message.channel, folder);
   } catch (err) {
     console.error('[images] 저장 실패:', err);
     await message.react('⚠️').catch(() => {});
