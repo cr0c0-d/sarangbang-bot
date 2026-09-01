@@ -202,6 +202,11 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 ㅋㅋㅋ', JSON.strin
   ok('실제 차단 메시지는 잡아냄',
     friendlyError('ERROR: Sign in to confirm you are not a bot').includes('봇으로 판단'));
 
+  ok('n challenge 실패는 JS런타임 안내로',
+    friendlyError('WARNING: n challenge solving failed: Ensure you have a supported JavaScript runtime').includes('자바스크립트 런타임'));
+  ok('n challenge 안내가 차단 안내보다 우선',
+    !friendlyError('n challenge solving failed
+ERROR: The page needs to be reloaded.').includes('일시적으로'));
   ok('일시적 오류를 한국어로 안내',
     friendlyError('ERROR: [youtube] abc: The page needs to be reloaded.').includes('일시적으로'));
 

@@ -158,6 +158,15 @@ export function friendlyError(stderr) {
   if (s.includes('sign in to confirm')) {
     return '유튜브가 이 서버를 봇으로 판단해 차단했습니다. .env 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
   }
+  // n challenge(서명 계산)는 자바스크립트 런타임이 있어야 풀립니다.
+  // 이게 실패하면 곧바로 "The page needs to be reloaded" 가 뒤따라 나오므로
+  // **차단보다 먼저** 검사해야 원인을 제대로 짚습니다.
+  if (s.includes('n challenge solving failed') || s.includes('javascript runtime')) {
+    return (
+      '유튜브 서명 계산에 필요한 자바스크립트 런타임이 없습니다.\n' +
+      '`.env` 에 `YTDLP_JS_RUNTIME=false` 가 있다면 지우거나 `true` 로 바꾸고 재시작해주세요.'
+    );
+  }
   if (s.includes('the page needs to be reloaded')) {
     return '유튜브가 일시적으로 요청을 거부했습니다. 잠시 뒤 다시 시도해보세요. (계속 그러면 `npm run update-ytdlp`)';
   }
