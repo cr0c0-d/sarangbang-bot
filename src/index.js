@@ -135,7 +135,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 
   // 버튼·드롭다운. customId 앞머리로 어느 기능인지 구분합니다.
-  if (interaction.isButton() || interaction.isStringSelectMenu()) {
+  // ⚠️ **`isAnySelectMenu()` 를 `isStringSelectMenu()` 로 좁히지 말 것.**
+  //    드롭다운은 종류가 여럿입니다 — 글자(String) · 채널 · 사람 · 역할 · 멘션.
+  //    String 만 보면 **채널 고르기 드롭다운이 조용히 무시되고**, 디스코드가
+  //    "봇이 적시에 응답하지 않았어요" 를 띄웁니다. (일정 카테고리 고르기에서 실제로 겪음)
+  if (interaction.isButton() || interaction.isAnySelectMenu()) {
     const isMusic = interaction.customId.startsWith('m:');
     const isTimer = interaction.customId.startsWith('t:');
     const isFeature = interaction.customId.startsWith('f:');

@@ -999,6 +999,13 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('고른 뒤 바로 만들기 창으로', pl.includes("action === 'cat'") && pl.includes('buildCreateChannelModal()'));
   ok('카테고리 고르기는 일정이 없어도 동작', pl.indexOf("action === 'cat'") < pl.indexOf('const plan = getPlan(interaction.channelId);\n  if (!plan)'));
 
+  // ★ 드롭다운은 종류가 여럿입니다 (글자·채널·사람·역할·멘션).
+  //   isStringSelectMenu() 로 좁히면 **채널 고르기가 조용히 무시되고**
+  //   "봇이 적시에 응답하지 않았어요" 가 뜹니다. 실제로 겪은 버그입니다.
+  const ixSel = fs.readFileSync('./src/index.js', 'utf8');
+  ok('모든 종류의 드롭다운을 받음', ixSel.includes('interaction.isAnySelectMenu()'));
+  ok('String 만 보지 않음', !ixSel.includes('interaction.isButton() || interaction.isStringSelectMenu()'));
+
   // 자동 감지를 하지 않는 것이 요구사항입니다.
   ok('메시지 자동 감지 안 함', !fs.readFileSync('./src/index.js', 'utf8').includes('handlePlanMessage'));
   ok('우클릭으로 등록', pl.includes('ContextMenuCommandBuilder') && pl.includes('ApplicationCommandType.Message'));
