@@ -164,6 +164,8 @@ export const config = {
     // Hyunsu 는 영어/일본어/중국어를 전부 정상적으로 읽습니다. docs/ARCHITECTURE.md 3.4절 참고.
     voice: str('TTS_VOICE', 'ko-KR-HyunsuMultilingualNeural'),
     maxChars: num('TTS_MAX_CHARS', 200),
+    // ㅋㅋㅋ 같은 반복을 몇 개까지 읽을지. 웃음 길이도 표현이라 너무 짧으면 심심합니다.
+    maxRepeat: Math.max(1, num('TTS_MAX_REPEAT', 6)),
     readAuthor: bool('TTS_READ_AUTHOR', false),
   },
 

@@ -177,8 +177,13 @@ export function cleanText(message, maxChars) {
   // 마크다운 기호 제거
   text = text.replace(/[*_~`|>]/g, '');
 
-  // ㅋㅋㅋㅋㅋㅋ, ㅎㅎㅎㅎ, !!!!! 같은 반복은 3개까지만
-  text = text.replace(/(.)\1{2,}/g, '$1$1$1');
+  // ㅋㅋㅋㅋㅋㅋ, ㅎㅎㅎㅎ, !!!!! 같은 반복은 정해둔 개수까지만 읽습니다.
+  //
+  // 왜 자르나: 20개를 그대로 읽으면 그 소리만 한참 납니다. 다만 **웃음의 길이도
+  // 표현**이라 너무 짧게 자르면 심심합니다. 소유자가 3 → 6 으로 늘렸습니다.
+  // (`TTS_MAX_REPEAT`)
+  const maxRepeat = config.tts.maxRepeat;
+  text = text.replace(/(.)\1+/g, (run, ch) => (run.length > maxRepeat ? ch.repeat(maxRepeat) : run));
 
   // 낱자(자음·모음)를 읽을 수 있는 글자로. 안 하면 무음이 됩니다 — speakJamo 주석 참고.
   text = speakJamo(text, extra);

@@ -139,7 +139,7 @@ const { cleanText } = await import('./src/tts/index.js');
 const g = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } };
 const got = cleanText({ content: '<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵게** ㅋㅋㅋㅋㅋ', guild: g }, 200);
 // 소유자 요청: 링크는 "링크" 가 아니라 **"링크를 보냈어요"** 로 읽습니다.
-ok('TTS 정제', got === '누군가 야 링크를 보냈어요 봐 굵게 크크크', JSON.stringify(got));
+ok('TTS 정제', got === '누군가 야 링크를 보냈어요 봐 굵게 크크크크크', JSON.stringify(got));
 ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com/a', guild: g }, 200) === '링크를 보냈어요');
 
 // 6-1) 축약어 등록·관리 — 서버마다 쓰는 말이 달라서 코드를 고쳐 배포할 수 없습니다.
@@ -245,9 +245,16 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('커스텀 이모지도 빼고 읽음', say('안녕하세요 <:kekw:123> 반가워요') === '안녕하세요 반가워요');
   ok('이모지 이름을 읽지 않음', !say('<:kekw:123> 안녕').includes('kekw'));
   // ★ Edge TTS 는 낱자만 이어진 글에 소리를 아예 안 냅니다 (실측: ㅋㅋ 부터 0바이트).
-  //   그래서 3개로 줄인 뒤 **발음 나는 글자로 바꿔야** 읽힙니다.
-  ok('ㅋㅋㅋㅋㅋ → 크크크 (3개로 줄이고 글자로)', say('ㅋㅋㅋㅋㅋ') === '크크크', say('ㅋㅋㅋㅋㅋ'));
-  ok('ㅎ · ㅠ · ㅜ 도 마찬가지', say('ㅎㅎ') === '흐흐' && say('ㅠㅠ') === '흑흑' && say('ㅜㅜㅜㅜ') === '흑흑흑',
+  //   그래서 개수를 줄인 뒤 **발음 나는 글자로 바꿔야** 읽힙니다.
+  //
+  //   반복 상한은 TTS_MAX_REPEAT (기본 6). 소유자가 3 → 6 으로 늘렸습니다 —
+  //   웃음의 길이도 표현이라 3개로 자르면 심심합니다.
+  const { config: cfg } = await import('./src/config.js');
+  ok('반복 상한은 설정값 (기본 6)', cfg.tts.maxRepeat === 6, `${cfg.tts.maxRepeat}`);
+  ok('상한보다 짧으면 그대로', say('ㅋㅋㅋ') === '크크크', say('ㅋㅋㅋ'));
+  ok('상한까지는 다 읽음', say('ㅋ'.repeat(6)) === '크'.repeat(6), say('ㅋ'.repeat(6)));
+  ok('상한을 넘으면 잘림', say('ㅋ'.repeat(20)) === '크'.repeat(6), say('ㅋ'.repeat(20)));
+  ok('ㅎ · ㅠ · ㅜ 도 마찬가지', say('ㅎㅎ') === '흐흐' && say('ㅠㅠ') === '흑흑' && say('ㅜㅜㅜㅜ') === '흑흑흑흑',
     `${say('ㅎㅎ')} / ${say('ㅠㅠ')} / ${say('ㅜㅜㅜㅜ')}`);
   ok('글에 섞인 낱자도 바뀜', say('안녕 ㅋㅋ') === '안녕 크크', say('안녕 ㅋㅋ'));
   ok('낱자를 지워버리지는 않음', say('ㅋㅋㅋㅋㅋ') !== '');
