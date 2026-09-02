@@ -924,12 +924,37 @@ export class GuildAudio {
 
   // ── 정리 ────────────────────────────────────────────────
 
+  /**
+   * 지금 들어가 있는 음성채널에 **사람이 한 명이라도 있는가.** (봇은 안 셉니다)
+   *
+   * 채널을 못 찾으면 false 입니다 — 그때는 붙잡고 있을 이유가 없습니다.
+   */
+  hasHumanListener() {
+    const channelId = this.connection?.joinConfig?.channelId;
+    if (!channelId) return false;
+    const channel = this.guild.channels?.cache?.get(channelId);
+    if (!channel?.members) return false;
+    return channel.members.some((m) => !m.user?.bot);
+  }
+
+  /**
+   * 할 일이 없어지면 음성채널에서 나갈 준비를 합니다.
+   *
+   * ⚠️ **사람이 남아 있으면 나가지 않습니다.** (소유자 요청)
+   *   망고는 읽어주기·타이머 때문에 들어가 있는데, 조용한 시간이 5분 넘었다고
+   *   나가버리면 대화 중에 갑자기 사라집니다. 다시 부르는 것도 사람 몫이 됩니다.
+   *   아무도 없어지면 `VoiceStateUpdate` 쪽에서 알아서 내보내므로,
+   *   이 타이머는 **아무도 없는데 그 이벤트를 놓친 경우**의 보험입니다.
+   */
   scheduleLeave() {
     this.cancelLeaveTimer();
     const sec = config.music.leaveAfterSec;
     if (!sec || sec <= 0) return;
     this.leaveTimer = setTimeout(() => {
-      if (!this.isPlaying && this.queue.length === 0) this.destroy();
+      this.leaveTimer = null;
+      if (this.isPlaying || this.queue.length > 0) return;
+      if (this.hasHumanListener()) return; // 사람이 있으면 계속 남아 있습니다
+      this.destroy();
     }, sec * 1000);
   }
 

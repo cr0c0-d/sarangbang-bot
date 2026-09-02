@@ -703,6 +703,19 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
       ));
   }
   ok('제한시간을 늘려가며 재시도', yt.includes('timeouts = timeoutLadder()') && yt.includes('timeouts[i - 1]'));
+
+  // ★ 같은 yt-dlp 인데 손으로 돌리면 되고 봇에서만 안 되는 일이 있었습니다.
+  //   봇이 덧붙이는 인자(--js-runtimes·--cookies) 때문입니다. 실패하면 그대로 남깁니다.
+  {
+    ok('끝내 실패하면 실제 명령을 남김', yt.includes('[music] 실패한 명령:'));
+    // 쿠키는 경로만 넘기므로 내용이 새지 않습니다. 내용을 인자로 넘기면 안 됩니다.
+    ok('쿠키는 경로만 넘김', yt.includes("args.push('--cookies', cookies)") && !yt.includes('readFileSync(cookies'));
+    // 복사해 붙여넣어 그대로 돌릴 수 있어야 합니다.
+    const { quoteArgForLog } = await import('./src/music/ytdlp.js');
+    ok('공백이 든 인자는 따옴표로', quoteArgForLog('a b') === "'a b'");
+    ok('평범한 인자는 그대로', quoteArgForLog('--no-warnings') === '--no-warnings');
+    ok('따옴표가 든 인자도 안전', quoteArgForLog("it's") === "'it'\\''s'", quoteArgForLog("it's"));
+  }
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
 
   // ★ 첫 시도 제한시간이 고정 20초였습니다. 소유자 서버는 기동만 5.7초, 추출까지 20초라
@@ -1648,6 +1661,17 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // (2) 곡이 다 끝났는데 제어판이 "지금 재생 중" 으로 굳던 버그
   ok('대기열이 비면 제어판 갱신', ga.includes('if (!item) {') && ga.includes('this.refreshPanel();\n      this.scheduleLeave();'));
   ok('곡이 끝나도 제어판 갱신', ga.includes('this.current = null;\n      this.refreshPanel();'));
+  // ★ 소유자 요청: "사람이 한명이라도 음성채팅에 있으면 계속 남아있는걸로"
+  //   망고는 읽어주기·타이머 때문에 들어가 있는데, 조용하다고 5분 뒤에 나가버리면
+  //   대화 중에 갑자기 사라지고 다시 부르는 것도 사람 몫이 됩니다.
+  ok('사람이 있으면 나가지 않음', ga.includes('if (this.hasHumanListener()) return;'));
+  ok('봇은 사람으로 세지 않음', ga.includes('channel.members.some((m) => !m.user?.bot)'));
+  // 아무도 없어지면 VoiceStateUpdate 가 바로 내보냅니다. 그 길은 그대로 있어야 합니다.
+  ok('아무도 없으면 그때 나감',
+    fs.readFileSync('./src/index.js', 'utf8').includes("humans === 0"));
+  ok('설정 설명에도 적어둠',
+    fs.readFileSync('./.env.example', 'utf8').includes('사람이 남아 있으면 이 시간이 지나도'));
+
   ok('나갈 때 제어판 삭제', ga.includes('panel.delete()') && ga.includes('forgetPanel(MUSIC'));
 
   // (3) 우클릭 → "연결 끊기" 로 내보낸 경우 (명령어를 거치지 않는 경로)

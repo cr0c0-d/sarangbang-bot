@@ -107,6 +107,15 @@ export function isTransient(text) {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+/** 로그에 찍은 명령을 **그대로 복사해 붙여넣을 수 있게** 따옴표를 씌웁니다. */
+export function quoteArgForLog(a) {
+  return quoteArg(a);
+}
+
+function quoteArg(a) {
+  return /[\s|'"$`\\*?()[\]{}<>&;]/.test(a) ? `'${String(a).replace(/'/g, `'\\''`)}'` : a;
+}
+
 function runOnce(args, timeoutMs) {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now();
@@ -284,6 +293,12 @@ async function runSerialized(args, { timeouts = timeoutLadder() } = {}) {
             '\n· 클라우드 서버(Oracle·AWS 등)에서 돌리고 있다면 **유튜브가 그 서버 IP를 차단**한 것일 수 있습니다.' +
             '\n· `.env.music` 의 `YTDLP_COOKIES_FILE` 설정이 필요합니다. (README의 "유튜브가 막힐 때")' +
             '\n· 진단: 서버에서 `./bin/yt-dlp --simulate -v <링크>` 를 실행해 `LOGIN_REQUIRED` 가 있는지 보세요.';
+        // ⚠️ **실제로 돌린 명령을 그대로 남깁니다.**
+        //    같은 yt-dlp 라도 봇이 덧붙이는 인자(--js-runtimes·--cookies) 때문에
+        //    손으로 돌릴 때는 되고 봇에서만 안 되는 일이 실제로 있었습니다.
+        //    그때 이 줄이 없으면 인자를 하나씩 짐작해 재구성해야 합니다.
+        //    (쿠키는 **경로만** 넘기므로 내용이 새지 않습니다)
+        console.error(`[music] 실패한 명령: ${YTDLP} ${args.map(quoteArg).join(' ')}`);
         throw err;
       }
       console.warn(
