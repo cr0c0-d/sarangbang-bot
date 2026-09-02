@@ -6,7 +6,25 @@ import path from 'node:path';
 import { ROOT } from '../config.js';
 import { userError } from '../user-error.js';
 
-const YTDLP = path.join(ROOT, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+/**
+ * yt-dlp 실행 파일.
+ *
+ * 기본은 `bin/` 에 내려받은 **공식 바이너리**입니다. 그런데 그건 PyInstaller 로 묶인
+ * 파일이라 **실행할 때마다 파이썬 런타임을 통째로 풉니다.** 곡을 틀 때마다 그 비용이
+ * 그대로 깔립니다 — 소유자 서버(1코어 ARM) 실측 **3.1~5.7초**, 집 PC 는 1.6초.
+ *
+ * pip 로 설치하면 푸는 과정이 없어 훨씬 빨리 뜹니다. 그때 그 경로를
+ * `.env.music` 의 `YTDLP_PATH` 에 적으면 됩니다.
+ * 봇이 켜질 때 기동 시간을 재서 로그에 찍으므로 **바꾼 효과가 바로 보입니다.**
+ */
+const YTDLP =
+  (process.env.YTDLP_PATH ?? '').trim() ||
+  path.join(ROOT, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
+
+/** 어느 yt-dlp 를 쓰고 있는지. (켤 때 로그에 찍습니다) */
+export function ytdlpPath() {
+  return YTDLP;
+}
 
 // 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다.
 // yt-dlp 는 **노래하는 망고만** 돌리므로, 이 값들의 제자리는 `.env.music` 입니다.

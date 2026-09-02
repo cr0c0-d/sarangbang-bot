@@ -672,6 +672,20 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('캐시본을 복사해서 반환 (오염 방지)',
     yt.includes('return withTotal(cached);') && yt.includes('list.map((t) => ({ ...t }))'));
   ok('JS런타임 끄는 스위치', yt.includes('YTDLP_JS_RUNTIME'));
+
+  // ★ 느린 서버에서 가장 큰 고정 비용은 yt-dlp 기동입니다. 공식 바이너리는
+  //   실행할 때마다 파이썬을 풉니다 (실측 3.1~5.7초). pip 로 깐 것을 가리킬 수 있어야 합니다.
+  {
+    const { ytdlpPath } = await import('./src/music/ytdlp.js');
+    ok('yt-dlp 경로를 바꿀 수 있음', yt.includes("process.env.YTDLP_PATH"));
+    ok('기본은 bin/ 의 바이너리', ytdlpPath().includes('bin'));
+    ok('어느 것을 쓰는지 로그에 찍음',
+      fs.readFileSync('./src/index.js', 'utf8').includes('${ytdlpPath()}'));
+    // 다른 yt-dlp 를 쓰는데 bin/ 을 갱신하면 봇이 쓰는 것은 안 바뀝니다.
+    ok('갱신 스크립트가 그 사실을 알림',
+      fs.readFileSync('./scripts/update-ytdlp.mjs', 'utf8').includes('YTDLP_PATH'));
+    ok('.env.music.example 에 설명', fs.readFileSync('./.env.music.example', 'utf8').includes('YTDLP_PATH='));
+  }
   ok('제한시간을 늘려가며 재시도', yt.includes('timeouts = timeoutLadder()') && yt.includes('timeouts[i - 1]'));
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
 

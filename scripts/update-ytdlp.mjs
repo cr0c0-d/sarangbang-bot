@@ -32,6 +32,17 @@ function assetFor(platform, arch) {
   throw new Error(`지원하지 않는 플랫폼입니다: ${platform}/${arch}`);
 }
 
+// YTDLP_PATH 로 다른 yt-dlp(예: pip 로 깐 것)를 쓰고 있다면, 여기서 bin/ 을 갱신해봐야
+// **봇이 쓰는 것은 안 바뀝니다.** 조용히 엉뚱한 파일을 새로 받는 대신 어떻게 갱신하는지 알려줍니다.
+const custom = (process.env.YTDLP_PATH ?? '').trim();
+if (custom) {
+  console.log(`이 봇은 bin/ 이 아니라 아래 yt-dlp 를 씁니다 (.env* 의 YTDLP_PATH):\n  ${custom}\n`);
+  console.log('pip 로 깐 것이라면 이렇게 갱신하세요:');
+  console.log(`  ${path.dirname(custom)}/pip install -U yt-dlp\n`);
+  console.log('bin/ 쪽을 굳이 새로 받으시려면 YTDLP_PATH 를 잠시 비우고 다시 실행하세요.');
+  process.exit(0);
+}
+
 const asset = assetFor(process.platform, process.arch);
 const url = `https://github.com/yt-dlp/yt-dlp/releases/latest/download/${asset.name}`;
 const dest = path.join(BIN_DIR, asset.file);

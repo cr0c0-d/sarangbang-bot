@@ -20,7 +20,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { measureStartup as measureYtdlpStartup } from './music/ytdlp.js';
+import { measureStartup as measureYtdlpStartup, ytdlpPath } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
@@ -95,12 +95,18 @@ client.once(Events.ClientReady, (c) => {
   if (inRole('music')) {
     measureYtdlpStartup().then((sec) => {
       if (sec === null) return console.warn('   yt-dlp 를 실행하지 못했습니다. `npm run update-ytdlp` 로 다시 받아보세요.');
-      console.log(`   yt-dlp 기동 ${sec.toFixed(1)}초 — 곡을 틀 때마다 이만큼이 깔립니다`);
-      if (sec >= 3) {
+      console.log(`   yt-dlp 기동 ${sec.toFixed(1)}초 — 곡을 틀 때마다 이만큼이 깔립니다 (${ytdlpPath()})`);
+      if (sec >= 2) {
+        // 공식 바이너리는 PyInstaller 묶음이라 **실행할 때마다 파이썬을 통째로 풉니다.**
+        // pip 로 깔면 그 과정이 없어집니다. 느린 서버에서 가장 크게 줄일 수 있는 곳입니다.
         console.warn(
-          '   ⚠️ 기동만 3초가 넘습니다. 서버가 느린 것이지 유튜브 문제가 아닙니다.\n' +
-            '      `.env.music` 에 YTDLP_JS_RUNTIME=false 를 넣고 재시작하면 줄어들 수 있습니다.\n' +
-            '      (다만 그러면 곡을 아예 못 뽑을 수도 있으니, 넣은 뒤 한 곡 틀어 확인하세요)'
+          '   ⚠️ 기동이 깁니다. 지금 쓰는 yt-dlp 는 실행할 때마다 파이썬을 푸는 방식입니다.\n' +
+            '      pip 로 깔면 그 과정이 없어져 훨씬 빨리 뜹니다. 서버에서:\n' +
+            '        python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U yt-dlp\n' +
+            '        time ~/.venv-ytdlp/bin/yt-dlp --version   # 지금보다 빠른지 확인\n' +
+            '      빨라지면 `.env.music` 에 아래를 넣고 재시작하세요. 이 줄의 초가 바로 답합니다.\n' +
+            '        YTDLP_PATH=' +
+            (process.env.HOME ? `${process.env.HOME}/.venv-ytdlp/bin/yt-dlp` : '~/.venv-ytdlp/bin/yt-dlp')
         );
       }
     });
