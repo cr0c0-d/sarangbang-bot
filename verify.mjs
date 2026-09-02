@@ -390,6 +390,36 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('조각 수에 상한이 있음', many.chunks.length <= 3, `${many.chunks.length}조각`);
   ok('잘렸으면 잘렸다고 적음', many.truncated && many.chunks.at(-1).includes('여기까지만'));
 
+  // ★ 디스코드는 슬래시 명령어의 **입력값을 다른 사람에게 보여주지 않습니다.**
+  //   "○○님이 망고야를 사용함" 만 뜨므로, 답만 남으면 뭘 물어본 건지 아무도 모릅니다.
+  {
+    const { quoteQuestion } = await import('./src/ai/index.js');
+    const q = '오사카 뭐 먹지';
+    const withQ = formatAnswer('스시 먹어', q);
+    ok('질문이 답과 함께 나옴', withQ.chunks[0].includes(q));
+    ok('질문은 인용문으로', withQ.chunks[0].startsWith('> '));
+    ok('답도 그대로 있음', withQ.chunks[0].includes('스시 먹어'));
+    // ⚠️ `>>>` 를 쓰면 뒤의 답까지 인용이 됩니다. 줄마다 `>` 를 붙여야 합니다.
+    ok('여러 줄 질문도 줄마다 인용', quoteQuestion('가\n나') === '> 가\n> 나');
+    ok('여러 줄 인용 기호는 안 씀', !withQ.chunks[0].includes('>>>'));
+    // 머리글 때문에 첫 조각이 디스코드 한도를 넘으면 그 메시지가 아예 안 갑니다.
+    const longQ = '질'.repeat(1000);
+    const tight = formatAnswer('답'.repeat(5000), longQ);
+    ok('질문이 길어도 첫 조각이 한도 이하',
+      tight.chunks.every((c) => c.length <= 2000), `최대 ${Math.max(...tight.chunks.map((c) => c.length))}자`);
+  }
+
+  // 말투는 소유자가 정했습니다 — 반말 · 구어체 · 이름은 망고.
+  {
+    const gemSrc = fs.readFileSync('./src/ai/gemini.js', 'utf8');
+    const sys = gemSrc.slice(gemSrc.indexOf('const SYSTEM = ['), gemSrc.indexOf("].join('\\n');"));
+    ok('이름은 망고', sys.includes('망고'));
+    ok('반말로 답하게', sys.includes('반말'));
+    ok('구어체로 답하게', sys.includes('구어체'));
+    ok('짧게 답하게 (길면 돈이고 읽기도 힘듦)', sys.includes('짧게'));
+    ok('모르면 모른다고 하게', sys.includes('모른다고'));
+  }
+
   // 한도: 시간이 지나면 다시 되어야 하고, 성공했을 때만 세어야 합니다.
   usage.resetUsage();
   const G = 'aiguild';
