@@ -298,7 +298,13 @@ async function runSerialized(args, { timeouts = timeoutLadder() } = {}) {
         //    손으로 돌릴 때는 되고 봇에서만 안 되는 일이 실제로 있었습니다.
         //    그때 이 줄이 없으면 인자를 하나씩 짐작해 재구성해야 합니다.
         //    (쿠키는 **경로만** 넘기므로 내용이 새지 않습니다)
-        console.error(`[music] 실패한 명령: ${YTDLP} ${args.map(quoteArg).join(' ')}`);
+        // 원인과 명령을 **한 덩어리로** 남깁니다. 따로 찍으면 grep 을 두 번 해야 하고,
+        // 그 사이에 다른 줄이 끼면 어느 명령의 원인인지도 헷갈립니다.
+        console.error(
+          `[music] 추출 실패\n` +
+            `        이유: ${err.message.split('\n')[0]}\n` +
+            `        명령: ${YTDLP} ${args.map(quoteArg).join(' ')}`
+        );
         throw err;
       }
       console.warn(

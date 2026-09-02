@@ -707,7 +707,8 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   // ★ 같은 yt-dlp 인데 손으로 돌리면 되고 봇에서만 안 되는 일이 있었습니다.
   //   봇이 덧붙이는 인자(--js-runtimes·--cookies) 때문입니다. 실패하면 그대로 남깁니다.
   {
-    ok('끝내 실패하면 실제 명령을 남김', yt.includes('[music] 실패한 명령:'));
+    ok('끝내 실패하면 이유와 명령을 함께 남김',
+      yt.includes('[music] 추출 실패') && yt.includes('이유: ${err.message') && yt.includes('명령: ${YTDLP}'));
     // 쿠키는 경로만 넘기므로 내용이 새지 않습니다. 내용을 인자로 넘기면 안 됩니다.
     ok('쿠키는 경로만 넘김', yt.includes("args.push('--cookies', cookies)") && !yt.includes('readFileSync(cookies'));
     // 복사해 붙여넣어 그대로 돌릴 수 있어야 합니다.
