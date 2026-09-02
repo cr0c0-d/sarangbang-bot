@@ -670,7 +670,15 @@ export class GuildAudio {
    */
   prefetchNext() {
     const next = this.queue[0];
-    if (!next || next.prefetching) return;
+    if (!next) return;
+
+    // ⚠️ 여기서 **조용히 빠져나가면 안 됩니다.** 다음 곡이 느렸을 때
+    //    "미리 뽑기 줄이 아예 없다" 는 상태가 되어, 안 돈 것인지 실패한 것인지
+    //    구분할 수가 없습니다. 실제로 그것 때문에 원인을 못 짚었습니다.
+    if (next.prefetching) {
+      console.log(`[music] 미리 뽑기 건너뜀 (앞의 것이 아직 도는 중) · ${next.track.title}`);
+      return;
+    }
 
     // 주소가 이미 살아 있으면 뽑을 것은 없습니다. 하지만 **소리는 아직 안 열렸을 수 있습니다.**
     // (반복 재생, 지난 곡을 다시 담은 경우) 그러니 준비는 반드시 이어서 겁니다.

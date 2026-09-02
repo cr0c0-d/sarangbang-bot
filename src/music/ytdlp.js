@@ -2,8 +2,9 @@
 // - getTracks(): 링크나 검색어를 받아 재생할 곡 목록(제목/길이/URL)을 알아냅니다.
 // - createStream(): 실제 오디오 데이터를 stdout으로 흘려보냅니다.
 import { spawn } from 'node:child_process';
+import fs from 'node:fs/promises';
 import path from 'node:path';
-import { ROOT } from '../config.js';
+import { ROOT, config } from '../config.js';
 import { userError } from '../user-error.js';
 
 /**
@@ -42,8 +43,20 @@ export function updateHint() {
 // 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다.
 // yt-dlp 는 **노래하는 망고만** 돌리므로, 이 값들의 제자리는 `.env.music` 입니다.
 // (.env 에 적어도 상속되어 동작은 합니다)
+/**
+ * yt-dlp 캐시를 **우리가 정한 곳**에 둡니다.
+ *
+ * yt-dlp 는 유튜브 플레이어 JS(서명 계산에 쓰는 것)를 캐시해둡니다. 그게 남아 있으면
+ * 다음 추출부터 그만큼 빨라집니다. 기본 위치는 `~/.cache/yt-dlp` 인데,
+ * **systemd 로 돌리면 `HOME` 이 없거나 다른 곳을 가리키기 쉽습니다.**
+ * 그러면 캐시가 매번 날아가서 곡마다 플레이어 JS 를 다시 받고 다시 파싱합니다.
+ *
+ * 경로를 직접 지정해 그 문제를 아예 없앱니다. `data/` 밑이라 git 에도 안 올라갑니다.
+ */
+const CACHE_DIR = path.join(config.dataDir, 'yt-dlp-cache');
+
 function extraArgs() {
-  const args = [];
+  const args = ['--cache-dir', CACHE_DIR];
 
   // yt-dlp 는 유튜브 추출에 자바스크립트 런타임이 필요합니다.
   // 없으면 "No supported JavaScript runtime could be found" 경고가 뜨고
@@ -602,6 +615,44 @@ export function measureStartup() {
     child.once('error', () => done(false));
     child.once('close', (code) => done(code === 0));
   });
+}
+
+/**
+ * 켤 때 **한 번 헛돌려서** 유튜브 플레이어 JS 를 캐시에 채워둡니다.
+ *
+ * 왜: 첫 곡이 느린 이유의 상당 부분이 "플레이어 JS 를 받아서 파싱하는 비용" 입니다.
+ * 그건 곡과 상관없는 고정 비용이라 **미리 치러둘 수 있습니다.**
+ * TTS 를 미리 데워두는 것(prewarm)과 같은 생각입니다.
+ *
+ * ⚠️ 추출 줄(serializeExtraction)을 그대로 탑니다. 켜자마자 곡을 틀면 그만큼 기다리지만,
+ *    어차피 그 곡이 치렀을 비용을 앞당긴 것뿐이라 손해가 아닙니다.
+ * ⚠️ 실패해도 조용히 넘어갑니다. 이건 **있으면 좋은 것**이지 없으면 안 되는 게 아닙니다.
+ *
+ * @param {string} [url] 데울 때 쓸 영상. 짧고 안 사라지는 것이면 무엇이든 됩니다.
+ */
+export async function warmUpCache(url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ') {
+  // ⚠️ **이미 쌓여 있으면 하지 않습니다.** 재시작할 때마다 헛돌면, 켜자마자 곡을 트는
+  //    사람이 그만큼 기다립니다. 이득은 캐시가 비었을 때만 있습니다.
+  //    (집 PC 실측으로는 캐시 유무 차이가 잡음 수준이었습니다 — 느린 서버에서는
+  //     클 수도 있어서 남겨두지만, 비용은 처음 한 번으로 제한합니다)
+  const already = await fs
+    .readdir(CACHE_DIR)
+    .then((f) => f.length > 0)
+    .catch(() => false);
+  if (already) return 0;
+
+  const t0 = Date.now();
+  try {
+    await run(['--simulate', '--no-warnings', '--ignore-config', '--no-playlist', ...extraArgs(), url]);
+    return (Date.now() - t0) / 1000;
+  } catch {
+    return null;
+  }
+}
+
+/** 캐시가 실제로 쌓였는지. 안 쌓이면 곡마다 플레이어 JS 를 다시 받습니다. */
+export function cacheDir() {
+  return CACHE_DIR;
 }
 
 /** JS 런타임 지정을 끌 수 있게 합니다. 느린 서버에서 기동 비용을 줄일 때. */

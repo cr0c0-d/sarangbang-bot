@@ -5,6 +5,7 @@
 //   2. 슬래시 명령어가 오면 해당 모듈로 넘겨줌
 //   3. 메시지가 오면 음악 → TTS → 이미지 순서로 처리 기회를 줌
 //   4. 이미지 기능이 켜져 있으면 갤러리 웹서버도 같이 띄움
+import fs from 'node:fs/promises';
 import { Client, GatewayIntentBits, Events, ActivityType, MessageFlags } from 'discord.js';
 import { config } from './config.js';
 import { commandMap } from './commands.js';
@@ -20,7 +21,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint } from './music/ytdlp.js';
+import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint, warmUpCache, cacheDir } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
@@ -100,6 +101,20 @@ client.once(Events.ClientReady, (c) => {
         );
       }
       console.log(`   yt-dlp 기동 ${sec.toFixed(1)}초 — 곡을 틀 때마다 이만큼이 깔립니다 (${ytdlpPath()})`);
+      // 유튜브 플레이어 JS 를 미리 받아둡니다. 그래야 **첫 곡**이 그 비용을 안 냅니다.
+      // (TTS 예열과 같은 생각입니다)
+      warmUpCache().then(async (warm) => {
+        if (warm === null) return console.warn('   yt-dlp 예열 실패 — 첫 곡만 조금 느립니다.');
+        const cached = await fs
+          .readdir(cacheDir())
+          .then((f) => f.length > 0)
+          .catch(() => false);
+        if (!cached) {
+          return console.warn(`   ⚠️ yt-dlp 캐시가 안 쌓입니다 (${cacheDir()}). 쓰기 권한을 확인하세요.`);
+        }
+        // warm === 0 이면 이미 쌓여 있어 건너뛴 것입니다. 매 재시작마다 헛돌지 않습니다.
+        console.log(warm === 0 ? '   yt-dlp 캐시 준비됨' : `   yt-dlp 예열 ${warm.toFixed(1)}초 (캐시가 비어 있었습니다)`);
+      });
       if (sec >= 2) {
         // 공식 바이너리는 PyInstaller 묶음이라 **실행할 때마다 파이썬을 통째로 풉니다.**
         // pip 로 깔면 그 과정이 없어집니다. 느린 서버에서 가장 크게 줄일 수 있는 곳입니다.

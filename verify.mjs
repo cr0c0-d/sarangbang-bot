@@ -751,6 +751,22 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     await measureStartup(); // 실제로 재보고, 그 값이 반영되는지
     ok('잰 기동 시간이 실제로 반영됨', timeoutLadder()[0] >= 20_000, `${timeoutLadder()[0]}ms`);
   }
+  // ★ 첫 곡이 느린 이유의 상당 부분은 "유튜브 플레이어 JS 를 받아 파싱하는 비용" 입니다.
+  //   곡과 상관없는 고정 비용이라 켤 때 미리 치러둘 수 있습니다. (TTS 예열과 같은 생각)
+  {
+    const ix = fs.readFileSync('./src/index.js', 'utf8');
+    ok('켤 때 캐시를 미리 데움', yt.includes('export async function warmUpCache(') && ix.includes('warmUpCache()'));
+    // ⚠️ systemd 는 HOME 이 없거나 다를 수 있어 ~/.cache 가 날아갑니다.
+    //    그러면 곡마다 플레이어 JS 를 다시 받습니다. 경로를 직접 정해 그 문제를 없앱니다.
+    ok('캐시 위치를 직접 지정', yt.includes("args = ['--cache-dir', CACHE_DIR]"));
+    ok('캐시는 data/ 밑 (git 에 안 올라감)', yt.includes("path.join(config.dataDir, 'yt-dlp-cache')"));
+    ok('캐시가 안 쌓이면 알려줌', ix.includes('캐시가 안 쌓입니다'));
+    // 매 재시작마다 헛돌면, 켜자마자 곡을 트는 사람이 그만큼 기다립니다.
+    ok('이미 쌓여 있으면 건너뜀', yt.includes('if (already) return 0;'));
+    // 예열은 있으면 좋은 것입니다. 실패해도 재생은 되어야 합니다.
+    ok('예열 실패는 재생을 막지 않음', /warmUpCache\([\s\S]{0,900}?\} catch \{\s*\n\s*return null;/.test(yt));
+  }
+
   // 미리 뽑기가 조용히 실패하면 다음 곡이 왜 느린지 알 수 없습니다.
   ok('미리 뽑기 결과를 로그로', ga.includes('[music] 미리 뽑기 ${took()}초') && ga.includes('미리 뽑기 실패'));
 
