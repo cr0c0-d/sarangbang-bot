@@ -652,8 +652,32 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('캐시본을 복사해서 반환 (오염 방지)',
     yt.includes('return withTotal(cached);') && yt.includes('list.map((t) => ({ ...t }))'));
   ok('JS런타임 끄는 스위치', yt.includes('YTDLP_JS_RUNTIME'));
-  ok('제한시간을 늘려가며 재시도', yt.includes('TIMEOUT_LADDER = [20_000, 60_000]'));
+  ok('제한시간을 늘려가며 재시도', yt.includes('timeouts = timeoutLadder()') && yt.includes('timeouts[i - 1]'));
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
+
+  // ★ 첫 시도 제한시간이 고정 20초였습니다. 소유자 서버는 기동만 5.7초, 추출까지 20초라
+  //   **매번** 잘리고 다시 하느라 한 번 뽑는 데 40초가 넘었습니다.
+  {
+    const { timeoutsFor, timeoutLadder, measureStartup } = await import('./src/music/ytdlp.js');
+    const fast = timeoutsFor(1600, 0); // 집 PC (기동 1.6초)
+    ok('제한시간은 두 단계', fast.length === 2 && fast[0] < fast[1]);
+    ok('빠른 서버는 예전과 같음 (20초)', fast[0] === 20_000, `${fast[0]}ms`);
+
+    // 소유자 서버: 기동만 5.7초. 20초로는 추출이 매번 잘립니다.
+    const slow = timeoutsFor(5700, 0);
+    ok('느린 서버는 첫 시도를 늘림', slow[0] > 20_000, `${slow[0] / 1000}초`);
+    // ⚠️ 성공 기록만 보면 안 됩니다. 제한시간이 짧아 한 번도 성공 못 하면
+    //    기록이 영영 안 쌓여 스스로 못 빠져나옵니다. 기동 시간이 바닥을 깝니다.
+    ok('성공 기록 없이도 늘어남 (스스로 빠져나옴)', timeoutsFor(5700, 0)[0] === slow[0]);
+    ok('성공 기록이 더 느리면 그걸 따름', timeoutsFor(1600, 25_000)[0] === 50_000);
+    ok('제한시간에 상한이 있음', timeoutsFor(999_999, 999_999)[0] === 60_000);
+    ok('두 번째도 상한이 있음', timeoutsFor(999_999, 999_999)[1] <= 120_000);
+
+    await measureStartup(); // 실제로 재보고, 그 값이 반영되는지
+    ok('잰 기동 시간이 실제로 반영됨', timeoutLadder()[0] >= 20_000, `${timeoutLadder()[0]}ms`);
+  }
+  // 미리 뽑기가 조용히 실패하면 다음 곡이 왜 느린지 알 수 없습니다.
+  ok('미리 뽑기 결과를 로그로', ga.includes('[music] 미리 뽑기 ${took()}초') && ga.includes('미리 뽑기 실패'));
   ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
   const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
   ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([gettingTracks, audio.connect(voiceChannel)])'));

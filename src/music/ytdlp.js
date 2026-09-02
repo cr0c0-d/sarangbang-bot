@@ -63,6 +63,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function runOnce(args, timeoutMs) {
   return new Promise((resolve, reject) => {
+    const startedAt = Date.now();
     const child = spawn(YTDLP, args, { windowsHide: true });
     let out = '';
     let err = '';
@@ -94,6 +95,7 @@ function runOnce(args, timeoutMs) {
       if (done) return;
       if (code === 0) {
         done = true;
+        noteSuccessDuration(Date.now() - startedAt);
         resolve(out);
       } else {
         fail(friendlyError(err) || `yt-dlp 오류 (코드 ${code})`, isTransient(err));
@@ -110,9 +112,48 @@ function runOnce(args, timeoutMs) {
  * 75초를 버립니다. 실제로 그런 일이 있었습니다.
  * 첫 시도는 짧게 끊어 빠른 실패를 잡고, 그다음은 넉넉히 줘서 느린 서버도 성공하게 합니다.
  */
-const TIMEOUT_LADDER = [20_000, 60_000];
+/**
+ * 첫 시도의 제한시간은 **서버 속도에 맞춰 정합니다.**
+ *
+ * 왜 고정값이면 안 되는가 (실제로 겪은 일):
+ * 예전에는 첫 시도가 무조건 20초였습니다. 그런데 소유자 서버는 yt-dlp **기동만 5.7초**이고
+ * 추출까지 20초쯤 걸립니다. 그러면 첫 시도가 **매번** 20초에 잘리고, 1초 쉬었다가
+ * 다시 20초를 써서 한 번 뽑는 데 40초가 넘습니다. 곡 전환이 느렸던 이유가 여기 있습니다.
+ * 게다가 그렇게 느리면 미리 뽑기도 제때 못 끝내서, 다음 곡이 또 가장 느린 길로 갑니다.
+ *
+ * 그래서 두 가지를 근거로 잡습니다.
+ *   · 켤 때 잰 **기동 시간** (measureStartup) — 첫 곡부터 적용됩니다
+ *   · 지금까지 **성공한 추출 중 가장 느렸던 것**
+ * 둘 다 없으면 예전처럼 20초로 시작합니다.
+ *
+ * ⚠️ 성공 기록만으로는 부족합니다. 제한시간이 짧아서 한 번도 성공하지 못하면
+ *    기록이 영영 안 쌓여 **스스로 못 빠져나옵니다.** 기동 시간으로 바닥을 깔아두는 이유입니다.
+ */
+const BASE_FIRST_MS = 20_000;
+const MAX_FIRST_MS = 60_000;
 
-async function run(args, { timeouts = TIMEOUT_LADDER } = {}) {
+let startupMs = null;      // 켤 때 잰 yt-dlp 기동 시간
+let slowestOkMs = 0;       // 성공한 추출 중 가장 느렸던 것
+
+function noteSuccessDuration(ms) {
+  if (ms > slowestOkMs) slowestOkMs = ms;
+}
+
+/**
+ * 계산만 하는 순수 함수로 떼어뒀습니다. 이래야 느린 서버 값을 넣고 검사할 수 있습니다.
+ * (verify 가 기동 5.7초짜리 서버를 흉내 내 확인합니다)
+ */
+export function timeoutsFor(startup = null, slowestOk = 0) {
+  const first = Math.min(MAX_FIRST_MS, Math.max(BASE_FIRST_MS, startup ? startup * 5 : 0, slowestOk * 2));
+  // 두 번째는 넉넉히. 단계를 셋으로 늘리지 마세요 — 정말 멈춘 경우에 너무 오래 붙잡습니다.
+  return [first, Math.min(120_000, first * 2)];
+}
+
+export function timeoutLadder() {
+  return timeoutsFor(startupMs, slowestOkMs);
+}
+
+async function run(args, { timeouts = timeoutLadder() } = {}) {
   const attempts = timeouts.length;
   let lastErr;
   for (let i = 1; i <= attempts; i++) {
@@ -417,7 +458,11 @@ export function measureStartup() {
   const t0 = Date.now();
   return new Promise((resolve) => {
     const child = spawn(YTDLP, ['--version'], { stdio: 'ignore', windowsHide: true });
-    const done = (ok) => resolve(ok ? (Date.now() - t0) / 1000 : null);
+    const done = (ok) => {
+      // 이 값으로 첫 시도의 제한시간 바닥을 깝니다. (timeoutLadder 참고)
+      if (ok) startupMs = Date.now() - t0;
+      resolve(ok ? (Date.now() - t0) / 1000 : null);
+    };
     child.once('error', () => done(false));
     child.once('close', (code) => done(code === 0));
   });

@@ -512,16 +512,21 @@ export class GuildAudio {
     if (!next || next.prefetching || hasFreshStreamUrl(next.track)) return;
 
     next.prefetching = true;
+    const t0 = Date.now();
+    const took = () => ((Date.now() - t0) / 1000).toFixed(1);
     getTracks(next.track.url)
       .then(([fresh]) => {
         // 미리 뽑는 사이에 대기열이 바뀌었을 수 있으니 아직 그 자리에 있는지 확인합니다.
         if (fresh?.streamUrl && this.queue.includes(next)) {
           next.track.streamUrl = fresh.streamUrl;
           next.track.extractedAt = fresh.extractedAt;
+          console.log(`[music] 미리 뽑기 ${took()}초 · ${next.track.title}`);
         }
       })
-      .catch(() => {
-        // 미리 뽑기는 실패해도 괜찮습니다. 재생할 때 정상 경로로 다시 시도합니다.
+      .catch((err) => {
+        // 미리 뽑기는 실패해도 곡은 나옵니다 — 틀 때 정상 경로로 다시 시도하니까요.
+        // 다만 **조용히 실패하면 다음 곡이 왜 느린지 알 수 없습니다.** 그래서 남깁니다.
+        console.warn(`[music] 미리 뽑기 실패 (${took()}초) · ${next.track.title}: ${err.message.split('\n')[0]}`);
       })
       .finally(() => {
         next.prefetching = false;
