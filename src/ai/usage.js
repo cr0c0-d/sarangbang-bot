@@ -11,8 +11,8 @@ import { config } from '../config.js';
 
 const FILE = path.join(config.dataDir, 'ai-usage.json');
 
-/** @type {{ users: {[key: string]: number[]}, guilds: {[key: string]: number[]} }} */
-let store = { users: {}, guilds: {} };
+/** @type {{ users: {[k: string]: number[]}, guilds: {[k: string]: number[]}, tokens: {[k: string]: object} }} */
+let store = { users: {}, guilds: {}, tokens: {} };
 let writeChain = Promise.resolve();
 
 const HOUR_MS = 60 * 60 * 1000;
@@ -37,12 +37,10 @@ export async function initUsage() {
   await fs.mkdir(config.dataDir, { recursive: true });
   try {
     const loaded = JSON.parse(await fs.readFile(FILE, 'utf8'));
-    store = {
-      users: loaded?.users && typeof loaded.users === 'object' ? loaded.users : {},
-      guilds: loaded?.guilds && typeof loaded.guilds === 'object' ? loaded.guilds : {},
-    };
+    const obj = (v) => (v && typeof v === 'object' ? v : {});
+    store = { users: obj(loaded?.users), guilds: obj(loaded?.guilds), tokens: obj(loaded?.tokens) };
   } catch {
-    store = { users: {}, guilds: {} }; // 파일이 없거나 깨졌으면 빈 상태로
+    store = { users: {}, guilds: {}, tokens: {} }; // 파일이 없거나 깨졌으면 빈 상태로
   }
 }
 
@@ -86,11 +84,34 @@ export function check(guildId, userId, now = Date.now()) {
   return { ok: true };
 }
 
-/** 실제로 한 번 썼다고 기록합니다. **성공했을 때만** 부릅니다. */
-export function record(guildId, userId, now = Date.now()) {
+/** `2026-09-02` · `2026-09` — 날짜가 바뀌면 저절로 0부터 셉니다. */
+const dayKey = (now) => new Date(now).toISOString().slice(0, 10);
+const monthKey = (now) => new Date(now).toISOString().slice(0, 7);
+
+/**
+ * 실제로 한 번 썼다고 기록합니다. **성공했을 때만** 부릅니다.
+ * @param {number} [tokens] 이번에 쓴 토큰 수 (제미나이가 알려준 값)
+ */
+export function record(guildId, userId, tokens = 0, now = Date.now()) {
   const uk = userKey(guildId, userId);
   store.users[uk] = [...recent(store.users[uk], HOUR_MS, now), now];
   store.guilds[guildId] = [...recent(store.guilds[guildId], DAY_MS, now), now];
+
+  if (tokens > 0) {
+    const t = (store.tokens[guildId] ??= {});
+    // 날짜가 바뀌면 그 칸을 0으로 되돌립니다. 따로 청소할 필요가 없습니다.
+    if (t.day !== dayKey(now)) {
+      t.day = dayKey(now);
+      t.dayTokens = 0;
+    }
+    if (t.month !== monthKey(now)) {
+      t.month = monthKey(now);
+      t.monthTokens = 0;
+    }
+    t.dayTokens = (t.dayTokens ?? 0) + tokens;
+    t.monthTokens = (t.monthTokens ?? 0) + tokens;
+    t.total = (t.total ?? 0) + tokens;
+  }
   save();
 }
 
@@ -103,10 +124,24 @@ export function remaining(guildId, userId, now = Date.now()) {
     userMax: config.ai.perUserHourly,
     guild: Math.max(0, config.ai.perGuildDaily - ours),
     guildMax: config.ai.perGuildDaily,
+    used: ours,
+  };
+}
+
+/**
+ * 지금까지 쓴 토큰. **남은 양이 아닙니다** — 제미나이는 남은 양을 알려주지 않습니다.
+ * 그건 https://aistudio.google.com/rate-limit 에서만 볼 수 있습니다.
+ */
+export function tokenUsage(guildId, now = Date.now()) {
+  const t = store.tokens[guildId] ?? {};
+  return {
+    day: t.day === dayKey(now) ? (t.dayTokens ?? 0) : 0,
+    month: t.month === monthKey(now) ? (t.monthTokens ?? 0) : 0,
+    total: t.total ?? 0,
   };
 }
 
 /** 검사용. 세어둔 것을 지웁니다. */
 export function resetUsage() {
-  store = { users: {}, guilds: {} };
+  store = { users: {}, guilds: {}, tokens: {} };
 }

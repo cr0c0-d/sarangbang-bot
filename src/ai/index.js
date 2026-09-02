@@ -9,7 +9,7 @@ import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { config } from '../config.js';
 import { userError } from '../user-error.js';
 import { ask, hasKey } from './gemini.js';
-import { check, record, remaining } from './usage.js';
+import { check, record, remaining, tokenUsage } from './usage.js';
 
 /** 디스코드 메시지 한 통의 상한. */
 const DISCORD_LIMIT = 2000;
@@ -90,12 +90,28 @@ export function formatAnswer(text, question = '') {
  */
 export function buildStatusPanel(guildId, userId) {
   const left = remaining(guildId, userId);
+  const tok = tokenUsage(guildId);
+  const n = (v) => v.toLocaleString('ko-KR');
+
+  // 한도는 **서버 통합**이 기본입니다 (소유자 결정). 사람당 한도는 0 = 안 씀.
+  const limits = [`서버 **${left.guild}/${left.guildMax}회** 남음 (하루)`];
+  if (left.userMax > 0) limits.push(`나 ${left.user}/${left.userMax}회 남음 (1시간)`);
+
   const embed = new EmbedBuilder()
     .setColor(0xf5a623)
     .setTitle('🥭 망고야')
     .setDescription('`/망고야 질문:...` 로 물어보세요. 답은 이 채팅방 모두에게 보입니다.')
     .addFields(
-      { name: '남은 횟수', value: `나 ${left.user}/${left.userMax}회 (1시간)\n서버 ${left.guild}/${left.guildMax}회 (하루)` },
+      { name: '남은 질문', value: limits.join('\n') },
+      {
+        name: '쓴 토큰',
+        // ⚠️ **남은 토큰이 아닙니다.** 제미나이는 남은 양을 안 알려줍니다.
+        //    우리가 쓴 것만 세어둔 값입니다. 그 구분을 화면에 적어둡니다.
+        value:
+          `오늘 ${n(tok.day)} · 이번 달 ${n(tok.month)}\n` +
+          '무료 등급의 **남은 양**은 API 로 알 수 없습니다 →\n' +
+          '[AI Studio 에서 확인](https://aistudio.google.com/rate-limit)',
+      },
       { name: '쓰는 모델', value: hasKey() ? `제미나이 \`${config.ai.geminiModel}\`` : '⚠️ API 키가 없습니다' }
     );
   if (!hasKey()) {
@@ -144,9 +160,10 @@ export const commands = [
       // "적시에 응답하지 않았어요" 를 띄웁니다. 먼저 자리를 잡아둡니다.
       await interaction.deferReply();
 
-      const answer = await ask(question);
+      const { text: answer, tokens } = await ask(question);
       // 성공했을 때만 셉니다. 실패한 질문으로 한도를 깎으면 억울합니다.
-      record(interaction.guildId, interaction.user.id);
+      // 쓴 토큰도 같이 남겨서 "얼마나 썼나" 를 볼 수 있게 합니다.
+      record(interaction.guildId, interaction.user.id, tokens);
 
       // 질문을 같이 적어줍니다. 디스코드는 슬래시 명령어의 입력값을 다른 사람에게
       // 보여주지 않아서("○○님이 망고야를 사용함"), 답만 남으면 뭘 물어본 건지 모릅니다.

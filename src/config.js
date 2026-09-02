@@ -189,7 +189,7 @@ export const config = {
     maxOutputTokens: num('AI_MAX_OUTPUT_TOKENS', 1500),
     // "생각" 을 얼마나 할지. low·medium·high. 생각도 출력 토큰을 먹으므로 기본은 low.
     thinkingLevel: str('AI_THINKING_LEVEL', 'low'),
-    perUserHourly: num('AI_PER_USER_HOURLY', 20),
+    perUserHourly: num('AI_PER_USER_HOURLY', 0),
     perGuildDaily: num('AI_PER_GUILD_DAILY', 150),
     timeoutMs: num('AI_TIMEOUT_MS', 30000),
     // 제미나이 쪽이 혼잡할 때(5xx) 몇 번 더 해볼지. 0이면 안 함.

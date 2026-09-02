@@ -439,7 +439,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     const run = async (list) => {
       plans = list;
       sent.length = 0;
-      return gem.ask('테스트').then((t) => ({ text: t }), (e) => ({ error: e.message }));
+      return gem.ask('테스트').then((r) => ({ text: r.text, tokens: r.tokens }), (e) => ({ error: e.message }));
     };
 
     try {
@@ -526,23 +526,69 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   const U = 'user1';
   const now = Date.parse('2026-09-02T12:00:00Z');
   ok('처음에는 물어볼 수 있음', usage.check(G, U, now).ok);
-  for (let i = 0; i < config.ai.perUserHourly; i++) usage.record(G, U, now);
-  const blocked = usage.check(G, U, now);
-  ok('사람당 한도를 넘기면 거절', !blocked.ok);
-  ok('언제 풀리는지 알려줌', /분/.test(blocked.reason ?? ''), blocked.reason);
-  ok('다른 사람은 그대로 됨', usage.check(G, 'user2', now).ok);
-  ok('한 시간 뒤에는 다시 됨', usage.check(G, U, now + 61 * 60 * 1000).ok);
-  ok('남은 횟수를 셀 수 있음', usage.remaining(G, U, now).user === 0);
+
+  // ★ 소유자 결정: **사람당으로 나누지 않고 서버 통합 한도만** 씁니다. 기본값 0 = 안 씀.
+  //   친구 사이에 각자 몫을 정해두는 게 오히려 어색하다는 판단입니다.
+  ok('사람당 한도는 기본으로 안 씀', config.ai.perUserHourly === 0, `${config.ai.perUserHourly}`);
+  {
+    // 쓰고 싶으면 숫자를 넣으면 됩니다. 그 경로도 살아 있는지 확인합니다.
+    const savedPerUser = config.ai.perUserHourly;
+    config.ai.perUserHourly = 3;
+    usage.resetUsage();
+    for (let i = 0; i < 3; i++) usage.record(G, U, 0, now);
+    const blocked = usage.check(G, U, now);
+    ok('숫자를 넣으면 사람당 한도가 걸림', !blocked.ok);
+    ok('언제 풀리는지 알려줌', /분/.test(blocked.reason ?? ''), blocked.reason);
+    ok('다른 사람은 그대로 됨', usage.check(G, 'user2', now).ok);
+    ok('한 시간 뒤에는 다시 됨', usage.check(G, U, now + 61 * 60 * 1000).ok);
+    config.ai.perUserHourly = savedPerUser;
+  }
+  usage.resetUsage();
 
   // 서버당 하루 한도 (다른 사람들이 나눠 써도 합산되어야 합니다)
   usage.resetUsage();
-  for (let i = 0; i < config.ai.perGuildDaily; i++) usage.record(G, `user${i}`, now);
+  for (let i = 0; i < config.ai.perGuildDaily; i++) usage.record(G, `user${i}`, 0, now);
   const guildBlocked = usage.check(G, 'newbie', now);
   ok('서버당 하루 한도도 걸림', !guildBlocked.ok);
   ok('하루 한도는 시간으로 안내', /시간/.test(guildBlocked.reason ?? ''), guildBlocked.reason);
   ok('다른 서버는 영향 없음', usage.check('otherguild', U, now).ok);
   ok('하루 뒤에는 다시 됨', usage.check(G, 'newbie', now + 25 * 60 * 60 * 1000).ok);
   usage.resetUsage();
+
+  // ★ 쓴 토큰 세기. 소유자 질문: "남은 토큰을 볼 수는 없나?"
+  //   ⚠️ **남은 양은 제미나이가 알려주지 않습니다.** 우리가 쓴 것만 셀 수 있습니다.
+  //      그 구분을 화면에 적어둬야 합니다 — 안 그러면 "남은 양" 으로 오해합니다.
+  {
+    const { tokensUsed } = await import('./src/ai/gemini.js');
+    ok('totalTokenCount 를 씀', tokensUsed({ totalTokenCount: 1234 }) === 1234);
+    // 필드가 없으면 있는 것들을 더합니다. "생각" 토큰도 돈입니다.
+    ok('없으면 항목을 더함',
+      tokensUsed({ promptTokenCount: 10, candidatesTokenCount: 20, thoughtsTokenCount: 5 }) === 35);
+    ok('모양이 바뀌어도 0 으로 떨어짐', tokensUsed(undefined) === 0 && tokensUsed({}) === 0);
+
+    const T = 'tokguild';
+    const t0 = Date.parse('2026-09-02T12:00:00Z');
+    usage.record(T, 'u', 1000, t0);
+    usage.record(T, 'u', 500, t0);
+    ok('오늘 쓴 토큰을 더해서 셈', usage.tokenUsage(T, t0).day === 1500);
+    ok('이번 달도 같이 셈', usage.tokenUsage(T, t0).month === 1500);
+    // 날짜가 바뀌면 그날 칸은 0부터. 따로 청소할 필요가 없습니다.
+    const nextDay = Date.parse('2026-09-03T12:00:00Z');
+    ok('날짜가 바뀌면 오늘 칸은 0', usage.tokenUsage(T, nextDay).day === 0);
+    usage.record(T, 'u', 200, nextDay);
+    ok('달이 같으면 월 누적은 이어짐', usage.tokenUsage(T, nextDay).month === 1700);
+    const nextMonth = Date.parse('2026-10-01T12:00:00Z');
+    ok('달이 바뀌면 월 칸도 0', usage.tokenUsage(T, nextMonth).month === 0);
+    usage.resetUsage();
+
+    // 화면에 "쓴 것" 과 "남은 것" 을 헷갈리지 않게 적었는가
+    const ai = fs.readFileSync('./src/ai/index.js', 'utf8');
+    ok('화면에 쓴 토큰을 보여줌', ai.includes("name: '쓴 토큰'"));
+    ok('남은 양은 모른다고 적어둠', ai.includes('남은 양**은 API 로 알 수 없습니다'));
+    ok('어디서 보는지 알려줌', ai.includes('aistudio.google.com/rate-limit'));
+    // 사람당 한도를 안 쓸 때 "나 0/0회" 같은 이상한 줄이 나오면 안 됩니다.
+    ok('사람당 한도가 0이면 그 줄을 숨김', ai.includes('if (left.userMax > 0) limits.push('));
+  }
 
   // 키가 없을 때 뜻이 통하는 안내가 나와야 합니다.
   //

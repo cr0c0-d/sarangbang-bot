@@ -232,6 +232,20 @@ export async function ask(prompt) {
 
     // 답이 비는 것은 혼잡이 아니라 이유가 있는 것입니다(안전 필터·길이 초과). 재시도하지 않습니다.
     if (!text) throw userError(explainEmpty(candidate, body?.promptFeedback));
-    return text;
+
+    // 제미나이는 쓴 토큰 수를 알려줍니다. 이걸 모아두면 "얼마나 썼나" 를 보여줄 수 있습니다.
+    // ⚠️ **남은 양은 알려주지 않습니다.** 그건 AI Studio 화면에서만 봅니다.
+    return { text, tokens: tokensUsed(body?.usageMetadata) };
   }
+}
+
+/** 이번 호출에 쓴 토큰. 필드가 없거나 모양이 바뀌어도 0 으로 떨어지게 둡니다. */
+export function tokensUsed(meta) {
+  if (!meta) return 0;
+  const total = Number(meta.totalTokenCount);
+  if (Number.isFinite(total) && total > 0) return total;
+  // totalTokenCount 가 없으면 있는 것들을 더합니다 ("생각" 토큰도 돈입니다).
+  return ['promptTokenCount', 'candidatesTokenCount', 'thoughtsTokenCount']
+    .map((k) => Number(meta[k]) || 0)
+    .reduce((a, b) => a + b, 0);
 }
