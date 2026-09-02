@@ -192,6 +192,9 @@ export const config = {
     perUserHourly: num('AI_PER_USER_HOURLY', 10),
     perGuildDaily: num('AI_PER_GUILD_DAILY', 50),
     timeoutMs: num('AI_TIMEOUT_MS', 30000),
+    // 제미나이 쪽이 혼잡할 때(5xx) 몇 번 더 해볼지. 0이면 안 함.
+    retries: num('AI_RETRIES', 2),
+    retryDelayMs: num('AI_RETRY_DELAY_MS', 1500),
   },
 
   images: {

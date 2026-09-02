@@ -409,6 +409,99 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
       tight.chunks.every((c) => c.length <= 2000), `최대 ${Math.max(...tight.chunks.map((c) => c.length))}자`);
   }
 
+  // ★ 재시도 — **무엇을 다시 하고 무엇을 안 하는지**가 핵심입니다.
+  //   제미나이를 실제로 부를 수 없으니(무료 한도) fetch 를 갈아끼워 확인합니다.
+  //   덕분에 요청 모양·재시도·오류 안내를 전부 실제로 돌려봅니다.
+  {
+    const gem = await import('./src/ai/gemini.js');
+    const realFetch = globalThis.fetch;
+    const savedDelay = config.ai.retryDelayMs;
+    const savedKey = config.ai.geminiKey;
+    config.ai.retryDelayMs = 1; // 검사에서 몇 초씩 쉬면 안 됩니다
+    // ⚠️ **키가 있든 없든 같은 결과가 나와야 합니다.** 소유자 서버에는 키가 있고
+    //    제 PC 에는 없어서, 환경에 따라 결과가 달라지는 검사를 한 번 이미 냈습니다.
+    config.ai.geminiKey = 'verify-fake-key';
+
+    let plans = [];
+    const sent = [];
+    globalThis.fetch = async (_url, opts) => {
+      const plan = plans.shift() ?? { status: 200, body: answerBody('마지막') };
+      sent.push(JSON.parse(opts.body));
+      if (plan.abort) {
+        const e = new Error('aborted');
+        e.name = 'AbortError';
+        throw e;
+      }
+      return { ok: plan.status < 400, status: plan.status, json: async () => plan.body };
+    };
+    const answerBody = (text) => ({ candidates: [{ content: { parts: [{ text }] }, finishReason: 'STOP' }] });
+    const errBody = (message) => ({ error: { message } });
+    const run = async (list) => {
+      plans = list;
+      sent.length = 0;
+      return gem.ask('테스트').then((t) => ({ text: t }), (e) => ({ error: e.message }));
+    };
+
+    try {
+      let r = await run([
+        { status: 503, body: errBody('overloaded') },
+        { status: 500, body: errBody('internal') },
+        { status: 200, body: answerBody('드디어 됐다') },
+      ]);
+      ok('5xx 는 다시 해서 성공', r.text === '드디어 됐다', r.text ?? r.error);
+      ok('세 번까지 시도', sent.length === 3, `${sent.length}번`);
+
+      r = await run(Array.from({ length: 5 }, () => ({ status: 503, body: errBody('x') })));
+      ok('계속 실패하면 3번에서 멈춤', sent.length === 3, `${sent.length}번`);
+      ok('혼잡 안내로 끝남', (r.error ?? '').includes('혼잡'), r.error);
+
+      // ⚠️ 429 를 곧바로 다시 던지면 상황이 나빠지고, 하루 한도면 몇 번을 해도 같습니다.
+      r = await run([{ status: 429, body: errBody('quota') }, { status: 200, body: answerBody('안 와야 함') }]);
+      ok('429 는 다시 하지 않음', sent.length === 1, `${sent.length}번`);
+      ok('무료 등급 한도라고 알려줌', (r.error ?? '').includes('무료 등급'));
+
+      r = await run([{ status: 404, body: errBody('nope') }, { status: 200, body: answerBody('안 와야 함') }]);
+      ok('404 는 다시 하지 않음', sent.length === 1, `${sent.length}번`);
+
+      // ⚠️ 시간 초과는 이미 30초를 기다린 뒤입니다. 또 기다리게 하면 90초가 됩니다.
+      r = await run([{ abort: true }, { status: 200, body: answerBody('안 와야 함') }]);
+      ok('시간 초과는 다시 하지 않음', sent.length === 1, `${sent.length}번`);
+      ok('시간 초과라고 알려줌', (r.error ?? '').includes('안 답하지 않았습니다') || (r.error ?? '').includes('초 안에'));
+
+      // "생각" 설정 이름이 모델마다 다릅니다. 빼고 다시 하되 **횟수는 안 씁니다.**
+      r = await run([
+        { status: 400, body: errBody('Unknown name "thinkingLevel"') },
+        { status: 503, body: errBody('overloaded') },
+        { status: 503, body: errBody('overloaded') },
+        { status: 200, body: answerBody('생각 빼고 성공') },
+      ]);
+      ok('생각 설정이 거부되면 빼고 다시', r.text === '생각 빼고 성공', r.text ?? r.error);
+      ok('그 시도는 재시도 횟수로 안 셈', sent.length === 4, `${sent.length}번`);
+      ok('그다음부터는 생각 설정을 안 보냄',
+        sent[0].generationConfig.thinkingConfig !== undefined &&
+        sent[1].generationConfig.thinkingConfig === undefined);
+
+      // 3.x 에서 폐기된 항목을 보내면 400 이 날 수 있습니다.
+      await run([{ status: 200, body: answerBody('확인') }]);
+      const g = sent[0].generationConfig;
+      ok('temperature·topP·topK 를 안 보냄',
+        g.temperature === undefined && g.topP === undefined && g.topK === undefined);
+      ok('마지막 turn 이 model 이 아님', sent[0].contents.at(-1).role === 'user');
+
+      // 답이 비는 것은 혼잡이 아니라 이유가 있는 것입니다.
+      r = await run([
+        { status: 200, body: { candidates: [{ content: { parts: [] }, finishReason: 'MAX_TOKENS' }] } },
+        { status: 200, body: answerBody('안 와야 함') },
+      ]);
+      ok('빈 답은 다시 하지 않음', sent.length === 1, `${sent.length}번`);
+      ok('길이 초과라고 알려줌', (r.error ?? '').includes('AI_MAX_OUTPUT_TOKENS'), r.error);
+    } finally {
+      globalThis.fetch = realFetch;
+      config.ai.retryDelayMs = savedDelay;
+      config.ai.geminiKey = savedKey;
+    }
+  }
+
   // 말투는 소유자가 정했습니다 — 반말 · 구어체 · 이름은 망고.
   {
     const gemSrc = fs.readFileSync('./src/ai/gemini.js', 'utf8');
@@ -455,8 +548,16 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('어디에 넣어야 하는지까지 알려줌', gem.missingKeyMessage().includes('GEMINI_API_KEY'));
   ok('키 없으면 실제로 그 안내가 나감',
     fs.readFileSync('./src/ai/gemini.js', 'utf8').includes('if (!hasKey()) throw userError(missingKeyMessage());'));
-  // 이 검사 자체가 다시 네트워크를 쓰지 않도록 못 박아둡니다.
-  ok('verify 가 제미나이를 실제로 부르지 않음', !/\bgem\.ask\(/.test(fs.readFileSync('./verify.mjs', 'utf8')));
+  // 이 검사 자체가 **진짜 네트워크를 쓰지 않도록** 못 박아둡니다.
+  // ask() 를 부르긴 하지만 반드시 fetch 를 갈아끼운 상태여야 하고, 끝나면 되돌려야 합니다.
+  {
+    const v = fs.readFileSync('./verify.mjs', 'utf8');
+    ok('제미나이 검사는 fetch 를 갈아끼워서 함',
+      v.includes('globalThis.fetch = async') && v.includes('globalThis.fetch = realFetch'));
+    ok('갈아끼우기 전에 ask 를 부르지 않음',
+      v.indexOf('globalThis.fetch = async') < v.indexOf('gem.ask('));
+    ok('키가 있든 없든 같게 (환경에 안 기댐)', v.includes("config.ai.geminiKey = 'verify-fake-key'"));
+  }
   // 모르는 오류는 제미나이가 한 말을 그대로 (3.1-4)
   ok('모르는 오류는 원문을 보여줌',
     gem.friendlyError(418, { error: { message: 'teapot detected' } }).includes('teapot detected'));

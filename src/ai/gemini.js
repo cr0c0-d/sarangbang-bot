@@ -133,48 +133,90 @@ function requestBody(prompt, { withoutThinking }) {
  * @param {string} prompt 사용자가 물어본 내용
  * @returns {Promise<string>} 답 (한 덩어리 글자)
  */
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
+ * 다시 하면 될 수도 있는 실패인가.
+ *
+ * ⚠️ **429(한도 초과)는 넣지 않습니다.** 곧바로 다시 던지면 상황이 나빠지고,
+ *    하루 한도가 떨어진 것이라면 몇 번을 해도 똑같습니다. 그건 바로 알려주는 게 낫습니다.
+ * ⚠️ **시간 초과도 넣지 않습니다.** 이미 30초를 기다린 사람을 또 기다리게 만듭니다.
+ *    (30초 × 3 = 90초를 쳐다보게 됩니다)
+ * 5xx 와 연결 실패만 재시도합니다 — 둘 다 **빨리 실패해서** 다시 해볼 값어치가 있습니다.
+ */
+function isRetryable(status) {
+  return status >= 500;
+}
+
+/** 한 번 호출합니다. 결과는 판단하지 않고 그대로 돌려줍니다. */
+async function callOnce(prompt, withoutThinking) {
+  // 하염없이 기다리지 않게 제한시간을 둡니다. (movie/tmdb.js 와 같은 모양)
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), config.ai.timeoutMs);
+  try {
+    const res = await fetch(`${BASE}/${encodeURIComponent(config.ai.geminiModel)}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': config.ai.geminiKey },
+      body: JSON.stringify(requestBody(prompt, { withoutThinking })),
+      signal: ctrl.signal,
+    });
+    return { res, body: await res.json().catch(() => null) };
+  } catch (err) {
+    if (err.name === 'AbortError') {
+      // 시간 초과는 재시도하지 않습니다 (위 설명). 바로 알립니다.
+      throw userError(
+        `제미나이가 ${config.ai.timeoutMs / 1000}초 안에 답하지 않았습니다. 잠시 뒤 다시 시도해주세요.`
+      );
+    }
+    return { netError: err };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 export async function ask(prompt) {
   if (!hasKey()) throw userError(missingKeyMessage());
 
-  let res;
-  let body;
-  for (const withoutThinking of [false, true]) {
-    // 느린 서버에서 하염없이 기다리지 않게 제한시간을 둡니다. (movie/tmdb.js 와 같은 모양)
-    const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), config.ai.timeoutMs);
-    try {
-      res = await fetch(`${BASE}/${encodeURIComponent(config.ai.geminiModel)}:generateContent`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', 'x-goog-api-key': config.ai.geminiKey },
-        body: JSON.stringify(requestBody(prompt, { withoutThinking })),
-        signal: ctrl.signal,
-      });
-      body = await res.json().catch(() => null);
-    } catch (err) {
-      if (err.name === 'AbortError') {
-        throw userError(
-          `제미나이가 ${config.ai.timeoutMs / 1000}초 안에 답하지 않았습니다. 잠시 뒤 다시 시도해주세요.`
-        );
-      }
-      throw userError(`제미나이에 연결하지 못했습니다: ${err.message}`);
-    } finally {
-      clearTimeout(timer);
+  const attempts = Math.max(1, config.ai.retries + 1);
+  // "생각" 설정 이름이 모델마다 달라서 한 번 빼고 다시 해봅니다.
+  // ⚠️ 이건 **재시도 횟수로 세지 않습니다.** 혼잡해서 다시 하는 것과 다른 일입니다.
+  let withoutThinking = false;
+  let usedThinkingFallback = false;
+
+  for (let attempt = 1; ; attempt++) {
+    const { res, body, netError } = await callOnce(prompt, withoutThinking);
+
+    if (netError) {
+      if (attempt >= attempts) throw userError(`제미나이에 연결하지 못했습니다: ${netError.message}`);
+      console.warn(`[ai] 연결 실패, 재시도 ${attempt}/${attempts - 1}: ${netError.message}`);
+      await sleep(config.ai.retryDelayMs * attempt);
+      continue;
     }
 
-    // "생각 끄기" 를 모르는 모델이면 그것만 빼고 한 번 더 시도합니다.
-    const msg = String(body?.error?.message ?? '');
-    if (!res.ok && !withoutThinking && /thinking/i.test(msg)) continue;
-    break;
+    if (!res.ok) {
+      // 이 모델이 "생각" 설정 이름을 모르면 그것만 빼고 한 번 더. (횟수 소모 없음)
+      if (!usedThinkingFallback && /thinking/i.test(String(body?.error?.message ?? ''))) {
+        usedThinkingFallback = true;
+        withoutThinking = true;
+        attempt -= 1;
+        continue;
+      }
+      if (isRetryable(res.status) && attempt < attempts) {
+        console.warn(`[ai] 제미나이 ${res.status}, 재시도 ${attempt}/${attempts - 1}`);
+        await sleep(config.ai.retryDelayMs * attempt);
+        continue;
+      }
+      throw userError(friendlyError(res.status, body));
+    }
+
+    const candidate = body?.candidates?.[0];
+    const text = (candidate?.content?.parts ?? [])
+      .map((p) => p?.text ?? '')
+      .join('')
+      .trim();
+
+    // 답이 비는 것은 혼잡이 아니라 이유가 있는 것입니다(안전 필터·길이 초과). 재시도하지 않습니다.
+    if (!text) throw userError(explainEmpty(candidate, body?.promptFeedback));
+    return text;
   }
-
-  if (!res.ok) throw userError(friendlyError(res.status, body));
-
-  const candidate = body?.candidates?.[0];
-  const text = (candidate?.content?.parts ?? [])
-    .map((p) => p?.text ?? '')
-    .join('')
-    .trim();
-
-  if (!text) throw userError(explainEmpty(candidate, body?.promptFeedback));
-  return text;
 }
