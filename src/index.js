@@ -37,6 +37,7 @@ import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES, inRole } from './settings.js';
 import { isExpected } from './user-error.js';
+import { isShareComponent, handleShareComponent } from './share.js';
 
 /** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
 function featureOffMessage(key) {
@@ -208,13 +209,15 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isMusic = interaction.customId.startsWith('m:');
     const isTimer = interaction.customId.startsWith('t:');
     const isTts = interaction.customId.startsWith('tts:');
+    // 📢 모두에게 보이기 — 어느 기능에도 속하지 않습니다. /도움말 처럼 항상 동작해야 합니다.
+    const isShare = isShareComponent(interaction.customId);
     const isFeature = interaction.customId.startsWith('f:');
     const isImage = interaction.customId.startsWith('g:');
     const isChannel = interaction.customId.startsWith('c:');
     const isPoll = interaction.customId.startsWith('v:');
     const isMovie = interaction.customId.startsWith('mv:');
     const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
-    if (!isMusic && !isTimer && !isTts && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
+    if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (
@@ -238,7 +241,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
-      if (isTts) await handleTtsComponent(interaction);
+      if (isShare) await handleShareComponent(interaction);
+      else if (isTts) await handleTtsComponent(interaction);
       else if (isFeature) await handleFeatureComponent(interaction);
       else if (isChannel) await handleChannelComponent(interaction);
       else if (isImage) await handleImageComponent(interaction);

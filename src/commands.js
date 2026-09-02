@@ -19,6 +19,7 @@ import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
 import { getWithSource, inRole } from './settings.js';
+import { withShareButton } from './share.js';
 
 const basicCommands = [
   {
@@ -140,7 +141,8 @@ const basicCommands = [
         .setDescription('설정은 `/기능` 으로 켜고 끄고, `/채널설정` 으로 채널을 정합니다.')
         .addFields(fields.filter((f) => inRole(f.feature)).map(({ feature, ...f }) => f));
 
-      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+      // 📢 버튼으로 채팅방 모두에게 한 번 올릴 수 있습니다. (기능이 추가됐을 때 공지용)
+      await interaction.reply(withShareButton({ embeds: [embed], flags: MessageFlags.Ephemeral }));
     },
   },
 ];

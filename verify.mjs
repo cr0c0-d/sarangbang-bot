@@ -180,12 +180,57 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   // 목록 화면. 명령어를 또 만들지 않고 인자 없이 실행했을 때 보여줍니다 (3.6-6).
   const empty = tts.buildAbbrevPanel('nobody');
   ok('비었으면 등록 방법을 알려줌', JSON.stringify(empty.embeds[0].toJSON()).includes('/축약어 단어'));
-  ok('비었으면 지우기 드롭다운 없음', !empty.components);
+  // 비었으면 지울 것이 없으니 드롭다운은 없고, 📢 버튼만 있습니다.
+  ok('비었으면 지우기 드롭다운 없음',
+    !JSON.stringify(empty.components ?? []).includes('tts:abbrev:del'));
   const panel = tts.buildAbbrevPanel(G);
   const pj = JSON.stringify([panel.embeds[0].toJSON(), ...panel.components.map((r) => r.toJSON())]);
   ok('목록에 등록한 것이 보임', pj.includes('ㄱㅊ') && pj.includes('괜찮아'));
   ok('지우기 드롭다운이 있음', pj.includes('tts:abbrev:del'));
   ok('목록은 나만 보이게', panel.flags === (await import('discord.js')).MessageFlags.Ephemeral);
+}
+
+// 6-2) 📢 모두에게 보이기 — 명령어도 인자도 늘리지 않고 공지하는 길
+//
+// 소유자 요청: "/도움말 같은 걸 한번씩 전체공지하고 싶다. 명령어는 추가하기 싫다."
+{
+  const share = await import('./src/share.js');
+  const { commandMap } = await import('./src/commands.js');
+  const dj = await import('discord.js');
+
+  const plain = { embeds: [new dj.EmbedBuilder().setTitle('T')], flags: dj.MessageFlags.Ephemeral };
+  const withBtn = share.withShareButton(plain);
+  ok('버튼이 붙음', JSON.stringify(withBtn.components.map((r) => r.toJSON())).includes('share:now'));
+  ok('원래 내용은 그대로', withBtn.embeds === plain.embeds && withBtn.flags === plain.flags);
+  ok('원래 객체를 고치지 않음', plain.components === undefined);
+
+  // 이미 줄이 있으면 뒤에 붙어야 합니다 (기존 조작을 밀어내면 안 됩니다).
+  const row = () => new dj.ActionRowBuilder().addComponents(
+    new dj.ButtonBuilder().setCustomId('x').setLabel('x').setStyle(dj.ButtonStyle.Secondary)
+  );
+  const two = share.withShareButton({ components: [row()] });
+  ok('기존 줄 뒤에 붙음', two.components.length === 2 && JSON.stringify(two.components[1].toJSON()).includes('share:now'));
+  // ⚠️ 한 메시지에 5줄까지입니다. 꽉 찬 화면을 깨뜨리면 안 됩니다.
+  const full = share.withShareButton({ components: [row(), row(), row(), row(), row()] });
+  ok('5줄이면 버튼을 포기함', full.components.length === 5 && !JSON.stringify(full.components.map((r) => r.toJSON())).includes('share:now'));
+
+  ok('이 버튼인지 알아봄', share.isShareComponent('share:now') && !share.isShareComponent('m:next'));
+
+  const src = fs.readFileSync('./src/share.js', 'utf8');
+  // 남이 눌러도 동작하지 않는 버튼을 채팅방에 올리면 안 됩니다.
+  ok('올릴 때 버튼·드롭다운은 빼고 올림', src.includes('content: content || undefined') && !/send\({[\s\S]{0,200}components:/.test(src));
+  // 공지라도 자고 있는 사람을 깨울 이유는 없습니다.
+  ok('알림을 쏘지 않음', src.includes('SuppressNotifications') && src.includes("parse: []"));
+  // 두 번 올리면 채팅방이 지저분해집니다.
+  ok('올린 뒤 버튼을 없앰', src.includes('두 번 올리는 것을 막습니다'));
+  ok('권한이 없으면 이유를 알려줌', src.includes('글을 쓸 권한이 없습니다'));
+
+  const ix = fs.readFileSync('./src/index.js', 'utf8');
+  // /도움말 처럼 어느 기능에도 속하지 않아 **항상** 동작해야 합니다.
+  ok('기능이 꺼져도 동작', ix.includes('const isShare = isShareComponent('));
+  ok('/도움말 에 버튼이 붙음',
+    fs.readFileSync('./src/commands.js', 'utf8').includes('withShareButton({ embeds: [embed]'));
+  ok('명령어 개수는 그대로 (인자도 안 늘림)', commandMap.has('도움말') && !commandMap.has('공지'));
 }
 
 // 6a) 이모지는 읽지 않는다

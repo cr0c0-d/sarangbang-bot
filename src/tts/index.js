@@ -22,6 +22,7 @@ import {
   ABBREV_MAX,
 } from '../settings.js';
 import { VOICES, VOICE_CHOICES, voiceLabel, isKoreanOnly } from './voices.js';
+import { withShareButton } from '../share.js';
 
 // 서버별 on/off 상태. 기본값은 켜짐.
 const enabledByGuild = new Map();
@@ -374,14 +375,15 @@ export function buildAbbrevPanel(guildId) {
     )
     .setFooter({ text: `등록 ${words.length}/${ABBREV_MAX}개 · 같은 단어를 다시 등록하면 덮어씁니다` });
 
-  if (words.length === 0) return { embeds: [embed], flags: MessageFlags.Ephemeral };
+  // 등록된 게 없어도 공유할 값어치는 있습니다 — "이렇게 등록하세요" 안내가 들어 있습니다.
+  if (words.length === 0) return withShareButton({ embeds: [embed], flags: MessageFlags.Ephemeral });
 
   // 드롭다운은 25개까지입니다. 넘으면 앞 25개만 지울 수 있고, 그 사실을 적어줍니다.
   const shown = words.slice(0, 25);
   if (shown.length < words.length) {
     embed.setFooter({ text: `등록 ${words.length}/${ABBREV_MAX}개 · 아래에서는 앞 ${shown.length}개만 지울 수 있습니다` });
   }
-  return {
+  return withShareButton({
     embeds: [embed],
     components: [
       new ActionRowBuilder().addComponents(
@@ -394,7 +396,7 @@ export function buildAbbrevPanel(guildId) {
       ),
     ],
     flags: MessageFlags.Ephemeral,
-  };
+  });
 }
 
 /** 축약어 지우기 드롭다운 처리. customId 가 `tts:` 로 시작하는 것만 옵니다. */
