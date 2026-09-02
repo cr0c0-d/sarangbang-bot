@@ -24,7 +24,7 @@ function assetFor(platform, arch) {
         '32비트 ARM(armv7l)은 자동 설치를 지원하지 않습니다.\n' +
           '  - 64비트 OS(arm64)를 쓰시면 그대로 동작합니다.\n' +
           '  - 꼭 32비트를 써야 한다면 직접 설치하세요:\n' +
-          '      pip install -U yt-dlp  후  which yt-dlp 로 나온 파일을 bin/yt-dlp 로 복사'
+          '      pip install -U "yt-dlp[default]"  후  which yt-dlp 로 나온 파일을 bin/yt-dlp 로 복사'
       );
     }
     return { name: 'yt-dlp_linux', file: 'yt-dlp' };
@@ -38,7 +38,7 @@ const custom = (process.env.YTDLP_PATH ?? '').trim();
 if (custom) {
   console.log(`이 봇은 bin/ 이 아니라 아래 yt-dlp 를 씁니다 (.env* 의 YTDLP_PATH):\n  ${custom}\n`);
   console.log('pip 로 깐 것이라면 이렇게 갱신하세요:');
-  console.log(`  ${path.dirname(custom)}/pip install -U yt-dlp\n`);
+  console.log(`  ${path.dirname(custom)}/pip install -U "yt-dlp[default]"\n`);
   console.log('bin/ 쪽을 굳이 새로 받으시려면 YTDLP_PATH 를 잠시 비우고 다시 실행하세요.');
   process.exit(0);
 }

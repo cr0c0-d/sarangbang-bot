@@ -107,7 +107,7 @@ client.once(Events.ClientReady, (c) => {
           '   ⚠️ 기동이 깁니다. 지금 쓰는 yt-dlp 는 실행할 때마다 파이썬을 푸는 방식입니다.\n' +
             '      pip 로 깔면 그 과정이 없어져 훨씬 빨리 뜹니다. 서버에서:\n' +
             '        sudo apt install -y python3-venv   # 없으면 ensurepip 오류가 납니다\n' +
-            '        python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U yt-dlp\n' +
+            '        python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"\n' +
             '        time ~/.venv-ytdlp/bin/yt-dlp --version   # 지금보다 빠른지 확인\n' +
             '      빨라지면 `.env.music` 에 아래를 넣고 재시작하세요. 이 줄의 초가 바로 답합니다.\n' +
             '        YTDLP_PATH=' +

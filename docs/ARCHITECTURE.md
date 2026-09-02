@@ -473,6 +473,23 @@ python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -q -U yt-dlp
 time ~/.venv-ytdlp/bin/yt-dlp --version      # 먼저 비교해볼 것
 ```
 
+⚠️ **`[default]` 를 빼먹으면 안 된다.** 이걸 몰라서 한참 헤맸다.
+
+`pip install yt-dlp` 는 **최소 의존성만** 깐다. `bin/` 의 공식 바이너리는 PyInstaller
+묶음이라 `websockets`·`brotli`·`pycryptodomex` 같은 것을 **통째로 품고 있다.**
+그래서 이런 일이 생긴다.
+
+```
+$ ~/.venv-ytdlp/bin/yt-dlp --simulate "https://www.youtube.com/watch?v=..."   ← 잘 됨
+[music] 추출 실패 … --cookies /home/ubuntu/sarangbang-bot/cookies.txt …       ← 봇에서는 실패
+```
+
+**손으로 돌리면 되는데 봇에서만 안 된다.** 차이는 봇이 덧붙이는 `--cookies` 였고,
+그 경로가 빠진 의존성을 필요로 했다. `[default]` 가 바이너리에 든 것들을 같이 깐다.
+
+> 이 사건이 `실패한 명령` 로그(3.1-4)를 넣게 된 계기다. 그 줄이 없었다면
+> 봇이 실제로 무슨 인자를 넘겼는지 짐작으로 재구성해야 했다.
+
 빨라지면 `.env.music` 에 `YTDLP_PATH=/home/ubuntu/.venv-ytdlp/bin/yt-dlp`.
 봇이 켤 때 기동 시간을 재서 경로와 함께 찍으므로 **효과가 바로 보인다.**
 되돌리려면 그 줄만 지운다.

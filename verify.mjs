@@ -692,7 +692,13 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     const savedPath = process.env.YTDLP_PATH;
     ok('기본 안내는 npm 스크립트', updateHint() === 'npm run update-ytdlp');
     process.env.YTDLP_PATH = '/home/ubuntu/.venv-ytdlp/bin/yt-dlp';
-    ok('pip 로 깔았으면 pip 로 안내', updateHint().includes('pip install -U yt-dlp'), updateHint());
+    // ⚠️ `[default]` 없이 깔면 최소 의존성만 들어와서, 손으로 돌리면 되는데
+    //    **봇에서만(쿠키 경로에서) 실패**합니다. 안내에서 이게 빠지면 안 됩니다.
+    ok('pip 안내에 [default] 가 있음', updateHint().includes('"yt-dlp[default]"'), updateHint());
+    ok('안내하는 모든 pip 명령에 [default]',
+      ['./src/index.js', './src/music/ytdlp.js', './scripts/update-ytdlp.mjs', './.env.music.example'].every(
+        (p) => !/pip install(?! -U "yt-dlp\[default\]")/.test(fs.readFileSync(p, 'utf8'))
+      ));
     if (savedPath === undefined) delete process.env.YTDLP_PATH;
     else process.env.YTDLP_PATH = savedPath;
     // 안내를 적는 곳이 여러 군데라 하나만 빠져도 엉뚱한 데로 보냅니다.

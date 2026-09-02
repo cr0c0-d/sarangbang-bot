@@ -35,7 +35,7 @@ export function ytdlpPath() {
 export function updateHint() {
   const custom = (process.env.YTDLP_PATH ?? '').trim();
   return custom
-    ? `${path.dirname(custom)}/pip install -U yt-dlp`
+    ? `${path.dirname(custom)}/pip install -U "yt-dlp[default]"`
     : 'npm run update-ytdlp';
 }
 
