@@ -187,7 +187,7 @@ export const config = {
     // 아래 넷이 요금(과 무료 한도)을 지키는 장치입니다. docs/망고야-기획.md 3절.
     maxInputChars: num('AI_MAX_INPUT_CHARS', 1000),
     maxOutputTokens: num('AI_MAX_OUTPUT_TOKENS', 800),
-    perUserHourly: num('AI_PER_USER_HOURLY', 5),
+    perUserHourly: num('AI_PER_USER_HOURLY', 10),
     perGuildDaily: num('AI_PER_GUILD_DAILY', 50),
     timeoutMs: num('AI_TIMEOUT_MS', 30000),
   },
