@@ -44,6 +44,18 @@ const LEAD_PIPE_SEC = 3.5;   // 유튜브에서 다시 뽑는 경우 (2단계, �
 const SRC_LABEL = ['직접 수신', '뽑아둔 주소', '전체 추출'];
 
 /**
+ * 곡이 끝나기 **몇 초 전**에 다음 곡 소리를 미리 열어둘지.
+ *
+ * 실측(소유자 서버, 1코어 ARM): 주소를 이미 뽑아둔 상태에서도 첫 소리까지 9~11초.
+ * 그 시간이 **곡과 곡 사이에 그대로 침묵**으로 들어갑니다.
+ * 넉넉히 잡아도 손해가 거의 없습니다 — 미리 연 소리는 파이프가 차면 알아서 멈춰 기다립니다.
+ */
+const PREPARE_LEAD_SEC = 40;
+
+/** 길이를 모르거나 아주 짧은 곡은 이만큼 지난 뒤에 준비를 시작합니다. */
+const PREPARE_MIN_DELAY_SEC = 3;
+
+/**
  * 곡을 **처음부터 다시 틀 수 있는 상태**로 되돌립니다.
  *
  * `srcLevel`(어느 단계로 틀지)·`resumeAt`(몇 초부터 틀지) 은 **한 번의 시도에만**
@@ -129,6 +141,10 @@ export class GuildAudio {
     this.panelTimer = null;        // 곡이 바뀐 뒤 제어판 갱신 (schedulePanelRefresh)
     this.prepStartedAt = null;     // 준비를 시작한 시각 (첫 소리까지 몇 초 걸렸는지 로그용)
     this.directCheckTimer = null;  // 직접 수신이 정말 소리를 냈는지 나중에 확인 (confirmDirectLater)
+    this.prepareTimer = null;      // 다음 곡 소리를 미리 열어둘 예약 (schedulePrepareNext)
+    this.preparing = false;        // 지금 미리 여는 중인지
+    /** @type {{item: object, stream: any, level: number, kill: () => void}|null} 미리 열어둔 소리 */
+    this.prepared = null;
     this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
     this.usedDirect = false;       // 이번 곡을 "직접 수신"(0단계) 으로 틀었는지
     this.srcLevel = SRC_DIRECT;    // 이번 곡을 어느 단계로 틀었는지 (ytdlp.js 의 SRC_* 참고)
@@ -168,6 +184,8 @@ export class GuildAudio {
       //   yt-dlp 로 뽑는 중입니다. 코어가 하나뿐인 서버에서 둘이 서로를 굶겨
       //   **지금 듣고 싶은 곡이 더 늦게** 나왔습니다. (실측: 22~25초)
       this.prefetchNext();
+      // 그리고 곡이 끝나갈 무렵 다음 곡 **소리까지** 미리 열어둡니다. (전환이 즉시가 됩니다)
+      this.schedulePrepareNext();
     });
     this.musicPlayer.on('error', (err) => {
       console.error('[music] 재생 오류:', err.message);
@@ -304,6 +322,9 @@ export class GuildAudio {
     // 곡이 바뀌므로 대기 중이던 음량 반영은 의미가 없습니다.
     clearTimeout(this.volumeTimer);
     this.volumeTimer = null;
+    // 예약해둔 "다음 곡 미리 열기" 도 의미가 없습니다. 지금 곡이 시작되면 다시 겁니다.
+    clearTimeout(this.prepareTimer);
+    this.prepareTimer = null;
     this.killCurrent?.();
     this.killCurrent = null;
 
@@ -340,25 +361,49 @@ export class GuildAudio {
 
     try {
       this.prepStartedAt = Date.now(); // 첫 소리까지 몇 초 걸렸는지 재려고 (Playing 에서 찍습니다)
-      // 가장 빠른 단계부터 시작합니다. item.srcLevel 은 "그 단계가 실패해서
-      // 한 칸 내려가 다시 시도하는 중" 이라는 뜻입니다. (ytdlp.js 의 SRC_* 참고)
-      const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
-      this.usedDirect = src.remote;
-      this.srcLevel = src.level;
-      this.lastStreamError = null;
 
-      const { stream, kill } = toOggOpus(src.input, {
-        volume: volumeScale(this.guild.id, 'music'),
-        seekSec: item.resumeAt ?? 0,
-        remote: src.remote,
-        onError: (msg) => {
-          this.lastStreamError = msg;
-        },
-      });
-      this.killCurrent = () => {
-        kill();
-        src.kill();
-      };
+      // ★ 미리 열어둔 소리가 **바로 이 곡의 것**이면 그대로 씁니다 → 전환이 즉시입니다.
+      //   같은 곡인지는 객체가 같은지로 봅니다. 대기열이 바뀌었거나 재시도로 새로 만든
+      //   항목이면 다른 객체라 자동으로 걸러집니다. 안 쓰게 된 것은 반드시 정리합니다.
+      let ready = null;
+      if (this.prepared) {
+        if (this.prepared.item === item) {
+          ready = this.prepared;
+          this.prepared = null;
+        } else {
+          this.dropPrepared();
+        }
+      }
+
+      let stream;
+      let kill;
+      if (ready) {
+        ({ stream, kill } = ready);
+        this.usedDirect = ready.level === SRC_DIRECT;
+        this.srcLevel = ready.level;
+        this.lastStreamError = null;
+        this.killCurrent = kill;
+      } else {
+        // 가장 빠른 단계부터 시작합니다. item.srcLevel 은 "그 단계가 실패해서
+        // 한 칸 내려가 다시 시도하는 중" 이라는 뜻입니다. (ytdlp.js 의 SRC_* 참고)
+        const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
+        this.usedDirect = src.remote;
+        this.srcLevel = src.level;
+        this.lastStreamError = null;
+
+        ({ stream, kill } = toOggOpus(src.input, {
+          volume: volumeScale(this.guild.id, 'music'),
+          seekSec: item.resumeAt ?? 0,
+          remote: src.remote,
+          onError: (msg) => {
+            this.lastStreamError = msg;
+          },
+        }));
+        this.killCurrent = () => {
+          kill();
+          src.kill();
+        };
+      }
 
       const resource = createAudioResource(stream, { inputType: StreamType.OggOpus });
       this.currentResource = resource;
@@ -390,6 +435,11 @@ export class GuildAudio {
     // 🔉 🔊 버튼은 연달아 누르게 됩니다(+10 +10 +10). 누를 때마다 다시 틀면
     // 그때마다 끊기고, 심하면 다시 트는 중에 또 눌러서 엉킵니다.
     // 손을 뗀 뒤 한 번만 반영합니다.
+    // 미리 열어둔 다음 곡에는 **바뀌기 전 음량이 박혀 있습니다**(ffmpeg 은 띄울 때 정해집니다).
+    // 그대로 쓰면 다음 곡만 옛 음량으로 나옵니다. 버리고 다시 엽니다.
+    this.dropPrepared();
+    this.schedulePrepareNext();
+
     const item = this.current;
     clearTimeout(this.volumeTimer);
     this.volumeTimer = setTimeout(() => {
@@ -502,6 +552,87 @@ export class GuildAudio {
    */
   positionSec() {
     return this.currentOffsetSec + (this.currentResource?.playbackDuration ?? 0) / 1000;
+  }
+
+  /**
+   * 다음 곡의 **소리까지** 미리 열어둡니다. (주소만 뽑아두는 prefetchNext 의 다음 단계)
+   *
+   * 왜 필요한가: 주소를 이미 뽑아뒀어도 실제로 소리가 나기까지 이 서버에서는
+   * **9~11초**가 걸립니다(실측). yt-dlp 를 띄우고(3초) 받아오는 시간입니다.
+   * 그게 곡과 곡 사이에 그대로 침묵으로 들어갑니다.
+   *
+   * 지금 곡이 끝나기 {@link PREPARE_LEAD_SEC} 초 전에 미리 열어두면 **전환이 사실상 즉시**입니다.
+   * 열어둔 소리는 파이프가 차면 알아서 멈춰 기다리므로 CPU 도 거의 안 씁니다.
+   */
+  schedulePrepareNext() {
+    clearTimeout(this.prepareTimer);
+    this.prepareTimer = null;
+    if (this.destroyed || this.queue.length === 0) return;
+
+    const len = this.current?.track?.duration ?? 0;
+    // 길이를 모르면(라이브 등) 남은 시간을 계산할 수 없습니다. 조금 뒤에 그냥 시작합니다.
+    const remain = len > 0 ? len - this.positionSec() : 0;
+    const delaySec = len > 0 ? Math.max(PREPARE_MIN_DELAY_SEC, remain - PREPARE_LEAD_SEC) : PREPARE_MIN_DELAY_SEC;
+
+    this.prepareTimer = setTimeout(() => {
+      this.prepareTimer = null;
+      this.prepareNext().catch((err) => console.warn('[music] 다음 곡 준비:', err.message));
+    }, delaySec * 1000);
+  }
+
+  async prepareNext() {
+    const item = this.queue[0];
+    if (this.destroyed || !item || this.preparing) return;
+    if (this.prepared?.item === item) return; // 이미 준비해뒀습니다
+
+    this.preparing = true;
+    const t0 = Date.now();
+    let prepared = null;
+    try {
+      const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
+      const { stream, kill } = toOggOpus(src.input, {
+        volume: volumeScale(this.guild.id, 'music'),
+        remote: src.remote,
+        onError: () => {},
+      });
+      prepared = { item, stream, level: src.level, kill: () => { kill(); src.kill(); } };
+
+      // 첫 소리가 나올 준비가 될 때까지 기다립니다. 여기가 오래 걸리는 그 시간입니다.
+      const ready = await waitForAudio(stream, 90_000);
+      // 기다리는 사이에 대기열이 바뀌었으면 버립니다. (그 곡은 이제 다음 곡이 아닙니다)
+      if (!ready || this.destroyed || this.queue[0] !== item) {
+        prepared.kill();
+        return;
+      }
+      this.dropPrepared(); // 앞서 준비해둔 것이 있으면 정리하고 바꿔 답니다
+      this.prepared = prepared;
+      console.log(
+        `[music] 다음 곡 준비 완료 ${((Date.now() - t0) / 1000).toFixed(1)}초 · ` +
+          `${SRC_LABEL[prepared.level]} · ${item.track.title}`
+      );
+    } catch (err) {
+      prepared?.kill();
+      console.warn(`[music] 다음 곡 준비 실패 · ${item.track.title}: ${err.message.split('\n')[0]}`);
+    } finally {
+      this.preparing = false;
+    }
+  }
+
+  /**
+   * 미리 열어둔 소리를 버립니다.
+   *
+   * ⚠️ **반드시 kill 까지 해야 합니다.** 안 하면 yt-dlp·ffmpeg 프로세스가 남습니다.
+   *    코어가 하나뿐인 서버에서는 그게 그대로 다음 곡을 느리게 만듭니다.
+   */
+  dropPrepared() {
+    if (!this.prepared) return;
+    this.prepared.kill();
+    this.prepared = null;
+  }
+
+  /** 대기열을 건드린 뒤: 준비해둔 것이 더 이상 "다음 곡" 이 아니면 버립니다. */
+  dropPreparedIfNotNext() {
+    if (this.prepared && this.queue[0] !== this.prepared.item) this.dropPrepared();
   }
 
   /**
@@ -678,6 +809,7 @@ export class GuildAudio {
 
   stop() {
     this.queue = [];
+    this.dropPrepared(); // 미리 열어둔 소리도 버립니다. 안 그러면 프로세스가 남습니다.
     this.loop = false;
     if (this.current) this.pushHistory(this.current);
     this.current = null;
@@ -694,7 +826,9 @@ export class GuildAudio {
   removeAt(pos) {
     const i = pos - 1;
     if (i < 0 || i >= this.queue.length) return null;
-    return this.queue.splice(i, 1)[0];
+    const removed = this.queue.splice(i, 1)[0];
+    this.dropPreparedIfNotNext();
+    return removed;
   }
 
   /** 곡을 다른 순번으로 옮깁니다. @returns {object|null} 옮긴 항목 */
@@ -705,6 +839,7 @@ export class GuildAudio {
     // 범위를 벗어난 목표 위치는 양 끝으로 붙입니다. (사용자가 큰 숫자를 넣어도 동작)
     const ti = Math.max(0, Math.min(this.queue.length, to - 1));
     this.queue.splice(ti, 0, item);
+    this.dropPreparedIfNotNext();
     return item;
   }
 
@@ -716,6 +851,7 @@ export class GuildAudio {
   clearQueue() {
     const n = this.queue.length;
     this.queue = [];
+    this.dropPrepared();
     return n;
   }
 
@@ -817,6 +953,9 @@ export class GuildAudio {
     this.panelTimer = null;
     clearTimeout(this.directCheckTimer);
     this.directCheckTimer = null;
+    clearTimeout(this.prepareTimer);
+    this.prepareTimer = null;
+    this.dropPrepared(); // 미리 열어둔 yt-dlp·ffmpeg 이 남지 않게
     this.queue = [];
     this.history = [];
     this.nextIntent = null;

@@ -733,6 +733,21 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     const playNextBlock = ga.slice(ga.indexOf("playNext(intent = 'auto') {"), ga.indexOf('  reapplyVolume()'));
     ok('미리 뽑기는 소리가 난 뒤에 시작', playingBlock.includes('this.prefetchNext();'));
     ok('곡을 거는 순간에는 미리 뽑지 않음', !playNextBlock.includes('this.prefetchNext();'));
+
+    // ★ 주소를 뽑아뒀어도 첫 소리까지 9~11초입니다(실측). 그게 곡 사이 침묵이 됩니다.
+    //   곡이 끝나갈 무렵 **소리까지** 미리 열어두면 전환이 사실상 즉시가 됩니다.
+    ok('곡이 끝나갈 무렵 소리를 미리 엶', playingBlock.includes('this.schedulePrepareNext();'));
+    ok('준비해둔 소리를 실제로 씀', playNextBlock.includes('this.prepared.item === item'));
+    // 대기열이 바뀌었으면 준비해둔 것은 남이 됩니다. 반드시 정리해야 프로세스가 안 남습니다.
+    ok('내 것이 아니면 버림', playNextBlock.includes('this.dropPrepared();'));
+    ok('버릴 때 프로세스도 죽임', ga.includes('this.prepared.kill();'));
+    for (const fn of ['stop()', 'clearQueue()', 'destroy()']) {
+      const body = ga.slice(ga.indexOf(`  ${fn} {`), ga.indexOf(`  ${fn} {`) + 700);
+      ok(`${fn} 에서도 정리`, body.includes('this.dropPrepared()'));
+    }
+    // 음량은 ffmpeg 을 띄울 때 정해집니다. 미리 연 소리에는 옛 음량이 박혀 있습니다.
+    ok('음량이 바뀌면 다시 엶',
+      /reapplyVolume\(\)[\s\S]{0,400}?this\.dropPrepared\(\);[\s\S]{0,120}?this\.schedulePrepareNext\(\);/.test(ga));
   }
   ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
   const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
@@ -1636,7 +1651,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     ok('소리가 바뀌면 제어판이 따라옴', ga.includes('this.schedulePanelRefresh();'));
     ok('버튼 응답과 겹치지 않게 미룸', ga.includes('clearTimeout(this.panelTimer)'));
     ok('나갈 때 예약된 갱신도 정리',
-      /destroy\(\)[\s\S]*?clearTimeout\(this\.panelTimer\);[\s\S]{0,200}?this\.queue = \[\];/.test(ga));
+      /destroy\(\)[\s\S]*?clearTimeout\(this\.panelTimer\);[\s\S]{0,400}?this\.queue = \[\];/.test(ga));
     ok('나갈 때 직접수신 판정도 취소',
       /destroy\(\)[\s\S]*?clearTimeout\(this\.directCheckTimer\);/.test(ga));
   }
