@@ -24,7 +24,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 20개 로드 (우클릭 1개 포함)', allCommands.length === 20, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 21개 로드 (우클릭 1개 포함)', allCommands.length === 21, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -141,6 +141,52 @@ const got = cleanText({ content: '<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵
 // 소유자 요청: 링크는 "링크" 가 아니라 **"링크를 보냈어요"** 로 읽습니다.
 ok('TTS 정제', got === '누군가 야 링크를 보냈어요 봐 굵게 크크크', JSON.stringify(got));
 ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com/a', guild: g }, 200) === '링크를 보냈어요');
+
+// 6-1) 축약어 등록·관리 — 서버마다 쓰는 말이 달라서 코드를 고쳐 배포할 수 없습니다.
+{
+  const st = await import('./src/settings.js');
+  const tts = await import('./src/tts/index.js');
+  const G = 'abbrevguild';
+  const say = (s) => cleanText({ content: s, guild: g, guildId: G }, 200);
+
+  ok('등록 전에는 그대로 (낱자는 소리내어)', say('ㄱㅊ') === '그츠', say('ㄱㅊ'));
+  ok('기본 축약어는 등록 없이도 됨', say('ㄱㅅ') === '감사', say('ㄱㅅ'));
+
+  ok('등록하면 그렇게 읽음', st.setTtsAbbrev(G, 'ㄱㅊ', '괜찮아').ok && say('ㄱㅊ') === '괜찮아', say('ㄱㅊ'));
+  ok('글 중간에 있어도 바뀜', say('나는 ㄱㅊ 아니야') === '나는 괜찮아 아니야', say('나는 ㄱㅊ 아니야'));
+  // ⚠️ **낱말 전체가 같을 때만** 바꿔야 합니다. 안 그러면 멀쩡한 글자를 망가뜨립니다.
+  ok('낱말 일부는 안 바꿈', say('ㄱㅊㅊ') !== '괜찮아', say('ㄱㅊㅊ'));
+  // 낱자가 아닌 것도 등록할 수 있어야 합니다 (서버마다 쓰는 말이 다릅니다).
+  ok('낱자가 아니어도 등록됨', st.setTtsAbbrev(G, '갓생', '갓 생').ok && say('갓생') === '갓 생');
+  // 기본 표를 덮어쓸 수 있어야 합니다 — 기본값이 마음에 안 들 수 있습니다.
+  ok('기본 축약어를 덮어씀', st.setTtsAbbrev(G, 'ㄱㅅ', '고맙습니다').ok && say('ㄱㅅ') === '고맙습니다');
+  ok('다른 서버에는 영향 없음', cleanText({ content: 'ㄱㅅ', guild: g, guildId: 'other' }, 200) === '감사');
+
+  ok('지우면 되돌아감', st.clearTtsAbbrev(G, 'ㄱㅅ') && say('ㄱㅅ') === '감사');
+  ok('없는 것을 지우면 false', st.clearTtsAbbrev(G, '없는말') === false);
+
+  // 잘못된 입력은 이유를 말해줘야 합니다.
+  ok('공백이 든 단어는 거부', !st.setTtsAbbrev(G, '두 낱말', 'x').ok);
+  ok('빈 값은 거부', !st.setTtsAbbrev(G, '', 'x').ok && !st.setTtsAbbrev(G, 'x', '').ok);
+  ok('너무 긴 단어는 거부', !st.setTtsAbbrev(G, 'ㄱ'.repeat(30), 'x').ok);
+
+  // 개수 상한 — 무한정 쌓이면 읽기 처리가 느려집니다.
+  const F = 'fullguild';
+  for (let i = 0; i < st.ABBREV_MAX; i++) st.setTtsAbbrev(F, `말${i}`, '읽기');
+  const over = st.setTtsAbbrev(F, '하나더', '읽기');
+  ok('상한을 넘으면 거부', !over.ok && over.reason.includes(String(st.ABBREV_MAX)), over.reason);
+  ok('이미 있는 것은 상한과 무관하게 고칠 수 있음', st.setTtsAbbrev(F, '말0', '다르게').ok);
+
+  // 목록 화면. 명령어를 또 만들지 않고 인자 없이 실행했을 때 보여줍니다 (3.6-6).
+  const empty = tts.buildAbbrevPanel('nobody');
+  ok('비었으면 등록 방법을 알려줌', JSON.stringify(empty.embeds[0].toJSON()).includes('/축약어 단어'));
+  ok('비었으면 지우기 드롭다운 없음', !empty.components);
+  const panel = tts.buildAbbrevPanel(G);
+  const pj = JSON.stringify([panel.embeds[0].toJSON(), ...panel.components.map((r) => r.toJSON())]);
+  ok('목록에 등록한 것이 보임', pj.includes('ㄱㅊ') && pj.includes('괜찮아'));
+  ok('지우기 드롭다운이 있음', pj.includes('tts:abbrev:del'));
+  ok('목록은 나만 보이게', panel.flags === (await import('discord.js')).MessageFlags.Ephemeral);
+}
 
 // 6a) 이모지는 읽지 않는다
 {
@@ -1869,7 +1915,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 24개', union.length === 24, `${union.length}개`);
+  ok('둘을 합쳐 25개', union.length === 25, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

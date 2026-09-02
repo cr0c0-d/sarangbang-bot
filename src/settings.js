@@ -184,6 +184,59 @@ export function voiceFor(guildId, userId) {
   return userVoice(guildId, userId) ?? config.tts.voice;
 }
 
+// ── 읽어주기 축약어 (서버마다 따로) ───────────────────────────
+//
+// `tts/index.js` 에 기본 축약어 표가 있습니다(ㅇㅇ → 응응 …). 그런데 친구들끼리
+// 쓰는 말은 서버마다 다르고, 그때마다 코드를 고쳐 배포할 수는 없습니다.
+// 그래서 **디스코드에서 추가**할 수 있게 서버별로 저장합니다.
+//
+// ⚠️ 여기 등록한 것이 **기본 표를 이깁니다.** 기본값이 마음에 안 들면 덮어쓰면 됩니다.
+
+/** 서버 하나가 등록할 수 있는 최대 개수. 무한정 쌓이면 읽기 처리가 느려집니다. */
+export const ABBREV_MAX = 100;
+/** 너무 긴 것은 읽기에도 도움이 안 되고 저장만 불립니다. */
+export const ABBREV_WORD_MAX = 20;
+export const ABBREV_READING_MAX = 50;
+
+export function ttsAbbrev(guildId) {
+  return store[guildId]?.ttsAbbrev ?? {};
+}
+
+/**
+ * 축약어를 등록하거나 고칩니다.
+ * @returns {{ok: true, count: number} | {ok: false, reason: string}}
+ */
+export function setTtsAbbrev(guildId, word, reading) {
+  const w = String(word ?? '').trim();
+  const r = String(reading ?? '').trim();
+  if (!w || !r) return { ok: false, reason: '단어와 읽을 말을 모두 적어주세요.' };
+  if (w.includes(' ')) return { ok: false, reason: '단어에 공백은 넣을 수 없습니다. 한 낱말로 적어주세요.' };
+  if (w.length > ABBREV_WORD_MAX) return { ok: false, reason: `단어는 ${ABBREV_WORD_MAX}자까지입니다.` };
+  if (r.length > ABBREV_READING_MAX) return { ok: false, reason: `읽을 말은 ${ABBREV_READING_MAX}자까지입니다.` };
+
+  const now = ttsAbbrev(guildId);
+  if (!(w in now) && Object.keys(now).length >= ABBREV_MAX) {
+    return { ok: false, reason: `축약어는 ${ABBREV_MAX}개까지입니다. 안 쓰는 것을 먼저 지워주세요.` };
+  }
+
+  store[guildId] ??= {};
+  store[guildId].ttsAbbrev ??= {};
+  store[guildId].ttsAbbrev[w] = r;
+  save();
+  return { ok: true, count: Object.keys(store[guildId].ttsAbbrev).length };
+}
+
+/** @returns {boolean} 있던 것을 지웠으면 true */
+export function clearTtsAbbrev(guildId, word) {
+  const w = String(word ?? '').trim();
+  if (!store[guildId]?.ttsAbbrev?.[w]) return false;
+  delete store[guildId].ttsAbbrev[w];
+  if (Object.keys(store[guildId].ttsAbbrev).length === 0) delete store[guildId].ttsAbbrev;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return true;
+}
+
 // ── 음량 (음악 / 읽어주기 따로) ────────────────────────────────
 //
 // ffmpeg 의 -af volume 으로 조절합니다. discord.js 의 inlineVolume 을 쓰면

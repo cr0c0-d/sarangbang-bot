@@ -10,7 +10,7 @@ import { Client, GatewayIntentBits, Events, ActivityType, MessageFlags } from 'd
 import { config } from './config.js';
 import { commandMap } from './commands.js';
 import { handleMusicMessage } from './music/commands.js';
-import { handleTtsMessage } from './tts/index.js';
+import { handleTtsMessage, handleTtsComponent } from './tts/index.js';
 import { prewarm as prewarmTts } from './tts/synth.js';
 import { ttsEnabled } from './settings.js';
 import { handleImageMessage, handleImageComponent } from './images/commands.js';
@@ -207,18 +207,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
   if (interaction.isButton() || interaction.isAnySelectMenu()) {
     const isMusic = interaction.customId.startsWith('m:');
     const isTimer = interaction.customId.startsWith('t:');
+    const isTts = interaction.customId.startsWith('tts:');
     const isFeature = interaction.customId.startsWith('f:');
     const isImage = interaction.customId.startsWith('g:');
     const isChannel = interaction.customId.startsWith('c:');
     const isPoll = interaction.customId.startsWith('v:');
     const isMovie = interaction.customId.startsWith('mv:');
     const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
-    if (!isMusic && !isTimer && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
+    if (!isMusic && !isTimer && !isTts && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (
       (isMusic && !inRole('music')) ||
       (isTimer && !inRole('timer')) ||
+      (isTts && !inRole('tts')) ||
       (isImage && !inRole('images')) ||
       (isPoll && !inRole('poll')) ||
       (isMovie && !inRole('movie')) ||
@@ -228,7 +230,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isTts ? 'tts' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -236,7 +238,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     try {
-      if (isFeature) await handleFeatureComponent(interaction);
+      if (isTts) await handleTtsComponent(interaction);
+      else if (isFeature) await handleFeatureComponent(interaction);
       else if (isChannel) await handleChannelComponent(interaction);
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);

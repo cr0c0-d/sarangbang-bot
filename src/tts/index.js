@@ -1,5 +1,11 @@
 // TTS 기능: 지정한 채팅방의 메시지를 음성채널에서 읽어줍니다.
-import { SlashCommandBuilder, MessageFlags } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  StringSelectMenuBuilder,
+  MessageFlags,
+} from 'discord.js';
 import { config } from '../config.js';
 import { getGuildAudio } from '../audio/guild-audio.js';
 import { synthesize } from './synth.js';
@@ -10,6 +16,10 @@ import {
   voiceFor,
   setUserVoice,
   clearUserVoice,
+  ttsAbbrev,
+  setTtsAbbrev,
+  clearTtsAbbrev,
+  ABBREV_MAX,
 } from '../settings.js';
 import { VOICES, VOICE_CHOICES, voiceLabel, isKoreanOnly } from './voices.js';
 
@@ -102,13 +112,25 @@ const JAMO_SOUNDOUT = {
 
 const JAMO_ONLY_RE = /^[ㄱ-ㅎㅏ-ㅣ]+$/;
 
-/** 낱자를 읽을 수 있는 글자로 바꿉니다. */
-function speakJamo(text) {
-  // 1) 낱말 전체가 낱자면 축약어인지 먼저 봅니다. (ㄷㄷ 을 '드드' 로 읽으면 안 됩니다)
+/**
+ * 낱자를 읽을 수 있는 글자로 바꿉니다.
+ * @param {object} [extra] 서버에서 등록한 축약어. **기본 표를 이깁니다.**
+ */
+function speakJamo(text, extra = {}) {
+  // 1) 낱말 단위로 축약어를 먼저 봅니다. (ㄷㄷ 을 '드드' 로 읽으면 안 됩니다)
   //    낱말 사이 공백을 살리려고 구분자까지 같이 쪼갭니다.
+  //
+  //    ⚠️ 기본 표는 **낱자만인 낱말**에만 적용합니다 (ㅇㅇ·ㄷㄷ …).
+  //       서버에서 등록한 것은 낱자든 아니든 **낱말 전체가 같으면** 바꿉니다 —
+  //       "ㅇㅅㅇ" 도 "갓생" 도 "wtf" 도 등록할 수 있어야 하니까요.
+  //       낱말 전체로만 맞춰보므로 글 중간의 글자를 망가뜨리지 않습니다.
   text = text
     .split(/(\s+)/)
-    .map((tok) => (JAMO_ONLY_RE.test(tok) && ABBREV[tok] ? ABBREV[tok] : tok))
+    .map((tok) => {
+      if (!tok.trim()) return tok;
+      if (extra[tok]) return extra[tok];
+      return JAMO_ONLY_RE.test(tok) && ABBREV[tok] ? ABBREV[tok] : tok;
+    })
     .join('');
 
   // 2) 소리를 흉내낸 반복. 글 중간에 섞여 있어도 바꿉니다. (안녕 ㅋㅋ → 안녕 크크)
@@ -122,6 +144,8 @@ function speakJamo(text) {
 
 export function cleanText(message, maxChars) {
   let text = message.content ?? '';
+  // 이 서버에서 등록한 축약어. 없으면 빈 객체입니다.
+  const extra = message.guildId ? ttsAbbrev(message.guildId) : {};
 
   // <@123> 같은 멘션을 사람 이름으로 바꿉니다.
   text = text.replace(/<@!?(\d+)>/g, (_, id) => {
@@ -156,7 +180,7 @@ export function cleanText(message, maxChars) {
   text = text.replace(/(.)\1{2,}/g, '$1$1$1');
 
   // 낱자(자음·모음)를 읽을 수 있는 글자로. 안 하면 무음이 됩니다 — speakJamo 주석 참고.
-  text = speakJamo(text);
+  text = speakJamo(text, extra);
 
   text = text.replace(/\s+/g, ' ').trim();
 
@@ -286,7 +310,105 @@ export const commands = [
       });
     },
   },
+
+  // /축약어 — 서버마다 쓰는 말을 등록합니다.
+  //
+  // 기본 표(ABBREV)는 코드에 있어서 고치려면 배포해야 합니다. 친구들끼리 쓰는 말은
+  // 서버마다 다르니, 디스코드에서 바로 추가할 수 있어야 합니다.
+  //
+  // ⚠️ **명령어를 하나만 만듭니다** (3.6-6). 인자 없이 실행하면 목록이 나오고,
+  //    지우는 것은 그 목록의 **드롭다운**으로 합니다. `/축약어추가`·`/축약어삭제` 를
+  //    따로 만들면 명령어가 또 불어납니다.
+  {
+    data: new SlashCommandBuilder()
+      .setName('축약어')
+      .setDescription('읽어줄 때 바꿔 읽을 말을 등록합니다 (비우면 목록을 봅니다)')
+      .addStringOption((o) =>
+        o.setName('단어').setDescription('바꿀 말. 예: ㄱㅊ').setRequired(false)
+      )
+      .addStringOption((o) =>
+        o.setName('읽기').setDescription('이렇게 읽습니다. 예: 괜찮아').setRequired(false)
+      ),
+    async execute(interaction) {
+      const word = interaction.options.getString('단어')?.trim();
+      const reading = interaction.options.getString('읽기')?.trim();
+
+      // 둘 다 없으면 목록. 이걸 위해 명령어를 또 만들지 않습니다.
+      if (!word && !reading) {
+        return interaction.reply(buildAbbrevPanel(interaction.guildId));
+      }
+      if (!word || !reading) {
+        return interaction.reply({
+          content:
+            '**단어**와 **읽기**를 둘 다 적어주세요.\n' +
+            '예: `/축약어 단어:ㄱㅊ 읽기:괜찮아`\n' +
+            '둘 다 비우면 등록된 목록을 보여줍니다.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+
+      const res = setTtsAbbrev(interaction.guildId, word, reading);
+      if (!res.ok) {
+        return interaction.reply({ content: `⚠️ ${res.reason}`, flags: MessageFlags.Ephemeral });
+      }
+      await interaction.reply(
+        `🗣️ 앞으로 **${word}** 는 "**${reading}**" 로 읽습니다. (등록 ${res.count}개)`
+      );
+    },
+  },
 ];
+
+/** 등록된 축약어 목록 + 지우기 드롭다운. */
+export function buildAbbrevPanel(guildId) {
+  const dict = ttsAbbrev(guildId);
+  const words = Object.keys(dict);
+
+  const embed = new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setTitle('🗣️ 축약어')
+    .setDescription(
+      words.length === 0
+        ? '아직 등록된 것이 없습니다.\n`/축약어 단어:ㄱㅊ 읽기:괜찮아` 처럼 등록하세요.\n' +
+            '기본 축약어(ㅇㅇ·ㄱㅅ·ㄷㄷ 등)는 등록 없이도 읽어줍니다.'
+        : words.map((w) => `**${w}** → ${dict[w]}`).join('\n')
+    )
+    .setFooter({ text: `등록 ${words.length}/${ABBREV_MAX}개 · 같은 단어를 다시 등록하면 덮어씁니다` });
+
+  if (words.length === 0) return { embeds: [embed], flags: MessageFlags.Ephemeral };
+
+  // 드롭다운은 25개까지입니다. 넘으면 앞 25개만 지울 수 있고, 그 사실을 적어줍니다.
+  const shown = words.slice(0, 25);
+  if (shown.length < words.length) {
+    embed.setFooter({ text: `등록 ${words.length}/${ABBREV_MAX}개 · 아래에서는 앞 ${shown.length}개만 지울 수 있습니다` });
+  }
+  return {
+    embeds: [embed],
+    components: [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId('tts:abbrev:del')
+          .setPlaceholder('🗑️ 지울 축약어를 고르세요')
+          .setMinValues(1)
+          .setMaxValues(shown.length)
+          .addOptions(shown.map((w) => ({ label: w.slice(0, 100), value: w, description: dict[w].slice(0, 100) })))
+      ),
+    ],
+    flags: MessageFlags.Ephemeral,
+  };
+}
+
+/** 축약어 지우기 드롭다운 처리. customId 가 `tts:` 로 시작하는 것만 옵니다. */
+export async function handleTtsComponent(interaction) {
+  if (interaction.customId !== 'tts:abbrev:del') return;
+  const gone = interaction.values.filter((w) => clearTtsAbbrev(interaction.guildId, w));
+  await interaction.update(buildAbbrevPanel(interaction.guildId));
+  await interaction
+    .followUp({
+      content: gone.length > 0 ? `🗑️ ${gone.map((w) => `**${w}**`).join(', ')} 를 지웠습니다.` : '이미 지워진 것입니다.',
+      flags: MessageFlags.Ephemeral,
+    })
+    .catch(() => {});
+}
 
 /** 한국어 전용 목소리를 골랐을 때만 붙이는 경고. */
 function koreanOnlyWarning(voice) {
