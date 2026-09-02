@@ -368,7 +368,9 @@ export class GuildAudio {
       //   항목이면 다른 객체라 자동으로 걸러집니다. 안 쓰게 된 것은 반드시 정리합니다.
       let ready = null;
       if (this.prepared) {
-        if (this.prepared.item === item) {
+        // ⚠️ `dead` 를 **여기서 다시** 봐야 합니다. 준비할 때 살아 있었다는 것은
+        //    지금도 살아 있다는 뜻이 아닙니다 (노는 연결은 끊깁니다).
+        if (this.prepared.item === item && !this.prepared.dead) {
           ready = this.prepared;
           this.prepared = null;
         } else {
@@ -556,14 +558,10 @@ export class GuildAudio {
   }
 
   /**
-   * 다음 곡의 **소리까지** 미리 열어둡니다. (주소만 뽑아두는 prefetchNext 의 다음 단계)
+   * **보험용** 예약. 평소에는 `prefetchNext()` 가 끝나는 즉시 준비가 걸립니다.
    *
-   * 왜 필요한가: 주소를 이미 뽑아뒀어도 실제로 소리가 나기까지 이 서버에서는
-   * **9~11초**가 걸립니다(실측). yt-dlp 를 띄우고(3초) 받아오는 시간입니다.
-   * 그게 곡과 곡 사이에 그대로 침묵으로 들어갑니다.
-   *
-   * 지금 곡이 끝나기 {@link PREPARE_LEAD_SEC} 초 전에 미리 열어두면 **전환이 사실상 즉시**입니다.
-   * 열어둔 소리는 파이프가 차면 알아서 멈춰 기다리므로 CPU 도 거의 안 씁니다.
+   * 이건 그게 실패했거나 열어둔 소리가 중간에 끊겼을 때, 곡이 끝나갈 무렵
+   * 한 번 더 시도하는 길입니다. 지우면 한 번 실패한 곡은 영영 준비 없이 갑니다.
    */
   schedulePrepareNext() {
     clearTimeout(this.prepareTimer);
@@ -581,10 +579,20 @@ export class GuildAudio {
     }, delaySec * 1000);
   }
 
+  /**
+   * 다음 곡의 **소리까지** 미리 열어둡니다. (주소만 뽑아두는 prefetchNext 의 다음 단계)
+   *
+   * 왜 필요한가: 주소를 이미 뽑아뒀어도 실제로 소리가 나기까지 이 서버에서는
+   * **9~11초**가 걸립니다(실측). yt-dlp 를 띄우고(3초) 받아오는 시간입니다.
+   * 그게 곡과 곡 사이에 그대로 침묵으로 들어갑니다.
+   *
+   * 열어둔 소리는 파이프가 차면 yt-dlp·ffmpeg 이 알아서 멈춰 기다리므로 CPU 를 거의 안 씁니다.
+   * 대신 **연결이 끊길 수 있어서** 죽었는지 표시해두고 쓸 때 다시 확인합니다.
+   */
   async prepareNext() {
     const item = this.queue[0];
     if (this.destroyed || !item || this.preparing) return;
-    if (this.prepared?.item === item) return; // 이미 준비해뒀습니다
+    if (this.prepared?.item === item && !this.prepared.dead) return; // 이미 준비해뒀습니다
 
     this.preparing = true;
     const t0 = Date.now();
@@ -596,7 +604,7 @@ export class GuildAudio {
         remote: src.remote,
         onError: () => {},
       });
-      prepared = { item, stream, level: src.level, kill: () => { kill(); src.kill(); } };
+      prepared = { item, stream, level: src.level, dead: false, kill: () => { kill(); src.kill(); } };
 
       // 첫 소리가 나올 준비가 될 때까지 기다립니다. 여기가 오래 걸리는 그 시간입니다.
       const ready = await waitForAudio(stream, 90_000);
@@ -605,6 +613,22 @@ export class GuildAudio {
         prepared.kill();
         return;
       }
+
+      // ⚠️ **열어둔 소리는 죽을 수 있습니다.** 곡 하나가 다 끝날 때까지 몇 분을 기다리는데,
+      //    그동안 유튜브가 노는 연결을 끊습니다. 죽은 걸 모르고 그대로 틀면
+      //    "소리가 안 남 → 실패 판정 → 아래 단계로 재시도" 가 되어 **지금보다 나빠집니다.**
+      //    첫 바이트가 왔다는 것은 그때 살아 있었다는 뜻일 뿐입니다.
+      const onDead = () => {
+        prepared.dead = true;
+        if (this.prepared !== prepared) return; // 이미 쓰였거나 버려졌습니다
+        this.prepared = null;
+        prepared.kill();
+        console.warn(`[music] 미리 열어둔 소리가 끊겼습니다 · ${item.track.title}`);
+        this.schedulePrepareNext(); // 곡이 끝나갈 무렵 다시 열어봅니다
+      };
+      stream.once('end', onDead);
+      stream.once('error', onDead);
+
       this.dropPrepared(); // 앞서 준비해둔 것이 있으면 정리하고 바꿔 답니다
       this.prepared = prepared;
       console.log(
@@ -646,7 +670,14 @@ export class GuildAudio {
    */
   prefetchNext() {
     const next = this.queue[0];
-    if (!next || next.prefetching || hasFreshStreamUrl(next.track)) return;
+    if (!next || next.prefetching) return;
+
+    // 주소가 이미 살아 있으면 뽑을 것은 없습니다. 하지만 **소리는 아직 안 열렸을 수 있습니다.**
+    // (반복 재생, 지난 곡을 다시 담은 경우) 그러니 준비는 반드시 이어서 겁니다.
+    if (hasFreshStreamUrl(next.track)) {
+      this.prepareNext().catch((err) => console.warn('[music] 다음 곡 준비:', err.message));
+      return;
+    }
 
     next.prefetching = true;
     const t0 = Date.now();
@@ -667,6 +698,11 @@ export class GuildAudio {
       })
       .finally(() => {
         next.prefetching = false;
+        // ★ 주소가 준비되는 **그 즉시** 소리까지 엽니다.
+        //   예전에는 "곡 끝나기 40초 전" 에 걸었는데, 곡을 넘겨가며 듣는 분에게는
+        //   그 시점이 아예 오지 않았습니다. (실측: 14초 만에 다음 곡)
+        //   여기서 걸면 지금 곡이 시작되고 20초쯤 뒤에는 준비가 끝나 있습니다.
+        this.prepareNext().catch((err) => console.warn('[music] 다음 곡 준비:', err.message));
       });
   }
 

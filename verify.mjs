@@ -765,7 +765,21 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
 
     // ★ 주소를 뽑아뒀어도 첫 소리까지 9~11초입니다(실측). 그게 곡 사이 침묵이 됩니다.
     //   곡이 끝나갈 무렵 **소리까지** 미리 열어두면 전환이 사실상 즉시가 됩니다.
-    ok('곡이 끝나갈 무렵 소리를 미리 엶', playingBlock.includes('this.schedulePrepareNext();'));
+    // ⚠️ "곡 끝나기 40초 전" 에 걸면 **곡을 넘겨가며 듣는 분에게는 그 시점이 안 옵니다.**
+    //    (실측: 14초 만에 다음 곡) 주소가 준비되는 즉시 겁니다.
+    ok('주소가 준비되면 곧바로 소리도 엶',
+      /\.finally\(\(\) => \{[\s\S]{0,400}?this\.prepareNext\(\)/.test(ga));
+    ok('주소가 이미 있으면 준비만 겁니다',
+      /hasFreshStreamUrl\(next\.track\)\) \{[\s\S]{0,200}?this\.prepareNext\(\)/.test(ga));
+    // 그래도 실패하거나 중간에 끊겼을 때를 위한 보험은 남겨둡니다.
+    ok('실패했을 때를 위한 예약은 남김', playingBlock.includes('this.schedulePrepareNext();'));
+
+    // ★ 열어둔 소리는 **죽을 수 있습니다.** 곡 하나가 끝날 때까지 몇 분을 노는 연결로 기다립니다.
+    //   죽은 걸 모르고 틀면 "소리 안 남 → 실패 판정 → 재시도" 라 지금보다 나빠집니다.
+    ok('끊기면 죽은 것으로 표시', ga.includes('prepared.dead = true;'));
+    ok('끊기면 붙잡고 있지 않음', ga.includes("stream.once('end', onDead);") && ga.includes("stream.once('error', onDead);"));
+    ok('쓸 때 다시 확인', playNextBlock.includes('!this.prepared.dead'));
+    ok('죽었으면 다시 열어봄', ga.includes('this.schedulePrepareNext(); // 곡이 끝나갈 무렵 다시 열어봅니다'));
     ok('준비해둔 소리를 실제로 씀', playNextBlock.includes('this.prepared.item === item'));
     // 대기열이 바뀌었으면 준비해둔 것은 남이 됩니다. 반드시 정리해야 프로세스가 안 남습니다.
     ok('내 것이 아니면 버림', playNextBlock.includes('this.dropPrepared();'));
