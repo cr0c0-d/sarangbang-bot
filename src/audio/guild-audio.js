@@ -589,7 +589,7 @@ export class GuildAudio {
    * 열어둔 소리는 파이프가 차면 yt-dlp·ffmpeg 이 알아서 멈춰 기다리므로 CPU 를 거의 안 씁니다.
    * 대신 **연결이 끊길 수 있어서** 죽었는지 표시해두고 쓸 때 다시 확인합니다.
    */
-  async prepareNext() {
+  async prepareNext(level = null) {
     const item = this.queue[0];
     if (this.destroyed || !item || this.preparing) return;
     if (this.prepared?.item === item && !this.prepared.dead) return; // 이미 준비해뒀습니다
@@ -598,7 +598,7 @@ export class GuildAudio {
     const t0 = Date.now();
     let prepared = null;
     try {
-      const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });
+      const src = createSource(item.track, { level: level ?? item.srcLevel ?? SRC_DIRECT });
       const { stream, kill } = toOggOpus(src.input, {
         volume: volumeScale(this.guild.id, 'music'),
         remote: src.remote,
@@ -609,8 +609,24 @@ export class GuildAudio {
       // 첫 소리가 나올 준비가 될 때까지 기다립니다. 여기가 오래 걸리는 그 시간입니다.
       const ready = await waitForAudio(stream, 90_000);
       // 기다리는 사이에 대기열이 바뀌었으면 버립니다. (그 곡은 이제 다음 곡이 아닙니다)
-      if (!ready || this.destroyed || this.queue[0] !== item) {
+      if (this.destroyed || this.queue[0] !== item) {
         prepared.kill();
+        return;
+      }
+
+      // ★ 소리가 안 나오면 **한 단계 아래로 다시** 준비합니다.
+      //   안 그러면 0단계(직접 수신)가 안 되는 서버에서 준비가 매번 빈손으로 끝나고,
+      //   미리 열어두기가 통째로 무용지물이 됩니다. 실제로 그랬습니다 —
+      //   MUSIC_DIRECT_STREAM=true 인 동안 `다음 곡 준비 완료` 가 한 번도 안 찍혔습니다.
+      //   설정에 기대지 않고 코드가 알아서 버티는 편이 낫습니다.
+      if (!ready) {
+        prepared.kill();
+        if (src.level === SRC_DIRECT) noteDirectFailure('미리 준비할 때 소리가 나오지 않았습니다');
+        if (src.level < SRC_EXTRACT) {
+          this.preparing = false; // 아래 재귀가 이 자리를 다시 잡습니다
+          return this.prepareNext(src.level + 1);
+        }
+        console.warn(`[music] 다음 곡 준비 실패 (소리 없음) · ${item.track.title}`);
         return;
       }
 

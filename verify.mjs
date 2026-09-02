@@ -803,6 +803,13 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     ok('끊기면 붙잡고 있지 않음', ga.includes("stream.once('end', onDead);") && ga.includes("stream.once('error', onDead);"));
     ok('쓸 때 다시 확인', playNextBlock.includes('!this.prepared.dead'));
     ok('죽었으면 다시 열어봄', ga.includes('this.schedulePrepareNext(); // 곡이 끝나갈 무렵 다시 열어봅니다'));
+    // ★ 준비도 세 단계를 탑니다. 0단계가 안 되는 서버에서 준비만 0단계로 시도하면
+    //   매번 빈손으로 끝나 미리 열어두기가 통째로 무용지물이 됩니다.
+    //   (MUSIC_DIRECT_STREAM=true 인 동안 `다음 곡 준비 완료` 가 한 번도 안 찍혔습니다)
+    ok('준비도 안 되면 한 단계 아래로', ga.includes('return this.prepareNext(src.level + 1);'));
+    ok('준비 실패도 직접수신 실패로 셈', ga.includes("if (src.level === SRC_DIRECT) noteDirectFailure("));
+    ok('마지막 단계까지 실패하면 알림', ga.includes('다음 곡 준비 실패 (소리 없음)'));
+    ok('재귀 전에 자리를 비켜줌', ga.includes('this.preparing = false; // 아래 재귀가'));
     ok('준비해둔 소리를 실제로 씀', playNextBlock.includes('this.prepared.item === item'));
     // 대기열이 바뀌었으면 준비해둔 것은 남이 됩니다. 반드시 정리해야 프로세스가 안 남습니다.
     ok('내 것이 아니면 버림', playNextBlock.includes('this.dropPrepared();'));
