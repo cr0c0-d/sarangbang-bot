@@ -75,6 +75,15 @@ export const KEYS = {
     envValue: () => config.images.channelIds,
     envName: 'IMAGE_CHANNEL_ID',
   },
+  imageExcludeChannelIds: {
+    label: '이미지 제외 채널',
+    feature: 'images',
+    hint: '여기 지정한 채널의 사진은 저장하지 않습니다 (다른 설정보다 우선)',
+    kind: 'text',
+    multi: true,
+    envValue: () => config.images.excludeChannelIds,
+    envName: 'IMAGE_EXCLUDE_CHANNEL_ID',
+  },
 };
 
 /**
@@ -327,8 +336,23 @@ export function imagesEnabled() {
   return true;
 }
 
-/** 이 채널의 이미지를 저장해야 하는지. 목록이 비어 있으면 전부 저장합니다. */
+/**
+ * 이 채널의 이미지를 저장해야 하는지.
+ *
+ * 두 목록이 있고 **제외가 이깁니다.**
+ *   · 이미지 채널   — 비어 있으면 전부, 지정하면 그 채널들만
+ *   · 제외 채널     — 여기 있으면 무조건 안 받습니다
+ *
+ * 왜 제외가 이기나: 소유자가 원한 건 "기본은 전부 받되 몇 군데만 빼기" 입니다.
+ * 그 상황에서 제외를 나중에 보면, 지정 목록이 비어 있어 이미 `true` 로 나가버립니다.
+ * **먼저 걸러야 합니다.**
+ *
+ * 스레드는 부모 채널을 따릅니다 — 제외한 채널의 스레드도 제외입니다.
+ */
 export function imageChannelAllowed(guildId, channelId, parentId = null) {
+  const excluded = get(guildId, 'imageExcludeChannelIds') ?? [];
+  if (excluded.includes(channelId) || (parentId && excluded.includes(parentId))) return false;
+
   const { value, source } = getWithSource(guildId, 'imageChannelIds');
   if (source === 'none') return true; // 지정 없음 = 전부
   return value.includes(channelId) || (parentId ? value.includes(parentId) : false);

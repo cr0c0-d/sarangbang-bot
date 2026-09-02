@@ -181,6 +181,8 @@ export const config = {
 
   images: {
     channelIds: list('IMAGE_CHANNEL_ID'),
+    // 여기 적은 채널의 사진은 저장하지 않습니다. **지정 목록보다 우선**입니다.
+    excludeChannelIds: list('IMAGE_EXCLUDE_CHANNEL_ID'),
     dir: path.isAbsolute(imageDirRaw) ? imageDirRaw : path.join(ROOT, imageDirRaw),
     webPort: num('WEB_PORT', 3000),
     // 웹서버가 귀 기울일 주소.

@@ -411,6 +411,29 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('.env 지정 채널은 허용', st.imageChannelAllowed(G, '222222222222222222'));
   ok('.env 지정 밖의 채널은 거부', !st.imageChannelAllowed(G, '999999999999999999'));
   ok('imagesEnabled 는 항상 true', st.imagesEnabled() === true);
+
+  // ★ 제외 채널. 소유자 요청: "기본 모든 채널을 감지하되 특정 채널은 제외"
+  //   ⚠️ **제외가 먼저 걸러져야 합니다.** 나중에 보면, 지정 목록이 비었을 때
+  //      이미 true 로 나가버려서 제외가 통째로 무시됩니다.
+  {
+    const X = 'imgexcl';
+    const A = '111111111111111111'; // 제외할 채널
+    const B = '222222222222222222'; // .env 지정 채널
+    ok('제외 전에는 허용', st.imageChannelAllowed(X, B));
+    st.set(X, 'imageExcludeChannelIds', A);
+    ok('제외한 채널은 거부', !st.imageChannelAllowed(X, A));
+    ok('제외 안 한 채널은 그대로', st.imageChannelAllowed(X, B));
+    // 제외한 채널의 스레드도 제외입니다. 부모를 따라야 합니다.
+    ok('제외 채널의 스레드도 거부', !st.imageChannelAllowed(X, 'thread1', A));
+    // 지정 목록과 겹칠 때 어느 쪽이 이기는가 — 제외가 이겨야 합니다.
+    st.set(X, 'imageChannelIds', A);
+    ok('지정에도 있으면 제외가 이김', !st.imageChannelAllowed(X, A));
+    st.clear(X, 'imageExcludeChannelIds', A);
+    ok('제외를 풀면 다시 허용', st.imageChannelAllowed(X, A));
+    // /채널설정 선택지에 나와야 합니다. (KEYS 에 넣으면 자동)
+    ok('/채널설정 항목으로 나옴', Boolean(st.KEYS.imageExcludeChannelIds?.label));
+    ok('.env 로도 지정 가능', st.KEYS.imageExcludeChannelIds.envName === 'IMAGE_EXCLUDE_CHANNEL_ID');
+  }
 }
 
 // 6j) 대기열 편집 로직 (제거 / 순서이동 / 비우기)
