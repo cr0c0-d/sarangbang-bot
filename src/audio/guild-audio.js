@@ -16,6 +16,7 @@ import {
   NoSubscriberBehavior,
 } from '@discordjs/voice';
 import { config } from '../config.js';
+import { userError } from '../user-error.js';
 import { volumeScale } from '../settings.js';
 import {
   createSource,
@@ -202,7 +203,7 @@ export class GuildAudio {
       await entersState(this.connection, VoiceConnectionStatus.Ready, 30_000);
     } catch {
       this.destroy();
-      throw new Error(
+      throw userError(
         '음성채널 접속에 실패했습니다. 봇에게 "연결(Connect)"과 "말하기(Speak)" 권한이 있는지 확인해주세요.'
       );
     }

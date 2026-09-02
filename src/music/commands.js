@@ -7,6 +7,7 @@ import {
   StringSelectMenuBuilder,
 } from 'discord.js';
 import { config } from '../config.js';
+import { userError } from '../user-error.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { getTracks, formatDuration } from './ytdlp.js';
 import { buildPanel, showPanel } from './panel.js';
@@ -62,7 +63,7 @@ async function resolveVoiceChannel(guild, member) {
   if (configured) {
     const ch = await guild.channels.fetch(configured).catch(() => null);
     if (!ch?.isVoiceBased?.()) {
-      throw new Error(
+      throw userError(
         '지정된 음악 음성채널을 찾을 수 없습니다. /채널설정 으로 다시 지정해주세요.'
       );
     }
@@ -71,7 +72,7 @@ async function resolveVoiceChannel(guild, member) {
 
   const ch = member?.voice?.channel;
   if (!ch) {
-    throw new Error(
+    throw userError(
       '먼저 음성채널에 들어간 뒤 다시 시도해주세요. (또는 /채널설정 으로 음악 음성채널을 지정하세요)'
     );
   }
@@ -82,10 +83,10 @@ function assertCanJoin(voiceChannel, guild) {
   const me = guild.members.me;
   const perms = voiceChannel.permissionsFor(me);
   if (!perms?.has(PermissionsBitField.Flags.Connect)) {
-    throw new Error(`**${voiceChannel.name}** 에 들어갈 권한이 없습니다. (연결 권한 필요)`);
+    throw userError(`**${voiceChannel.name}** 에 들어갈 권한이 없습니다. (연결 권한 필요)`);
   }
   if (!perms.has(PermissionsBitField.Flags.Speak)) {
-    throw new Error(`**${voiceChannel.name}** 에서 말할 권한이 없습니다. (말하기 권한 필요)`);
+    throw userError(`**${voiceChannel.name}** 에서 말할 권한이 없습니다. (말하기 권한 필요)`);
   }
 }
 
@@ -104,7 +105,7 @@ export async function enqueue({ query, guild, member, textChannel }) {
   // 유튜브 추출(수 초)과 음성채널 접속(수백 ms)을 **동시에** 합니다.
   // 예전에는 추출을 다 기다린 뒤에 접속해서 그만큼 더 늦었습니다.
   const [tracks] = await Promise.all([getTracks(query), audio.connect(voiceChannel)]);
-  if (tracks.length === 0) throw new Error('재생할 수 있는 곡을 찾지 못했습니다.');
+  if (tracks.length === 0) throw userError('재생할 수 있는 곡을 찾지 못했습니다.');
 
   const wasIdle = !audio.isPlaying;
   audio.add(tracks, member?.user?.tag ?? '알 수 없음');

@@ -33,6 +33,7 @@ import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
 import { featureEnabled, FEATURES, inRole } from './settings.js';
+import { isExpected } from './user-error.js';
 
 /** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
 function featureOffMessage(key) {
@@ -92,6 +93,21 @@ client.once(Events.ClientReady, (c) => {
   }
 });
 
+/**
+ * 오류를 로그에 남깁니다.
+ *
+ * **원인이 이미 분명한 오류는 메시지만 남깁니다.** 스택 20줄이 따라붙으면
+ * 정작 읽어야 할 한국어 한 줄이 그 사이에 묻힙니다. 소유자는 서버에서
+ * `journalctl` 을 눈으로 훑으며 원인을 찾으므로, 이게 실제로 문제가 됐습니다.
+ * (실제 사례: `/재생` 이 "재생할 수 없는 영상입니다" 로 실패했는데 스택만 보였음)
+ *
+ * 예상 못 한 오류(진짜 버그)는 **그대로 스택을 남깁니다.** 고쳐야 하니까요.
+ * 어느 쪽인지는 `user-error.js` 의 `userError()` 로 표시합니다.
+ */
+function logError(tag, err) {
+  console.error(tag, isExpected(err) ? err.message : err);
+}
+
 // ── 슬래시 명령어 ───────────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -126,7 +142,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (interaction.customId.startsWith('st:')) await handleSettleModal(interaction);
       else await handlePlanModal(interaction, client);
     } catch (err) {
-      console.error('[입력 창]', err);
+      logError('[입력 창]', err);
       const content = `⚠️ ${err.message ?? '처리하지 못했습니다.'}`;
       if (interaction.deferred) await interaction.editReply(content).catch(() => {});
       else if (!interaction.replied) await interaction.reply({ content, flags: MessageFlags.Ephemeral }).catch(() => {});
@@ -184,7 +200,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (interaction.customId.startsWith('m:hist')) await handleHistoryComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
-      console.error('[버튼]', err);
+      logError('[버튼]', err);
       if (!interaction.replied && !interaction.deferred) {
         await interaction
           .reply({ content: `⚠️ ${err.message}`, flags: MessageFlags.Ephemeral })
@@ -212,7 +228,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     await command.execute(interaction);
   } catch (err) {
-    console.error(`[명령어 ${interaction.commandName}]`, err);
+    logError(`[명령어 ${interaction.commandName}]`, err);
     const content = `⚠️ ${err.message ?? '알 수 없는 오류가 났습니다.'}`;
     // 이미 응답했는지에 따라 답하는 방법이 다릅니다.
     if (interaction.deferred) await interaction.editReply(content).catch(() => {});
@@ -242,7 +258,7 @@ client.on(Events.MessageCreate, async (message) => {
     if (inRole('music') && (await handleMusicMessage(message))) return;
     if (inRole('tts')) await handleTtsMessage(message);
   } catch (err) {
-    console.error('[메시지 처리]', err);
+    logError('[메시지 처리]', err);
   }
 });
 
@@ -340,4 +356,4 @@ async function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('unhandledRejection', (err) => console.error('[처리되지 않은 오류]', err));
+process.on('unhandledRejection', (err) => logError('[처리되지 않은 오류]', err));

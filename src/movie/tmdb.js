@@ -5,6 +5,7 @@
 // `watch_region=KR` + `with_watch_providers` 로 "한국에서 이 OTT 로 볼 수 있는 작품" 을 줍니다.
 // (yt-dlp 를 쓰는 것과 같은 판단입니다 — ARCHITECTURE 3.1, 3.6-8)
 import { config } from '../config.js';
+import { userError } from '../user-error.js';
 
 const BASE = 'https://api.themoviedb.org/3';
 
@@ -24,7 +25,7 @@ export function hasKey() {
  * 개발자 포털에서 둘 다 주기 때문에 어느 쪽을 넣어도 되게 해둡니다.
  */
 async function call(path, { timeoutMs = 8000 } = {}) {
-  if (!hasKey()) throw new Error('TMDB_API_KEY 가 설정되지 않았습니다.');
+  if (!hasKey()) throw userError('TMDB_API_KEY 가 설정되지 않았습니다.');
 
   const sep = path.includes('?') ? '&' : '?';
   const url = config.tmdb.readToken ? `${BASE}${path}` : `${BASE}${path}${sep}api_key=${config.tmdb.apiKey}`;
@@ -36,11 +37,11 @@ async function call(path, { timeoutMs = 8000 } = {}) {
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     const res = await fetch(url, { headers, signal: ctrl.signal });
-    if (!res.ok) throw new Error(friendlyError(res.status));
+    if (!res.ok) throw userError(friendlyError(res.status));
     return await res.json();
   } catch (err) {
     if (err.name === 'AbortError') {
-      throw new Error('TMDB 응답이 너무 오래 걸립니다. 잠시 뒤 다시 시도해주세요.');
+      throw userError('TMDB 응답이 너무 오래 걸립니다. 잠시 뒤 다시 시도해주세요.');
     }
     throw err;
   } finally {

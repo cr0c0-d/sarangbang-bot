@@ -277,8 +277,64 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     isTransient('ERROR: [youtube] abc: The page needs to be reloaded.'));
   ok('삭제된 영상은 재시도 대상 아님',
     !isTransient('ERROR: [youtube] abc: Video unavailable'));
-  ok('삭제된 영상 안내 문구',
-    friendlyError('ERROR: Video unavailable').includes('재생할 수 없는 영상'));
+  // ⚠️ 유튜브는 **서로 다른 이유**를 전부 "Video unavailable" 로 뭉뚱그립니다.
+  //    예전에는 전부 "비공개이거나 삭제됨" 이라고 답해서, 지역 차단이나 멤버십 전용
+  //    영상을 만난 사람이 지운 적도 없는 영상을 지웠다는 말을 들었습니다.
+  ok('비공개 영상',
+    friendlyError('ERROR: [youtube] abc: Private video. Sign in if you have been granted access')
+      .includes('비공개 영상'));
+  ok('지역 차단은 프록시 안내로',
+    friendlyError('ERROR: [youtube] abc: Video unavailable. The uploader has not made this video available in your country')
+      .includes('YTDLP_PROXY'));
+  ok('멤버십 전용은 그렇게 안내',
+    friendlyError("ERROR: [youtube] abc: Video unavailable. This video is available to this channel's members")
+      .includes('멤버십'));
+  ok('삭제된 영상',
+    friendlyError('ERROR: [youtube] abc: Video unavailable. This video has been removed by the uploader')
+      .includes('지웠거나'));
+  {
+    // 이유를 모르면 **추측하지 말고** 유튜브가 한 말을 그대로 보여줍니다.
+    const unknown = friendlyError('ERROR: [youtube] abc: Video unavailable');
+    ok('이유를 모르면 원문을 보여줌', unknown.includes('Video unavailable'));
+    ok('모르면서 삭제됐다고 하지 않음', !unknown.includes('삭제') && !unknown.includes('비공개'));
+    ok('원문에서 ERROR 앞머리를 떼어냄', !unknown.includes('ERROR:') && !unknown.includes('[youtube]'));
+  }
+
+  // ⚠️ `Sign in to confirm …` 은 두 가지입니다. 나이 쪽이 먼저 걸러져야 합니다.
+  //    안 그러면 연령 제한 영상 하나 때문에 멀쩡한 쿠키를 다시 뽑게 됩니다.
+  {
+    const age = friendlyError("ERROR: [youtube] abc: Sign in to confirm your age. This video may be inappropriate for some users");
+    ok('연령 제한은 그 영상만의 문제로', age.includes('연령 제한'));
+    ok('연령 제한을 IP 차단으로 오진하지 않음', !age.includes('봇으로 판단'));
+    ok('진짜 IP 차단은 그대로 잡힘',
+      friendlyError("ERROR: [youtube] abc: Sign in to confirm you're not a bot").includes('봇으로 판단'));
+  }
+}
+
+// 6f-1) 로그에 스택이 아니라 **원인 한 줄**이 보이는가
+//
+// 소유자는 서버에서 journalctl 을 눈으로 훑습니다. 오류마다 스택이 20줄씩 붙으면
+// 정작 읽어야 할 한국어 한 줄이 묻힙니다. (실제로 `/재생` 실패 때 겪음)
+{
+  const { userError, isExpected } = await import('./src/user-error.js');
+  const e = userError('연령 제한이 걸린 영상입니다.');
+  ok('예상된 오류로 표시됨', isExpected(e) && e.message.includes('연령 제한'));
+  ok('보통 오류는 그대로 (스택을 남겨야 함)', !isExpected(new Error('버그')));
+
+  const idx = fs.readFileSync('./src/index.js', 'utf8');
+  ok('로그를 한 곳으로 모음', idx.includes('function logError(tag, err)'));
+  ok('예상된 오류는 메시지만', idx.includes('isExpected(err) ? err.message : err'));
+  // 한 군데라도 빠지면 거기서만 스택이 쏟아집니다.
+  ok('모든 오류 로그가 logError 를 거침',
+    !/console\.error\((?:'\[(?:입력 창|버튼|메시지 처리|처리되지 않은 오류)\]'|`\[명령어)/.test(idx));
+
+  const paths = ['./src/music/commands.js', './src/music/ytdlp.js', './src/audio/guild-audio.js'];
+  ok('사용자에게 보여줄 오류는 userError 로',
+    paths.every((p) => !fs.readFileSync(p, 'utf8').includes('throw new Error(')));
+  // ⚠️ 반대로 **코드가 잘못돼서 나는 오류는 스택이 있어야** 고칩니다.
+  //    경로 안전장치·알 수 없는 설정 키를 userError 로 바꾸지 마세요.
+  ok('안전장치 오류는 스택을 남김',
+    fs.readFileSync('./src/images/store.js', 'utf8').includes("throw new Error('잘못된 폴더 이름입니다.')"));
 }
 
 // 6g) 한 메시지의 여러 링크를 전부 찾는가

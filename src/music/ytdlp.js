@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import path from 'node:path';
 import { ROOT } from '../config.js';
+import { userError } from '../user-error.js';
 
 const YTDLP = path.join(ROOT, 'bin', process.platform === 'win32' ? 'yt-dlp.exe' : 'yt-dlp');
 
@@ -72,6 +73,9 @@ function runOnce(args, timeoutMs) {
       done = true;
       const e = new Error(message);
       e.transient = transient;
+      // 원인을 이미 한국어로 적어둔 오류입니다. 로그에 스택까지 찍을 필요가 없습니다.
+      // (index.js 의 logError 참고)
+      e.expected = true;
       reject(e);
     };
 
@@ -157,6 +161,17 @@ export function friendlyError(stderr) {
   //    프로젝트 폴더 이름(sarangbang-bot)에 'bot' 이 들어 있어서,
   //    경로가 찍힌 아무 오류나 "유튜브 차단" 으로 오진됩니다.
   //    (실제로 그런 버그가 있었습니다. verify.mjs 에 회귀 검사가 있습니다)
+  // ⚠️ `Sign in to confirm …` 은 **두 가지**입니다. 나이 쪽을 먼저 걸러야 합니다.
+  //      Sign in to confirm your age         → 그 영상 하나의 문제 (연령 제한)
+  //      Sign in to confirm you're not a bot → 서버 전체의 문제 (IP 차단)
+  //    예전에는 둘 다 "봇으로 판단해 차단" 이라고 답했습니다. 그래서 연령 제한 영상
+  //    하나를 틀려다 실패한 사람이 멀쩡한 쿠키를 다시 뽑는 헛수고를 했습니다.
+  if (s.includes('confirm your age') || (s.includes('age') && s.includes('restrict'))) {
+    return (
+      '연령 제한이 걸린 영상입니다. **이 영상 하나만의 문제**이니 다른 곡은 그대로 됩니다.\n' +
+      '(성인 인증된 계정의 쿠키를 `.env.music` 의 YTDLP_COOKIES_FILE 에 넣으면 풀립니다)'
+    );
+  }
   if (s.includes('sign in to confirm')) {
     // 쿠키를 이미 넣어둔 상태에서 이 오류가 나면 "설정하세요" 는 틀린 안내입니다.
     // 그때는 만료된 것이므로 **다시 뽑으라고** 해야 합니다.
@@ -179,11 +194,28 @@ export function friendlyError(stderr) {
   if (s.includes('the page needs to be reloaded')) {
     return '유튜브가 일시적으로 요청을 거부했습니다. 잠시 뒤 다시 시도해보세요. (계속 그러면 `npm run update-ytdlp`)';
   }
-  if (s.includes('video unavailable') || s.includes('private video')) {
-    return '재생할 수 없는 영상입니다 (비공개이거나 삭제됨).';
+  // ⚠️ 유튜브는 **서로 다른 이유**를 전부 "Video unavailable" 한마디로 뭉뚱그립니다.
+  //    예전에는 이걸 다 "비공개이거나 삭제됨" 이라고 답했습니다. 지역 차단이나
+  //    멤버십 전용 영상을 만난 사람은 지운 적도 없는 영상을 지웠다는 말을 들은 셈입니다.
+  //    **구분되는 것만 구분하고, 모르겠으면 유튜브가 한 말을 그대로 보여줍니다.**
+  if (s.includes('private video')) {
+    return '비공개 영상입니다. 링크가 있어도 초대받은 계정만 볼 수 있어서 봇도 못 봅니다.';
   }
-  if (s.includes('age') && s.includes('restrict')) {
-    return '연령 제한 영상이라 쿠키 없이는 재생할 수 없습니다.';
+  if (s.includes('video unavailable') || s.includes('this video is not available')) {
+    if (s.includes('in your country') || s.includes('not made this video available')) {
+      return (
+        '이 영상은 **서버가 있는 지역에서 막혀 있습니다.** 내 컴퓨터에서 보인다고 서버에서도 보이지는 않습니다.\n' +
+        '`.env.music` 의 YTDLP_PROXY 에 볼 수 있는 지역의 프록시를 넣으면 풀립니다.'
+      );
+    }
+    if (s.includes("channel's members") || s.includes('members-only') || s.includes('members only')) {
+      return '채널 멤버십 전용 영상입니다. 멤버십이 있는 계정의 쿠키가 아니면 봇은 못 봅니다.';
+    }
+    if (s.includes('removed by the uploader') || s.includes('has been terminated') || s.includes('no longer available')) {
+      return '올린 사람이 지웠거나 채널이 사라진 영상입니다.';
+    }
+    // 여기까지 안 걸리면 **이유를 모릅니다.** 추측해서 답하면 엉뚱한 곳을 뒤지게 됩니다.
+    return `유튜브가 이 영상을 "볼 수 없다" 고만 답했습니다. 아래가 유튜브가 한 말 그대로입니다.\n\`${rawError(stderr)}\``;
   }
   if (s.includes('unsupported url')) {
     return '지원하지 않는 링크입니다.';
@@ -191,8 +223,22 @@ export function friendlyError(stderr) {
   if (s.includes('cookies') && (s.includes('unable to open') || s.includes('no such file'))) {
     return '`.env.music` 의 YTDLP_COOKIES_FILE 경로에 파일이 없습니다. 경로를 확인해주세요. (`.env` 에 적어두셨다면 그쪽입니다 — 음악 봇은 두 파일을 다 읽습니다)';
   }
-  const line = stderr.split('\n').find((l) => l.includes('ERROR'));
-  return line ? line.trim() : '';
+  return rawError(stderr);
+}
+
+/**
+ * yt-dlp 가 실제로 뱉은 오류 한 줄. **우리가 이유를 모를 때 이걸 그대로 보여줍니다.**
+ *
+ * `ERROR: [youtube] dQw4w9WgXcQ:` 같은 앞머리는 사람에게 아무 뜻이 없어서 떼어냅니다.
+ * 너무 길면 디스코드 메시지를 잡아먹으므로 잘라냅니다.
+ */
+export function rawError(stderr) {
+  const line = String(stderr ?? '')
+    .split('\n')
+    .find((l) => l.includes('ERROR'));
+  if (!line) return '';
+  const cleaned = line.trim().replace(/^ERROR:\s*(\[[^\]]+\]\s*)?([\w-]{6,}:\s*)?/, '');
+  return cleaned.length > 300 ? `${cleaned.slice(0, 300)}…` : cleaned;
 }
 
 const URL_RE = /^https?:\/\//i;
@@ -329,14 +375,14 @@ export async function getTracks(input) {
   ]);
 
   const line = out.split('\n').find((l) => l.includes(SEP));
-  if (!line) throw new Error('영상 정보를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+  if (!line) throw userError('영상 정보를 읽지 못했습니다. 링크를 다시 확인해주세요.');
 
   const p = line.split(SEP).map((s) => s.trim());
   const na = (v) => (!v || v === 'NA' ? null : v);
   const isHttp = (v) => typeof v === 'string' && /^https?:\/\//i.test(v);
 
   const url = na(p[4]);
-  if (!isHttp(url)) throw new Error('영상 주소를 읽지 못했습니다. 링크를 다시 확인해주세요.');
+  if (!isHttp(url)) throw userError('영상 주소를 읽지 못했습니다. 링크를 다시 확인해주세요.');
 
   // 재생 주소가 http 로 시작하지 않으면 믿지 않습니다.
   // null 이면 재생할 때 yt-dlp 로 다시 뽑습니다 (느리지만 확실).
