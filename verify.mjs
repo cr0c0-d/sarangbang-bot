@@ -415,11 +415,18 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   usage.resetUsage();
 
   // 키가 없을 때 뜻이 통하는 안내가 나와야 합니다.
+  //
+  // ⚠️ **여기서 ask() 를 부르면 안 됩니다.** 키가 있는 서버에서는 제미나이를 진짜로
+  //    호출해서 무료 한도를 깎습니다. 처음에 그렇게 짰다가 소유자 서버에서
+  //    `FAIL 키가 없으면 발급 주소를 알려줌` 으로 드러났습니다 —
+  //    키가 있으니 그 오류가 안 났던 것입니다. verify 는 **네트워크를 쓰지 않습니다.**
   const gem = await import('./src/ai/gemini.js');
-  ok('키가 없으면 발급 주소를 알려줌',
-    await gem.ask('안녕').then(() => false, (e) => e.message.includes('aistudio.google.com')));
-  ok('키 없음도 예상된 오류 (스택 없이)',
-    await gem.ask('안녕').then(() => false, (e) => e.expected === true));
+  ok('키가 없으면 발급 주소를 알려줌', gem.missingKeyMessage().includes('aistudio.google.com'));
+  ok('어디에 넣어야 하는지까지 알려줌', gem.missingKeyMessage().includes('GEMINI_API_KEY'));
+  ok('키 없으면 실제로 그 안내가 나감',
+    fs.readFileSync('./src/ai/gemini.js', 'utf8').includes('if (!hasKey()) throw userError(missingKeyMessage());'));
+  // 이 검사 자체가 다시 네트워크를 쓰지 않도록 못 박아둡니다.
+  ok('verify 가 제미나이를 실제로 부르지 않음', !/\bgem\.ask\(/.test(fs.readFileSync('./verify.mjs', 'utf8')));
   // 모르는 오류는 제미나이가 한 말을 그대로 (3.1-4)
   ok('모르는 오류는 원문을 보여줌',
     gem.friendlyError(418, { error: { message: 'teapot detected' } }).includes('teapot detected'));

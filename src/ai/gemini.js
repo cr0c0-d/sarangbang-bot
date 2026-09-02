@@ -18,6 +18,20 @@ export function hasKey() {
 }
 
 /**
+ * 키가 없을 때 보여줄 안내.
+ *
+ * 따로 빼둔 이유: `verify` 가 이 문구를 확인해야 하는데, 확인하려고 `ask()` 를 부르면
+ * **키가 있는 서버에서는 제미나이를 진짜로 호출합니다.** 무료 한도를 깎으면서요.
+ * `npm run verify` 는 네트워크를 쓰지 않아야 합니다. (실제로 겪었습니다)
+ */
+export function missingKeyMessage() {
+  return (
+    '제미나이 API 키가 없습니다.\n' +
+    'https://aistudio.google.com/apikey 에서 발급받아 `.env` 의 `GEMINI_API_KEY` 에 넣고 재시작해주세요.'
+  );
+}
+
+/**
  * 망고의 성격과 하지 않을 일.
  *
  * ⚠️ **짧게 씁니다.** 이 글은 질문할 때마다 같이 보내는 비용입니다.
@@ -105,12 +119,7 @@ function requestBody(prompt, { withoutThinking }) {
  * @returns {Promise<string>} 답 (한 덩어리 글자)
  */
 export async function ask(prompt) {
-  if (!hasKey()) {
-    throw userError(
-      '제미나이 API 키가 없습니다.\n' +
-        'https://aistudio.google.com/apikey 에서 발급받아 `.env` 의 `GEMINI_API_KEY` 에 넣고 재시작해주세요.'
-    );
-  }
+  if (!hasKey()) throw userError(missingKeyMessage());
 
   let res;
   let body;
