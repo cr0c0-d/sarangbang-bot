@@ -24,6 +24,7 @@ import {
   getTracks,
   noteDirectFailure,
   noteDirectSuccess,
+  updateHint,
   SRC_DIRECT,
   SRC_URL,
   SRC_EXTRACT,
@@ -775,7 +776,7 @@ export class GuildAudio {
       this.notify(
         `⚠️ **${item.track.title}** 재생에 실패했습니다.\n` +
           (this.lastStreamError ? `\`${this.lastStreamError.slice(0, 300)}\`\n` : '') +
-          '유튜브가 서버를 막고 있을 수 있습니다. 계속되면 `npm run update-ytdlp` 를 해보세요.'
+          `유튜브가 서버를 막고 있을 수 있습니다. 계속되면 \`${updateHint()}\` 를 해보세요.`
       );
       this.current = null;
     }

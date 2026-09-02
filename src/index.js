@@ -20,7 +20,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { measureStartup as measureYtdlpStartup, ytdlpPath } from './music/ytdlp.js';
+import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
@@ -94,7 +94,11 @@ client.once(Events.ClientReady, (c) => {
   // 여기서 끝나는 경우가 많아, 서버에 들어가 재보게 하는 대신 봇이 알려줍니다.
   if (inRole('music')) {
     measureYtdlpStartup().then((sec) => {
-      if (sec === null) return console.warn('   yt-dlp 를 실행하지 못했습니다. `npm run update-ytdlp` 로 다시 받아보세요.');
+      if (sec === null) {
+        return console.warn(
+          `   yt-dlp 를 실행하지 못했습니다 (${ytdlpPath()}).\n   \`${updateHint()}\` 로 다시 받아보세요.`
+        );
+      }
       console.log(`   yt-dlp 기동 ${sec.toFixed(1)}초 — 곡을 틀 때마다 이만큼이 깔립니다 (${ytdlpPath()})`);
       if (sec >= 2) {
         // 공식 바이너리는 PyInstaller 묶음이라 **실행할 때마다 파이썬을 통째로 풉니다.**

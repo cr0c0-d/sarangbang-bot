@@ -685,6 +685,22 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     ok('갱신 스크립트가 그 사실을 알림',
       fs.readFileSync('./scripts/update-ytdlp.mjs', 'utf8').includes('YTDLP_PATH'));
     ok('.env.music.example 에 설명', fs.readFileSync('./.env.music.example', 'utf8').includes('YTDLP_PATH='));
+
+    // ⚠️ pip 로 깔아놓고 `npm run update-ytdlp` 를 하면 봇이 쓰지도 않는 bin/ 만 갱신됩니다.
+    //    "시키는 대로 했는데 안 고쳐진다" 가 됩니다.
+    const { updateHint } = await import('./src/music/ytdlp.js');
+    const savedPath = process.env.YTDLP_PATH;
+    ok('기본 안내는 npm 스크립트', updateHint() === 'npm run update-ytdlp');
+    process.env.YTDLP_PATH = '/home/ubuntu/.venv-ytdlp/bin/yt-dlp';
+    ok('pip 로 깔았으면 pip 로 안내', updateHint().includes('pip install -U yt-dlp'), updateHint());
+    if (savedPath === undefined) delete process.env.YTDLP_PATH;
+    else process.env.YTDLP_PATH = savedPath;
+    // 안내를 적는 곳이 여러 군데라 하나만 빠져도 엉뚱한 데로 보냅니다.
+    // (문구를 직접 만드는 updateHint() 가 있는 ytdlp.js 는 제외)
+    ok('안내는 전부 updateHint 를 거침',
+      ['./src/index.js', './src/audio/guild-audio.js'].every(
+        (p) => !fs.readFileSync(p, 'utf8').includes('npm run update-ytdlp')
+      ));
   }
   ok('제한시간을 늘려가며 재시도', yt.includes('timeouts = timeoutLadder()') && yt.includes('timeouts[i - 1]'));
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));

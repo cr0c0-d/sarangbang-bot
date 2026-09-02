@@ -26,6 +26,19 @@ export function ytdlpPath() {
   return YTDLP;
 }
 
+/**
+ * "yt-dlp 를 새로 받으세요" 를 **지금 쓰는 방식에 맞게** 안내합니다.
+ *
+ * pip 로 깔아놓고 `npm run update-ytdlp` 를 하면 봇이 쓰지도 않는 `bin/` 만 갱신됩니다.
+ * 그러면 "시키는 대로 했는데 안 고쳐진다" 가 됩니다.
+ */
+export function updateHint() {
+  const custom = (process.env.YTDLP_PATH ?? '').trim();
+  return custom
+    ? `${path.dirname(custom)}/pip install -U yt-dlp`
+    : 'npm run update-ytdlp';
+}
+
 // 유튜브가 데이터센터 IP를 막을 때 쓰는 우회 옵션들입니다.
 // yt-dlp 는 **노래하는 망고만** 돌리므로, 이 값들의 제자리는 `.env.music` 입니다.
 // (.env 에 적어도 상속되어 동작은 합니다)
@@ -123,7 +136,7 @@ function runOnce(args, timeoutMs) {
     child.stdout.on('data', (d) => (out += d));
     child.stderr.on('data', (d) => (err += d));
     child.on('error', (e) =>
-      fail(`yt-dlp 실행 실패: ${e.message}\n(npm run update-ytdlp 로 다시 받아보세요)`)
+      fail(`yt-dlp 실행 실패: ${e.message}\n(\`${updateHint()}\` 로 다시 받아보세요)`)
     );
     child.on('close', (code) => {
       clearTimeout(timer);
@@ -337,7 +350,7 @@ export function friendlyError(stderr) {
     );
   }
   if (s.includes('the page needs to be reloaded')) {
-    return '유튜브가 일시적으로 요청을 거부했습니다. 잠시 뒤 다시 시도해보세요. (계속 그러면 `npm run update-ytdlp`)';
+    return `유튜브가 일시적으로 요청을 거부했습니다. 잠시 뒤 다시 시도해보세요. (계속 그러면 \`${updateHint()}\`)`;
   }
   // ⚠️ 유튜브는 **서로 다른 이유**를 전부 "Video unavailable" 한마디로 뭉뚱그립니다.
   //    예전에는 이걸 다 "비공개이거나 삭제됨" 이라고 답했습니다. 지역 차단이나
