@@ -571,6 +571,22 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
       tokensUsed({ promptTokenCount: 10, candidatesTokenCount: 20, thoughtsTokenCount: 5 }) === 35);
     ok('모양이 바뀌어도 0 으로 떨어짐', tokensUsed(undefined) === 0 && tokensUsed({}) === 0);
 
+    // ★ "느리다" 의 원인이 둘인데 **대책이 정반대**입니다. 로그로 구분해야 합니다.
+    //   답 쓰는 게 느리면 → 오는 대로 보여주기
+    //   "생각" 이 느리면 → 생각을 줄이기 (스트리밍은 소용없음)
+    const { tokenBreakdown } = await import('./src/ai/gemini.js');
+    const b = tokenBreakdown({
+      promptTokenCount: 300,
+      thoughtsTokenCount: 200,
+      candidatesTokenCount: 700,
+      totalTokenCount: 1200,
+    });
+    ok('토큰을 항목별로 나눔', b.prompt === 300 && b.thoughts === 200 && b.output === 700);
+    ok('생각 토큰을 따로 셈', tokenBreakdown({ thoughtsTokenCount: 42 }).thoughts === 42);
+    const gemSrc2 = fs.readFileSync('./src/ai/gemini.js', 'utf8');
+    ok('걸린 시간과 항목을 로그에 남김',
+      gemSrc2.includes('[ai] 답변 ${sec}초') && gemSrc2.includes('생각 ${used.thoughts}'));
+
     const T = 'tokguild';
     const t0 = Date.parse('2026-09-02T12:00:00Z');
     usage.record(T, 'u', 1000, t0);

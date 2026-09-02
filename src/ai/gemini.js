@@ -197,6 +197,7 @@ async function callOnce(prompt, withoutThinking) {
 export async function ask(prompt) {
   if (!hasKey()) throw userError(missingKeyMessage());
 
+  const startedAt = Date.now();
   const attempts = Math.max(1, config.ai.retries + 1);
   // "생각" 설정 이름이 모델마다 달라서 한 번 빼고 다시 해봅니다.
   // ⚠️ 이건 **재시도 횟수로 세지 않습니다.** 혼잡해서 다시 하는 것과 다른 일입니다.
@@ -240,7 +241,18 @@ export async function ask(prompt) {
 
     // 제미나이는 쓴 토큰 수를 알려줍니다. 이걸 모아두면 "얼마나 썼나" 를 보여줄 수 있습니다.
     // ⚠️ **남은 양은 알려주지 않습니다.** 그건 AI Studio 화면에서만 봅니다.
-    return { text, tokens: tokensUsed(body?.usageMetadata) };
+    const used = tokenBreakdown(body?.usageMetadata);
+
+    // ★ **느린 원인을 여기서 판별합니다.** 생각 토큰이 답 토큰만큼 많으면
+    //   "생각" 이 시간을 먹는 것이고, 그때는 오는 대로 보여줘도 소용없습니다
+    //   (생각이 끝날 때까지 글자가 한 자도 안 나옵니다).
+    const sec = ((Date.now() - startedAt) / 1000).toFixed(1);
+    console.log(
+      `[ai] 답변 ${sec}초 · 질문 ${used.prompt} + 생각 ${used.thoughts} + 답 ${used.output}` +
+        ` = ${used.total} 토큰 · ${config.ai.geminiModel} (생각 ${config.ai.thinkingLevel})`
+    );
+
+    return { text, tokens: used.total, used };
   }
 }
 
@@ -253,4 +265,23 @@ export function tokensUsed(meta) {
   return ['promptTokenCount', 'candidatesTokenCount', 'thoughtsTokenCount']
     .map((k) => Number(meta[k]) || 0)
     .reduce((a, b) => a + b, 0);
+}
+
+/**
+ * 토큰을 **항목별로** 나눠 봅니다.
+ *
+ * 왜 나누나: "답이 느리다" 의 원인이 두 가지인데 **대책이 정반대**입니다.
+ *   · 답 쓰는 데 오래 걸림  → 오는 대로 보여주기(스트리밍)가 답
+ *   · "생각" 에 오래 걸림   → 생각을 줄이는 게 답 (스트리밍은 소용없음.
+ *                             생각이 끝날 때까지 글자가 한 자도 안 나오므로)
+ * 로그에 나눠 찍어두면 어느 쪽인지 **한 줄로 구분**됩니다.
+ */
+export function tokenBreakdown(meta) {
+  const n = (k) => Number(meta?.[k]) || 0;
+  return {
+    prompt: n('promptTokenCount'),
+    thoughts: n('thoughtsTokenCount'),
+    output: n('candidatesTokenCount'),
+    total: tokensUsed(meta),
+  };
 }
