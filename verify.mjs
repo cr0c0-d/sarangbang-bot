@@ -507,6 +507,11 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     const gemSrc = fs.readFileSync('./src/ai/gemini.js', 'utf8');
     const sys = gemSrc.slice(gemSrc.indexOf('const SYSTEM = ['), gemSrc.indexOf("].join('\\n');"));
     ok('이름은 망고', sys.includes('망고'));
+    // ★ 실제로 겪은 것: 상대를 "망고야!" 라고 불렀습니다. 명령어 이름이 `/망고야` 라서
+    //   모델이 헷갈린 것입니다. **누가 망고인지**를 못 박아야 합니다.
+    ok('상대를 망고라고 부르지 말라고 못 박음', sys.includes('상대를 "망고" 라고 부르지 마'));
+    ok('상대는 누나라고 부르게', sys.includes('상대를 부를 때는 "누나"'));
+    ok('매번 부르지는 말라고 함', sys.includes('매번 부르지는 마'));
     ok('반말로 답하게', sys.includes('반말'));
     ok('구어체로 답하게', sys.includes('구어체'));
     ok('질문에 맞춰 길이를 조절하게', sys.includes('추천·설명·비교를 물으면 자세히'));
