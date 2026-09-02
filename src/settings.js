@@ -117,6 +117,7 @@ export const FEATURES = {
   poll: { label: '투표', emoji: '🗳️', hint: '/투표 로 선택지를 만들고 버튼으로 고르기' },
   movie: { label: '영화 고르기', emoji: '🎬', hint: '/영화 로 한 편 뽑기 · 투표 만들기 (TMDB)' },
   plan: { label: '일정', emoji: '📅', hint: '/일정 · /일정새로 · /정산' },
+  ai: { label: '망고야', emoji: '🥭', hint: '/망고야 로 물어보기 (제미나이)' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */

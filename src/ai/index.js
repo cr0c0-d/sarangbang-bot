@@ -1,0 +1,125 @@
+// `/망고야` — 봇에게 물어보기 (제미나이)
+//
+// 설계 근거는 docs/망고야-기획.md 에 있습니다. 요점만:
+//   · 답은 **모두에게 보입니다** (소유자 결정). 투표·영화와 같은 결입니다.
+//   · 읽어주기(TTS)로는 읽지 않습니다 — 긴 답을 듣는 건 괴롭습니다.
+//   · 대화를 기억하지 않습니다. 기억하면 매번 앞 대화를 다시 보내서 비쌉니다.
+//   · 한도가 이 기능의 절반입니다. usage.js 참고.
+import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
+import { config } from '../config.js';
+import { userError } from '../user-error.js';
+import { ask, hasKey } from './gemini.js';
+import { check, record, remaining } from './usage.js';
+
+/** 디스코드 메시지 한 통의 상한. */
+const DISCORD_LIMIT = 2000;
+/** 몇 통까지 이어 붙일지. 넘으면 잘라내고 **잘랐다고 말합니다.** */
+const MAX_CHUNKS = 3;
+
+/**
+ * 긴 답을 디스코드가 받는 크기로 나눕니다.
+ *
+ * ⚠️ **글자 수로만 자르면 단어와 코드가 잘립니다.** 문단 → 줄 → 그래도 길면 글자 순으로
+ *    경계를 찾아 자릅니다.
+ *
+ * @returns {string[]} 각 조각은 limit 이하
+ */
+export function splitForDiscord(text, limit = DISCORD_LIMIT) {
+  const out = [];
+  let rest = String(text ?? '').trim();
+
+  while (rest.length > limit) {
+    const head = rest.slice(0, limit);
+    // 문단 → 줄 순으로 끊을 자리를 찾습니다. 너무 앞에서 끊기면(절반 미만) 그냥 글자로 자릅니다.
+    let cut = head.lastIndexOf('\n\n');
+    if (cut < limit / 2) cut = head.lastIndexOf('\n');
+    if (cut < limit / 2) cut = limit;
+    out.push(rest.slice(0, cut).trim());
+    rest = rest.slice(cut).trim();
+  }
+  if (rest) out.push(rest);
+  return out;
+}
+
+/** 답 한 덩어리를 디스코드에 보낼 모양으로 만듭니다. */
+export function formatAnswer(text) {
+  const chunks = splitForDiscord(text);
+  if (chunks.length <= MAX_CHUNKS) return { chunks, truncated: false };
+  // 조용히 자르면 답이 이상하게 끝난 것처럼 보입니다. (재생목록 자르기와 같은 원칙 — 3.1-1)
+  const kept = chunks.slice(0, MAX_CHUNKS);
+  kept[MAX_CHUNKS - 1] += '\n\n*(답이 너무 길어 여기까지만 보여드립니다)*';
+  return { chunks: kept, truncated: true };
+}
+
+/**
+ * 인자 없이 실행했을 때 보여주는 상태. 명령어를 따로 만들지 않습니다 (3.6-6).
+ * verify 6x 가 조립해보므로 export 합니다 — 빌더는 toJSON() 에서야 값을 검사합니다.
+ */
+export function buildStatusPanel(guildId, userId) {
+  const left = remaining(guildId, userId);
+  const embed = new EmbedBuilder()
+    .setColor(0xf5a623)
+    .setTitle('🥭 망고야')
+    .setDescription('`/망고야 질문:...` 로 물어보세요. 답은 이 채팅방 모두에게 보입니다.')
+    .addFields(
+      { name: '남은 횟수', value: `나 ${left.user}/${left.userMax}회 (1시간)\n서버 ${left.guild}/${left.guildMax}회 (하루)` },
+      { name: '쓰는 모델', value: hasKey() ? `제미나이 \`${config.ai.geminiModel}\`` : '⚠️ API 키가 없습니다' }
+    );
+  if (!hasKey()) {
+    embed.addFields({
+      name: '설정하려면',
+      value:
+        'https://aistudio.google.com/apikey 에서 키를 받아\n' +
+        '`.env` 의 `GEMINI_API_KEY` 에 넣고 봇을 재시작하세요.',
+    });
+  }
+  return { embeds: [embed], flags: MessageFlags.Ephemeral };
+}
+
+export const commands = [
+  {
+    data: new SlashCommandBuilder()
+      .setName('망고야')
+      .setDescription('망고에게 물어봅니다 (비우면 남은 횟수를 봅니다)')
+      .addStringOption((o) =>
+        o.setName('질문').setDescription('궁금한 것을 물어보세요').setRequired(false)
+      ),
+    async execute(interaction) {
+      const question = interaction.options.getString('질문')?.trim();
+
+      // 질문 없이 실행하면 상태를 보여줍니다. 이걸 위해 명령어를 또 만들지 않습니다.
+      if (!question) {
+        return interaction.reply(buildStatusPanel(interaction.guildId, interaction.user.id));
+      }
+
+      // ⚠️ 질문 길이부터 봅니다. **답보다 질문이 더 비쌀 수 있습니다** —
+      //    긴 글을 통째로 붙여넣으면 그만큼 토큰을 씁니다.
+      if (question.length > config.ai.maxInputChars) {
+        throw userError(
+          `질문이 너무 깁니다 (${question.length}자). **${config.ai.maxInputChars}자**까지만 됩니다.\n` +
+            '줄여서 다시 물어봐 주세요.'
+        );
+      }
+
+      const gate = check(interaction.guildId, interaction.user.id);
+      if (!gate.ok) {
+        // 한도 안내는 **나만 보이게** 합니다. 채팅방에 남길 이유가 없습니다.
+        return interaction.reply({ content: `🥭 ${gate.reason}`, flags: MessageFlags.Ephemeral });
+      }
+
+      // 제미나이 응답은 몇 초 걸립니다. 3초 안에 답하지 않으면 디스코드가
+      // "적시에 응답하지 않았어요" 를 띄웁니다. 먼저 자리를 잡아둡니다.
+      await interaction.deferReply();
+
+      const answer = await ask(question);
+      // 성공했을 때만 셉니다. 실패한 질문으로 한도를 깎으면 억울합니다.
+      record(interaction.guildId, interaction.user.id);
+
+      const { chunks } = formatAnswer(answer);
+      await interaction.editReply(chunks[0]);
+      for (const extra of chunks.slice(1)) {
+        await interaction.followUp(extra).catch(() => {});
+      }
+    },
+  },
+];

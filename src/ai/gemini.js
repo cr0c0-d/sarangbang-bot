@@ -1,0 +1,156 @@
+// 제미나이(Gemini API) 호출을 감싸는 얇은 래퍼입니다.
+//
+// 왜 제미나이인가: **무료 등급이 있습니다.** ChatGPT 는 API 를 쓰려면 별도로 충전해야
+// 하는데(Plus 구독과 무관합니다), 제미나이는 AI Studio 에서 키만 발급받아
+// Flash 계열을 무료 한도 안에서 쓸 수 있습니다.
+// 소유자 결정(2026-09-02): 제미나이만 붙인다.
+//
+// ⚠️ 이 파일은 **실제 API 로 검증하지 못한 상태로 작성됐습니다.** 키가 없어서입니다.
+//    그래서 오류 경로에 특히 공을 들였습니다 — 처음 돌릴 때 무엇이 틀렸는지
+//    제미나이가 한 말을 그대로 보여줍니다. (ARCHITECTURE 3.1-4)
+import { config } from '../config.js';
+import { userError } from '../user-error.js';
+
+const BASE = 'https://generativelanguage.googleapis.com/v1beta/models';
+
+export function hasKey() {
+  return Boolean(config.ai.geminiKey);
+}
+
+/**
+ * 망고의 성격과 하지 않을 일.
+ *
+ * ⚠️ **짧게 씁니다.** 이 글은 질문할 때마다 같이 보내는 비용입니다.
+ * ⚠️ "짧게 답하라" 를 넣는 이유는 두 가지입니다 — 답이 길면 돈이고, 디스코드에서 읽기도 힘듭니다.
+ */
+const SYSTEM = [
+  '당신은 디스코드 봇 "망고" 입니다. 친구들끼리 쓰는 개인 서버에서 대화합니다.',
+  '한국어로, 친근한 존댓말로 답하세요.',
+  '**짧게** 답하세요. 특별히 자세히 물어본 게 아니면 3~4문장 안에 끝내세요.',
+  '모르는 것은 모른다고 말하세요. 그럴듯하게 지어내지 마세요.',
+  '개인정보 캐기, 특정인 비방, 위험한 행동 안내는 거절하세요.',
+].join('\n');
+
+/**
+ * 제미나이의 오류를 **한국어 + 다음에 뭘 할지** 로 바꿉니다.
+ *
+ * ⚠️ 모르는 오류는 **제미나이가 한 말을 그대로** 보여줍니다. 추측한 원인을 적으면
+ *    그 뒤로 아무도 진짜 원인을 못 찾습니다. (3.1-4)
+ */
+export function friendlyError(status, body) {
+  const raw = String(body?.error?.message ?? '').trim();
+  const short = raw.length > 300 ? `${raw.slice(0, 300)}…` : raw;
+
+  if (status === 400 && /api[ _-]?key/i.test(raw)) {
+    return '제미나이가 API 키를 거부했습니다. `.env` 의 `GEMINI_API_KEY` 를 확인해주세요.';
+  }
+  if (status === 403) {
+    return (
+      '제미나이가 접근을 거부했습니다. 키가 만료됐거나 권한이 없습니다.\n' +
+      'https://aistudio.google.com/apikey 에서 키를 다시 확인해주세요.'
+    );
+  }
+  if (status === 404) {
+    return (
+      `\`${config.ai.geminiModel}\` 모델을 찾을 수 없습니다.\n` +
+      '`.env` 의 `GEMINI_MODEL` 을 바꿔주세요. (무료로 쓰려면 Flash 계열)\n' +
+      (short ? `제미나이가 한 말: \`${short}\`` : '')
+    );
+  }
+  if (status === 429) {
+    return (
+      '제미나이 요청 한도를 넘겼습니다. **무료 등급은 분당·하루 횟수 제한이 있습니다.**\n' +
+      '잠시 뒤 다시 시도해주세요. 자주 그러면 https://aistudio.google.com/rate-limit 에서 한도를 확인하세요.'
+    );
+  }
+  if (status >= 500) {
+    return '제미나이 쪽이 혼잡합니다. 잠시 뒤 다시 시도해주세요.';
+  }
+  return short
+    ? `제미나이가 거절했습니다 (${status}). 아래가 제미나이가 한 말 그대로입니다.\n\`${short}\``
+    : `제미나이 오류 (${status}).`;
+}
+
+/** 답이 안 온 이유를 설명합니다. 조용히 빈 답을 돌려주면 "먹통" 으로 보입니다. */
+function explainEmpty(candidate, feedback) {
+  const reason = candidate?.finishReason ?? feedback?.blockReason ?? null;
+  if (reason === 'MAX_TOKENS') {
+    return `답이 길어서 잘렸습니다. \`.env\` 의 \`AI_MAX_OUTPUT_TOKENS\` 를 올리거나 더 좁게 물어봐 주세요.`;
+  }
+  if (reason === 'SAFETY' || reason === 'PROHIBITED_CONTENT' || feedback?.blockReason) {
+    return '제미나이가 답하지 않기로 했습니다. 질문을 다르게 해보세요.';
+  }
+  return reason
+    ? `답이 비어 있습니다. 제미나이가 남긴 이유: \`${reason}\``
+    : '답이 비어 있습니다. 잠시 뒤 다시 시도해주세요.';
+}
+
+function requestBody(prompt, { withoutThinking }) {
+  const body = {
+    systemInstruction: { parts: [{ text: SYSTEM }] },
+    contents: [{ role: 'user', parts: [{ text: prompt }] }],
+    generationConfig: { maxOutputTokens: config.ai.maxOutputTokens },
+  };
+  // ⚠️ 2.5 계열은 기본으로 "생각" 을 하고, **그 생각도 출력 토큰을 먹습니다.**
+  //    한도를 낮게 잡아두면 생각만 하다 답이 비어서 돌아옵니다. 그래서 껍니다.
+  //    다만 모델에 따라 이 항목을 모를 수 있어서, 거부하면 빼고 한 번 더 시도합니다.
+  if (!withoutThinking) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  return body;
+}
+
+/**
+ * 질문 하나를 보내고 답을 받아옵니다.
+ *
+ * @param {string} prompt 사용자가 물어본 내용
+ * @returns {Promise<string>} 답 (한 덩어리 글자)
+ */
+export async function ask(prompt) {
+  if (!hasKey()) {
+    throw userError(
+      '제미나이 API 키가 없습니다.\n' +
+        'https://aistudio.google.com/apikey 에서 발급받아 `.env` 의 `GEMINI_API_KEY` 에 넣고 재시작해주세요.'
+    );
+  }
+
+  let res;
+  let body;
+  for (const withoutThinking of [false, true]) {
+    // 느린 서버에서 하염없이 기다리지 않게 제한시간을 둡니다. (movie/tmdb.js 와 같은 모양)
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), config.ai.timeoutMs);
+    try {
+      res = await fetch(`${BASE}/${encodeURIComponent(config.ai.geminiModel)}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': config.ai.geminiKey },
+        body: JSON.stringify(requestBody(prompt, { withoutThinking })),
+        signal: ctrl.signal,
+      });
+      body = await res.json().catch(() => null);
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        throw userError(
+          `제미나이가 ${config.ai.timeoutMs / 1000}초 안에 답하지 않았습니다. 잠시 뒤 다시 시도해주세요.`
+        );
+      }
+      throw userError(`제미나이에 연결하지 못했습니다: ${err.message}`);
+    } finally {
+      clearTimeout(timer);
+    }
+
+    // "생각 끄기" 를 모르는 모델이면 그것만 빼고 한 번 더 시도합니다.
+    const msg = String(body?.error?.message ?? '');
+    if (!res.ok && !withoutThinking && /thinking/i.test(msg)) continue;
+    break;
+  }
+
+  if (!res.ok) throw userError(friendlyError(res.status, body));
+
+  const candidate = body?.candidates?.[0];
+  const text = (candidate?.content?.parts ?? [])
+    .map((p) => p?.text ?? '')
+    .join('')
+    .trim();
+
+  if (!text) throw userError(explainEmpty(candidate, body?.promptFeedback));
+  return text;
+}

@@ -23,6 +23,7 @@ import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music
 import { handleHistoryComponent } from './music/commands.js';
 import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint, warmUpCache, cacheDir } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
+import { initUsage as initAiUsage, flushUsage as flushAiUsage } from './ai/usage.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
 import { initTimers, handleTimerComponent } from './timer/index.js';
@@ -343,6 +344,8 @@ if (inRole('plan')) {
   await initSettlements();
 }
 if (inRole('music')) await initHistory();
+// 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
+if (inRole('ai')) await initAiUsage();
 
 // 갤러리 웹서버는 **이미지를 맡은 봇만** 띄웁니다.
 // 둘 다 띄우면 나중에 뜬 쪽이 "포트가 이미 쓰이고 있다" 로 죽습니다.
@@ -398,6 +401,8 @@ async function shutdown(signal) {
   }
   // 방금 튼 곡이 지난 목록에 안 남을 수 있습니다. 저장이 끝날 때까지 기다립니다.
   await flushHistory().catch(() => {});
+  // 방금 쓴 질문 횟수가 사라지면 한도가 새어나갑니다.
+  await flushAiUsage().catch(() => {});
   await flushPolls().catch(() => {});
   await flushPlans().catch(() => {});
   await flushSettlements().catch(() => {});

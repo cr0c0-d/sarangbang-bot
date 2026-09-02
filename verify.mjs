@@ -24,7 +24,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 19개 로드 (우클릭 1개 포함)', allCommands.length === 19, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 20개 로드 (우클릭 1개 포함)', allCommands.length === 20, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -368,6 +368,75 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     fs.readFileSync('./src/images/store.js', 'utf8').includes("throw new Error('잘못된 폴더 이름입니다.')"));
 }
 
+// 6f-2) /망고야 — 한도와 답 자르기
+//
+// ⚠️ 이 기능의 절반은 **한도**입니다. 친구들이 같이 쓰는데 요금(무료 등급의 하루 한도)은
+//    소유자 몫이라, 한 사람이 다 써버리면 나머지가 종일 못 씁니다.
+{
+  const { splitForDiscord, formatAnswer } = await import('./src/ai/index.js');
+  const usage = await import('./src/ai/usage.js');
+  const { config } = await import('./src/config.js');
+
+  // 자르기: 글자 수로만 자르면 단어가 잘립니다. 문단·줄 경계를 찾아야 합니다.
+  const long = Array.from({ length: 200 }, (_, i) => `${i}번째 문단입니다.`).join('\n\n');
+  const parts = splitForDiscord(long, 500);
+  ok('긴 답을 여러 조각으로', parts.length > 1);
+  ok('모든 조각이 상한 이하', parts.every((p) => p.length <= 500), `최대 ${Math.max(...parts.map((p) => p.length))}자`);
+  ok('조각을 이으면 내용이 보존됨', parts.join('\n\n').replace(/\s/g, '') === long.replace(/\s/g, ''));
+  ok('짧은 답은 한 조각', splitForDiscord('안녕하세요', 2000).length === 1);
+  ok('빈 답은 조각 없음', splitForDiscord('', 2000).length === 0);
+  // 조용히 자르면 답이 이상하게 끝난 것처럼 보입니다. (재생목록 자르기와 같은 원칙)
+  const many = formatAnswer('가'.repeat(9000));
+  ok('조각 수에 상한이 있음', many.chunks.length <= 3, `${many.chunks.length}조각`);
+  ok('잘렸으면 잘렸다고 적음', many.truncated && many.chunks.at(-1).includes('여기까지만'));
+
+  // 한도: 시간이 지나면 다시 되어야 하고, 성공했을 때만 세어야 합니다.
+  usage.resetUsage();
+  const G = 'aiguild';
+  const U = 'user1';
+  const now = Date.parse('2026-09-02T12:00:00Z');
+  ok('처음에는 물어볼 수 있음', usage.check(G, U, now).ok);
+  for (let i = 0; i < config.ai.perUserHourly; i++) usage.record(G, U, now);
+  const blocked = usage.check(G, U, now);
+  ok('사람당 한도를 넘기면 거절', !blocked.ok);
+  ok('언제 풀리는지 알려줌', /분/.test(blocked.reason ?? ''), blocked.reason);
+  ok('다른 사람은 그대로 됨', usage.check(G, 'user2', now).ok);
+  ok('한 시간 뒤에는 다시 됨', usage.check(G, U, now + 61 * 60 * 1000).ok);
+  ok('남은 횟수를 셀 수 있음', usage.remaining(G, U, now).user === 0);
+
+  // 서버당 하루 한도 (다른 사람들이 나눠 써도 합산되어야 합니다)
+  usage.resetUsage();
+  for (let i = 0; i < config.ai.perGuildDaily; i++) usage.record(G, `user${i}`, now);
+  const guildBlocked = usage.check(G, 'newbie', now);
+  ok('서버당 하루 한도도 걸림', !guildBlocked.ok);
+  ok('하루 한도는 시간으로 안내', /시간/.test(guildBlocked.reason ?? ''), guildBlocked.reason);
+  ok('다른 서버는 영향 없음', usage.check('otherguild', U, now).ok);
+  ok('하루 뒤에는 다시 됨', usage.check(G, 'newbie', now + 25 * 60 * 60 * 1000).ok);
+  usage.resetUsage();
+
+  // 키가 없을 때 뜻이 통하는 안내가 나와야 합니다.
+  const gem = await import('./src/ai/gemini.js');
+  ok('키가 없으면 발급 주소를 알려줌',
+    await gem.ask('안녕').then(() => false, (e) => e.message.includes('aistudio.google.com')));
+  ok('키 없음도 예상된 오류 (스택 없이)',
+    await gem.ask('안녕').then(() => false, (e) => e.expected === true));
+  // 모르는 오류는 제미나이가 한 말을 그대로 (3.1-4)
+  ok('모르는 오류는 원문을 보여줌',
+    gem.friendlyError(418, { error: { message: 'teapot detected' } }).includes('teapot detected'));
+  ok('한도 초과는 무료 등급 안내로', gem.friendlyError(429, {}).includes('무료 등급'));
+  ok('모델 오류는 GEMINI_MODEL 안내로', gem.friendlyError(404, {}).includes('GEMINI_MODEL'));
+
+  const ai = fs.readFileSync('./src/ai/index.js', 'utf8');
+  // 제미나이 응답은 몇 초 걸립니다. 3초 안에 답하지 않으면 디스코드가 실패로 봅니다.
+  ok('오래 걸리므로 먼저 자리를 잡음', ai.includes('await interaction.deferReply();'));
+  // 실패한 질문으로 한도를 깎으면 억울합니다.
+  ok('성공했을 때만 횟수를 셈', ai.indexOf('const answer = await ask(') < ai.indexOf('record(interaction.guildId'));
+  // 답보다 질문이 더 비쌀 수 있습니다.
+  ok('질문 길이도 막음', ai.includes('question.length > config.ai.maxInputChars'));
+  ok('한도 안내는 나만 보이게', /gate\.ok[\s\S]{0,200}MessageFlags\.Ephemeral/.test(ai));
+  ok('키를 로그에 안 찍음', !/console\.(log|warn|error)[^\n]*geminiKey/.test(fs.readFileSync('./src/ai/gemini.js', 'utf8')));
+}
+
 // 6g) 한 메시지의 여러 링크를 전부 찾는가
 {
   const { findYoutubeLinks } = await import('./src/music/commands.js');
@@ -564,7 +633,7 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 7개', Object.keys(st.FEATURES).length === 7, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 8개', Object.keys(st.FEATURES).length === 8, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -1450,6 +1519,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const emptyPlan = { ...samplePlan, place: null, todos: [], notes: [], refs: [], remindAt: 12345 };
   const sampleItem = { id: 'movie-1', kind: 'movie', title: '영화', year: '2026', overview: null, rating: 7.5, votes: 100, poster: 'https://image.tmdb.org/t/p/w500/a.jpg' };
 
+  const ai = await import('./src/ai/index.js');
   const screens = {
     '일정 판': () => plan.buildPanel(samplePlan),
     '일정 판 (빈 값)': () => plan.buildPanel(emptyPlan),
@@ -1466,6 +1536,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     'OTT 설정': () => movie.buildOttSettings('g'),
     '투표 판': () => poll.buildPoll({ question: 'Q', options: [{ label: 'A', image: null }], votes: {}, closed: false, createdBy: 'u', createdAt: Date.now() }),
     '투표 만들기 창': () => poll.buildCreateModal(),
+    '망고야 상태': () => ai.buildStatusPanel('g', 'u'),
     '정산 판': () => settle.buildSettlement({ title: 'T', payerId: 'p', total: 100, shares: [{ userId: 'p', amount: 50, sent: false }, { userId: 'a', amount: 50, sent: false }], createdAt: Date.now() }),
   };
 
@@ -1504,7 +1575,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 23개', union.length === 23, `${union.length}개`);
+  ok('둘을 합쳐 24개', union.length === 24, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

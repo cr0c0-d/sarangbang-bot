@@ -14,6 +14,7 @@ import { commands as pollCommands } from './poll/index.js';
 import { commands as movieCommands } from './movie/index.js';
 import { commands as planCommands } from './plan/index.js';
 import { commands as settleCommands } from './plan/settle.js';
+import { commands as aiCommands } from './ai/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
@@ -102,6 +103,15 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'ai',
+            name: '🥭 망고야',
+            value: [
+              '**`/망고야 질문:...`** — 망고에게 물어봅니다. 답은 이 채팅방 모두에게 보입니다.',
+              '`/망고야` — 질문 없이 실행하면 **남은 횟수**를 봅니다.',
+              '앞 대화를 기억하지 않으니, 필요한 내용은 질문에 같이 적어주세요.',
+            ].join('\n'),
+          },
+          {
             feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
@@ -155,6 +165,7 @@ const taggedCommands = [
   ...tag('poll', pollCommands),
   ...tag('movie', movieCommands),
   ...tag('plan', [...planCommands, ...settleCommands]),
+  ...tag('ai', aiCommands),
 ];
 
 /**
