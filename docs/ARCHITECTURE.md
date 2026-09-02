@@ -399,7 +399,10 @@ Lavalink 는 Java 프로세스를 하나 더 띄워야 해서 1GB 서버에 부�
 pip 로 깔면 푸는 과정이 없어진다.
 
 ```bash
-python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U yt-dlp
+# Ubuntu 최소 설치에는 venv 가 빠져 있다. 없으면 "ensurepip is not available" 이 뜬다.
+sudo apt update && sudo apt install -y python3-venv
+rm -rf ~/.venv-ytdlp                          # 실패한 흔적이 남아 있으면 지운다
+python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -q -U yt-dlp
 time ~/.venv-ytdlp/bin/yt-dlp --version      # 먼저 비교해볼 것
 ```
 
