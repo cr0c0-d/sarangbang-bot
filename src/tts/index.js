@@ -145,8 +145,9 @@ export function cleanText(message, maxChars) {
   text = text.replace(EMOJI_RE, ' '); // 😀 👍🏽 👨‍👩‍👧‍👦 🇰🇷 1️⃣ …
   const hadEmoji = text !== before;
 
-  // 링크는 통째로 읽으면 끔찍하므로 한 단어로 줄입니다.
-  text = text.replace(URL_RE, ' 링크 ');
+  // 링크는 통째로 읽으면 끔찍하므로 한마디로 줄입니다.
+  // 소유자 요청: "링크" 만 읽으면 뜬금없어서 **"링크를 보냈어요"** 로 읽습니다.
+  text = text.replace(URL_RE, ' 링크를 보냈어요 ');
 
   // 마크다운 기호 제거
   text = text.replace(/[*_~`|>]/g, '');

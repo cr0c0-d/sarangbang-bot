@@ -146,16 +146,67 @@ export function buildSettlement(s) {
     )
     .setFooter({ text: '실제 송금은 각자 하시고, 보내면 버튼을 눌러주세요' });
 
-  return {
-    embeds: [embed],
-    components: allDone
-      ? []
-      : [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder().setCustomId('st:sent').setEmoji('✅').setLabel('보냈어요').setStyle(ButtonStyle.Success)
-          ),
-        ],
-  };
+  if (allDone) return { embeds: [embed], components: [] };
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId('st:sent').setEmoji('✅').setLabel('보냈어요').setStyle(ButtonStyle.Success)
+  );
+  // ✏️ 고치기는 **아무도 보냈다고 하지 않았을 때만** 보여줍니다 (소유자 요청).
+  // 한 명이라도 보낸 뒤에 금액이 바뀌면 그 사람이 얼마를 보냈는지 알 수 없게 됩니다.
+  if (canEdit(s)) {
+    row.addComponents(
+      new ButtonBuilder().setCustomId('st:edit').setEmoji('✏️').setLabel('고치기').setStyle(ButtonStyle.Secondary)
+    );
+  }
+  return { embeds: [embed], components: [row] };
+}
+
+/**
+ * 고칠 수 있는가 — **아무도 "보냈어요" 를 누르지 않았을 때만.**
+ *
+ * 왜 이 경계인가: 누군가 보낸 뒤에 금액을 바꾸면 **그 사람이 실제로 보낸 금액과
+ * 목록의 금액이 어긋납니다.** 그러면 정산이 오히려 헷갈리게 됩니다.
+ * 그때는 새로 만드는 게 맞습니다.
+ */
+export function canEdit(s) {
+  return !s.shares.some((x) => x.sent);
+}
+
+/**
+ * 고치기 창. **사람은 그대로 두고 내용·금액만** 고칩니다.
+ *
+ * 왜 사람은 못 고치나: 모달의 사람 고르기 칸에는 **지금 값을 미리 채워둘 수 없습니다.**
+ * 빈 칸으로 띄우면 다시 전부 고르게 되고, 그러면 순서가 또 바뀌어 금액이 어긋납니다
+ * (그 버그를 방금 고쳤습니다). 사람을 바꿔야 하면 새로 만드는 편이 안전합니다.
+ *
+ * @param {object} s 지금 정산
+ * @param {(userId: string) => string} nameOf 사람 이름을 찾아주는 함수 (순서를 보여주려고)
+ */
+export function buildEditModal(s, nameOf = (id) => id) {
+  const order = s.shares.map((x, i) => `${i + 1}. ${nameOf(x.userId)}`).join(' · ');
+  return new ModalBuilder()
+    .setCustomId('st:edit')
+    .setTitle('정산 고치기')
+    .addLabelComponents(
+      new LabelBuilder().setLabel('내용').setTextInputComponent(
+        new TextInputBuilder()
+          .setCustomId('title')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue(s.title)
+      ),
+      new LabelBuilder()
+        .setLabel('금액')
+        // 순서를 보여줘야 어느 줄이 누구인지 알 수 있습니다. 드롭다운은 순서를 안 보여줍니다.
+        .setDescription(`이 순서대로 한 줄씩 — ${order}`.slice(0, 100))
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('amount')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(true)
+            .setValue(s.shares.map((x) => String(x.amount)).join('\n'))
+        )
+    );
 }
 
 export const commands = [
@@ -200,6 +251,7 @@ export const commands = [
 ];
 
 export async function handleSettleModal(interaction) {
+  if (interaction.customId === 'st:edit') return handleEditSubmit(interaction);
   if (interaction.customId !== 'st:new') return;
 
   const users = selectedUserIds(interaction, 'who');
@@ -227,6 +279,54 @@ export async function handleSettleModal(interaction) {
   save();
 }
 
+/**
+ * 고치기 창에서 확인을 눌렀을 때.
+ *
+ * ⚠️ 여기서 **다시 확인합니다.** 창을 띄운 뒤 확인을 누르기까지 몇 분이 걸릴 수 있고,
+ *    그 사이에 누군가 "보냈어요" 를 누를 수 있습니다. 그러면 고치면 안 됩니다.
+ */
+async function handleEditSubmit(interaction) {
+  const messageId = interaction.message?.id;
+  const s = messageId ? store[messageId] : null;
+  if (!s) {
+    return interaction.reply({
+      content: '이 정산은 더 이상 집계하지 않습니다. `/정산` 으로 새로 만들어주세요.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+  if (interaction.user.id !== s.payerId) {
+    return interaction.reply({ content: '결제한 사람만 고칠 수 있습니다.', flags: MessageFlags.Ephemeral });
+  }
+  if (!canEdit(s)) {
+    return interaction.reply({
+      content: '이미 누군가 **보냈어요** 를 눌렀습니다. 이제는 고칠 수 없습니다.\n금액이 틀렸다면 `/정산` 으로 새로 만들어주세요.',
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  const amounts = parseAmounts(interaction.fields.getTextInputValue('amount'), s.shares.length);
+  if (!amounts) {
+    return interaction.reply({
+      content:
+        '금액을 읽지 못했습니다.\n' +
+        `· 숫자 **하나**를 적으면 ${s.shares.length}명이 나눠 냅니다.\n` +
+        `· 사람마다 다르면 **${s.shares.length}줄**로 적어주세요. (사람은 그대로입니다)`,
+      flags: MessageFlags.Ephemeral,
+    });
+  }
+
+  s.title = interaction.fields.getTextInputValue('title').trim().slice(0, 100) || s.title;
+  // 사람과 순서는 그대로 두고 금액만 갈아 끼웁니다.
+  s.shares = s.shares.map((x, i) => ({ ...x, amount: amounts[i] }));
+  s.total = amounts.reduce((a, b) => a + b, 0);
+  save();
+
+  await interaction.update(buildSettlement(s));
+  await interaction
+    .followUp({ content: '✏️ 고쳤습니다.', flags: MessageFlags.Ephemeral })
+    .catch(() => {});
+}
+
 export async function handleSettleComponent(interaction) {
   const s = store[interaction.message.id];
   if (!s) {
@@ -234,6 +334,22 @@ export async function handleSettleComponent(interaction) {
       content: '이 정산은 더 이상 집계하지 않습니다. `/정산` 으로 새로 만들어주세요.',
       flags: MessageFlags.Ephemeral,
     });
+  }
+
+  if (interaction.customId === 'st:edit') {
+    if (interaction.user.id !== s.payerId) {
+      return interaction.reply({ content: '결제한 사람만 고칠 수 있습니다.', flags: MessageFlags.Ephemeral });
+    }
+    if (!canEdit(s)) {
+      return interaction.reply({
+        content: '이미 누군가 **보냈어요** 를 눌렀습니다. 이제는 고칠 수 없습니다.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    // 순서를 보여주려고 이름을 찾습니다. 못 찾으면 번호만 나옵니다.
+    const nameOf = (id) =>
+      interaction.guild?.members?.cache?.get(id)?.displayName ?? '알 수 없음';
+    return interaction.showModal(buildEditModal(s, nameOf));
   }
 
   const mine = s.shares.find((x) => x.userId === interaction.user.id);

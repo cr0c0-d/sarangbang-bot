@@ -138,7 +138,9 @@ ok('4순위 날짜 (채널 이름을 모를 때)',
 const { cleanText } = await import('./src/tts/index.js');
 const g = { members: { cache: new Map() }, roles: { cache: new Map() }, channels: { cache: new Map() } };
 const got = cleanText({ content: '<@1> 야 https://youtu.be/a 봐 <:kek:9> **굵게** ㅋㅋㅋㅋㅋ', guild: g }, 200);
-ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.stringify(got));
+// 소유자 요청: 링크는 "링크" 가 아니라 **"링크를 보냈어요"** 로 읽습니다.
+ok('TTS 정제', got === '누군가 야 링크를 보냈어요 봐 굵게 크크크', JSON.stringify(got));
+ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com/a', guild: g }, 200) === '링크를 보냈어요');
 
 // 6a) 이모지는 읽지 않는다
 {
@@ -1720,6 +1722,39 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     ok('모달에 순서를 알려줌', src.includes('고른 순서대로 위 금액이 붙습니다'));
   }
 
+  // ★ 정산 고치기 — **아무도 보냈다고 하지 않았을 때만** (소유자 요청)
+  {
+    const mk = (sent) => ({
+      title: '숙소', payerId: 'p', total: 300,
+      shares: [{ userId: 'p', amount: 100, sent: false }, { userId: 'a', amount: 200, sent }],
+      createdAt: Date.now(),
+    });
+    ok('아무도 안 보냈으면 고칠 수 있음', st3.canEdit(mk(false)));
+    // 누군가 보낸 뒤에 금액을 바꾸면 **보낸 금액과 목록이 어긋납니다.**
+    ok('한 명이라도 보냈으면 못 고침', !st3.canEdit(mk(true)));
+
+    const withBtn = JSON.stringify(st3.buildSettlement(mk(false)).components.map((r) => r.toJSON()));
+    ok('고칠 수 있으면 버튼이 보임', withBtn.includes('st:edit'));
+    const noBtn = JSON.stringify(st3.buildSettlement(mk(true)).components.map((r) => r.toJSON()));
+    ok('못 고치면 버튼도 안 보임', !noBtn.includes('st:edit'));
+
+    // 창이 조립되고, 지금 값이 채워져 있어야 합니다 (빈 칸으로 띄우면 다시 다 타이핑)
+    const modal = st3.buildEditModal(mk(false), (id) => (id === 'p' ? '지예' : '민수')).toJSON();
+    const mj = JSON.stringify(modal);
+    ok('고치기 창이 조립됨', modal.custom_id === 'st:edit');
+    ok('지금 금액이 채워져 있음', mj.includes('100\\n200'));
+    ok('지금 내용이 채워져 있음', mj.includes('숙소'));
+    // 어느 줄이 누구인지 보여줘야 합니다. 드롭다운은 순서를 안 보여줍니다.
+    ok('금액 칸에 사람 순서를 적어줌', mj.includes('1. 지예') && mj.includes('2. 민수'));
+
+    const src2 = fs.readFileSync('./src/plan/settle.js', 'utf8');
+    ok('결제한 사람만 고칠 수 있음', src2.includes('결제한 사람만 고칠 수 있습니다'));
+    // ⚠️ 창을 띄운 뒤 확인까지 몇 분이 걸릴 수 있습니다. 그 사이에 누가 보낼 수 있습니다.
+    ok('확인할 때 다시 검사함',
+      /handleEditSubmit[\s\S]{0,1200}?if \(!canEdit\(s\)\)/.test(src2));
+    ok('사람과 순서는 건드리지 않음', src2.includes('s.shares.map((x, i) => ({ ...x, amount: amounts[i] }))'));
+  }
+
   const settle = {
     title: '숙소', payerId: 'p', total: 120000,
     shares: [{ userId: 'p', amount: 40000, sent: false }, { userId: 'a', amount: 40000, sent: true },
@@ -1791,6 +1826,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     '투표 판': () => poll.buildPoll({ question: 'Q', options: [{ label: 'A', image: null }], votes: {}, closed: false, createdBy: 'u', createdAt: Date.now() }),
     '투표 만들기 창': () => poll.buildCreateModal(),
     '망고야 상태': () => ai.buildStatusPanel('g', 'u'),
+    '정산 고치기 창': () =>
+      settle.buildEditModal(
+        { title: 'T', payerId: 'p', total: 100, shares: [{ userId: 'p', amount: 100, sent: false }], createdAt: Date.now() },
+        () => '지예'
+      ),
     '정산 판': () => settle.buildSettlement({ title: 'T', payerId: 'p', total: 100, shares: [{ userId: 'p', amount: 50, sent: false }, { userId: 'a', amount: 50, sent: false }], createdAt: Date.now() }),
   };
 
