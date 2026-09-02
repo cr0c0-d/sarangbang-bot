@@ -163,6 +163,11 @@ export class GuildAudio {
       // 곡이 실제로 바뀐 순간에 제어판을 맞춰줍니다.
       // 이게 있어서 버튼 처리 쪽이 "다음 곡이 뜰 때까지" 기다릴 필요가 없어졌습니다.
       this.schedulePanelRefresh();
+      // ★ 미리 뽑기는 **지금 곡이 실제로 소리를 내기 시작한 뒤에** 시작합니다.
+      //   예전에는 playNext() 끝에서 곧바로 시작했는데, 그때는 지금 곡도 아직
+      //   yt-dlp 로 뽑는 중입니다. 코어가 하나뿐인 서버에서 둘이 서로를 굶겨
+      //   **지금 듣고 싶은 곡이 더 늦게** 나왔습니다. (실측: 22~25초)
+      this.prefetchNext();
     });
     this.musicPlayer.on('error', (err) => {
       console.error('[music] 재생 오류:', err.message);
@@ -361,8 +366,8 @@ export class GuildAudio {
       this.musicPlayer.play(resource);
       // 텍스트 알림 대신 버튼이 달린 제어판을 보여줍니다. (기존 제어판이 있으면 수정)
       showPanel(this, this.textChannel);
-      // 지금 곡을 트는 동안 다음 곡 주소를 미리 뽑아둡니다 → 곡 전환이 즉시.
-      this.prefetchNext();
+      // ⚠️ 여기서 prefetchNext() 를 부르지 마세요. 지금 곡이 아직 뽑히는 중이라
+      //    코어 하나를 두고 다투게 됩니다. 소리가 나기 시작한 뒤(Playing)에 시작합니다.
     } catch (err) {
       console.error('[music] 스트림 생성 실패:', err);
       this.notify('⚠️ **' + item.track.title + '** 을(를) 재생할 수 없어 건너뜁니다.\n' + err.message);

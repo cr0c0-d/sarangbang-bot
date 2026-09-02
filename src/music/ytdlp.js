@@ -172,10 +172,17 @@ function noteTimeout(ms) {
  * 계산만 하는 순수 함수로 떼어뒀습니다. 이래야 느린 서버 값을 넣고 검사할 수 있습니다.
  * (verify 가 기동 5.7초짜리 서버를 흉내 내 확인합니다)
  */
+/**
+ * 기동 시간 대비 추출 시간의 배수. **실측으로 정했습니다.**
+ * 소유자 서버: 기동 3.1~5.7초, 추출 12~25초 → 4~8배.
+ * 5배로 잡았더니 기동이 3.1초로 찍힌 재시작에서 15.5초가 나와 **또 잘렸습니다.**
+ */
+const STARTUP_TO_EXTRACT = 8;
+
 export function timeoutsFor(startup = null, slowestOk = 0, timedOutAt = 0) {
   const first = Math.min(
     MAX_FIRST_MS,
-    Math.max(BASE_FIRST_MS, startup ? startup * 5 : 0, slowestOk * 2, timedOutAt * 2)
+    Math.max(BASE_FIRST_MS, startup ? startup * STARTUP_TO_EXTRACT : 0, slowestOk * 2, timedOutAt * 2)
   );
   // 두 번째는 넉넉히. 단계를 셋으로 늘리지 마세요 — 정말 멈춘 경우에 너무 오래 붙잡습니다.
   return [first, Math.min(120_000, first * 2)];
@@ -185,7 +192,39 @@ export function timeoutLadder() {
   return timeoutsFor(startupMs, slowestOkMs, timedOutAtMs);
 }
 
-async function run(args, { timeouts = timeoutLadder() } = {}) {
+/**
+ * 추출은 **한 번에 하나만** 돌립니다.
+ *
+ * 실측 (소유자 서버, 1코어):
+ * ```
+ * 미리 뽑기 실패 (73.2초) · Barcelona Nights: yt-dlp 가 40초 안에 응답하지 않았습니다
+ * 미리 뽑기 실패 (62.9초) · Sins:             yt-dlp 가 40초 안에 응답하지 않았습니다
+ * ```
+ * 미리 뽑기 **두 개가 동시에** 돌아가면서 서로를 굶겼습니다. 혼자면 12초쯤 걸리는 일이
+ * 60~73초가 되고, 제한시간을 40초로 늘려도 여전히 잘립니다. 봇 전체가 멈춘 것처럼
+ * 보이기도 했습니다("Unknown interaction" — 버튼에 3초 안에 답하지 못함).
+ *
+ * 코어가 하나뿐인 서버에서는 **동시에 돌리는 것이 언제나 손해**입니다.
+ * 둘을 나란히 20초씩 쓰느니, 하나를 12초에 끝내고 다음을 12초에 끝내는 편이
+ * 첫 곡도 빠르고 전체도 빠릅니다.
+ *
+ * ⚠️ 이 줄 세우기를 없애지 마세요. 병렬로 돌리면 빨라 보이지만 실측은 반대입니다.
+ * ⚠️ 재생용 스트림(createStream)은 여기 넣지 않습니다. 곡이 끝날 때까지 살아 있어서
+ *    넣으면 미리 뽑기가 영영 차례를 못 받습니다.
+ */
+let extractChain = Promise.resolve();
+
+function serializeExtraction(fn) {
+  const next = extractChain.then(fn, fn);
+  extractChain = next.catch(() => {});
+  return next;
+}
+
+async function run(args, opts = {}) {
+  return serializeExtraction(() => runSerialized(args, opts));
+}
+
+async function runSerialized(args, { timeouts = timeoutLadder() } = {}) {
   const attempts = timeouts.length;
   let lastErr;
   for (let i = 1; i <= attempts; i++) {

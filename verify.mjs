@@ -703,6 +703,23 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   }
   // 미리 뽑기가 조용히 실패하면 다음 곡이 왜 느린지 알 수 없습니다.
   ok('미리 뽑기 결과를 로그로', ga.includes('[music] 미리 뽑기 ${took()}초') && ga.includes('미리 뽑기 실패'));
+
+  // ★ 1코어 서버에서 추출을 동시에 돌리면 서로를 굶깁니다.
+  //   실측: 미리 뽑기 두 개가 겹쳐 각각 73.2초·62.9초가 걸리고 둘 다 잘렸습니다.
+  ok('추출은 한 번에 하나만', yt.includes('function serializeExtraction(') && yt.includes('serializeExtraction(() => runSerialized('));
+  // 재생용 스트림은 곡이 끝날 때까지 살아 있어서, 줄에 넣으면 미리 뽑기가 굶습니다.
+  // 줄을 타는 곳은 run() 하나뿐이어야 합니다. (정의 1 + 호출 1 = 2)
+  ok('줄을 타는 곳은 추출 하나뿐', (yt.match(/serializeExtraction\(/g) ?? []).length === 2);
+  {
+    // 지금 곡이 뽑히는 중에 다음 곡을 뽑으면 지금 듣고 싶은 곡이 더 늦게 나옵니다.
+    const playingBlock = ga.slice(
+      ga.indexOf('AudioPlayerStatus.Playing, () => {'),
+      ga.indexOf("this.musicPlayer.on('error'")
+    );
+    const playNextBlock = ga.slice(ga.indexOf("playNext(intent = 'auto') {"), ga.indexOf('  reapplyVolume()'));
+    ok('미리 뽑기는 소리가 난 뒤에 시작', playingBlock.includes('this.prefetchNext();'));
+    ok('곡을 거는 순간에는 미리 뽑지 않음', !playNextBlock.includes('this.prefetchNext();'));
+  }
   ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
   const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
   ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([gettingTracks, audio.connect(voiceChannel)])'));
