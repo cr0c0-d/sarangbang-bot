@@ -9,6 +9,49 @@
 
 ---
 
+## 새로 세울 때 — **이 순서대로 하면 됩니다** (요약)
+
+아래 절들에 이유와 함정이 다 적혀 있지만, **결론만 순서대로** 보려면 이것입니다.
+각 줄의 괄호가 자세한 설명이 있는 절입니다.
+
+```
+① 인스턴스 만들기 · SSH 접속                      (2·3절)
+② 시간대 · Node 22 · 스왑                          (4절)
+③ 코드 올리기 · npm install · npm run update-ytdlp (5절)
+④ ★ 음악 쓸 거면 pip 로 yt-dlp 한 번 더            (5절 "pip 로 한 번 더")
+     sudo apt install -y python3-venv
+     python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"
+⑤ .env / .env.music 채우기                         (6절)
+⑥ npm run verify → npm run deploy → 한 번 띄워보기 (7절)
+⑦ 갤러리 접속 방법 정하기 (SSH 터널 권장)          (8절)
+⑧ systemd 등록 (봇 둘이면 서비스도 둘)             (9절)
+⑨ ★ 유튜브가 막으면 쿠키 넣기                      (10절)
+```
+
+### ④·⑤·⑨ 에서 놓치기 쉬운 것 — 이것만 챙기면 하루를 아낍니다
+
+2026-09-02 에 하루 종일 겪은 것들입니다. **처음부터 이렇게 해두면 안 겪습니다.**
+
+| | 값 | 왜 |
+|---|---|---|
+| `.env.music` | `YTDLP_PATH=/home/ubuntu/.venv-ytdlp/bin/yt-dlp` | 기동 **3.0초 → 0.5초** |
+| pip 설치 | `"yt-dlp[default]"` — **`[default]` 필수** | 빼면 손으로는 되고 **봇에서만** 실패 |
+| pip 전에 | `sudo apt install -y python3-venv` | 없으면 `ensurepip is not available` |
+| `.env.music` | `MUSIC_DIRECT_STREAM=false` | 쿠키 서버는 0단계가 거의 항상 거부됨 |
+| `.env.music` | `YTDLP_JS_RUNTIME` 은 **건드리지 말 것** | 끄면 **재생이 아예 안 됩니다** |
+| `.env` | `GEMINI_API_KEY` (`/망고야` 쓸 때) | 구독과 **별개**. AI Studio 에서 카드 없이 발급 |
+
+### 켤 때 로그에서 확인할 것
+
+```bash
+journalctl -u music-sarangbang-bot -n 30 --no-pager | grep -E "기동|캐시|예열"
+```
+
+`yt-dlp 기동 0.5초` 처럼 **1초 미만**이면 ④가 제대로 된 것입니다.
+3초가 넘으면 봇이 경고와 함께 설치 명령까지 찍어줍니다.
+
+---
+
 ## 0. 시작 전에 — 무엇을 공짜로 받는가
 
 | 자원 | Always Free 한도 | 이 봇에 필요한 양 |
@@ -488,6 +531,35 @@ npm install && npm run update-ytdlp
 
 `완료: /home/ubuntu/sarangbang-bot/bin/yt-dlp` 가 나오면 정상입니다. (ARM용을 알아서 받습니다)
 
+#### ★ 음악을 쓸 거면 — yt-dlp 를 **pip 로 한 번 더** 깔아주세요
+
+위에서 받은 공식 바이너리는 PyInstaller 묶음이라 **실행할 때마다 파이썬을 통째로 풉니다.**
+그 비용이 **곡을 틀 때마다** 깔립니다. 2026-09-02 실측:
+
+| | 기동 시간 |
+|---|---|
+| `bin/yt-dlp` (공식 바이너리) | **3.0~5.7초** |
+| pip 로 깐 것 | **0.5초** |
+
+곡 전환과 첫 곡이 그만큼 빨라집니다. 세 줄이면 끝입니다.
+
+```bash
+sudo apt install -y python3-venv
+python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"
+time ~/.venv-ytdlp/bin/yt-dlp --version
+```
+
+마지막 줄이 `bin/yt-dlp` 보다 빠르면, `.env.music` 에 경로를 적습니다(6절).
+
+⚠️ **`[default]` 를 빼먹지 마세요.** 그냥 `yt-dlp` 로 깔면 최소 의존성만 들어와서,
+**손으로 돌리면 되는데 봇에서만(쿠키를 쓰는 경로에서) 실패**합니다. 원인 찾는 데 한참 걸립니다.
+
+⚠️ `python3-venv` 가 없으면 `ensurepip is not available` 이 납니다. 위 첫 줄이 그것입니다.
+
+⚠️ pip 로 깐 뒤에는 `npm run update-ytdlp` 가 **봇이 쓰지도 않는 `bin/`** 을 갱신합니다.
+   봇이 알아채고 pip 갱신 명령을 알려주지만, 갱신은 이렇게 하세요:
+   `~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"`
+
 ---
 
 ## 6. `.env` 만들기
@@ -519,6 +591,32 @@ openssl rand -base64 32
 ```
 
 나머지(`DISCORD_TOKEN`, `CLIENT_ID`, `GUILD_ID`, 채널 ID들)는 집 PC의 `.env` 와 **똑같이** 넣으면 됩니다.
+
+#### 서버에서만 추가로 넣는 값 (2026-09-02 정리)
+
+```ini
+# ── .env (망고) ──
+# /망고야 를 쓸 거면. https://aistudio.google.com/apikey 에서 카드 없이 발급됩니다.
+# ⚠️ ChatGPT Plus·Google AI Pro **구독과는 완전히 별개**입니다. 구독해도 API 크레딧은 0입니다.
+GEMINI_API_KEY=
+```
+
+```ini
+# ── .env.music (노래하는 망고) ──
+# 위에서 pip 로 깐 것이 더 빨랐으면 그 경로. 기동 3초 → 0.5초 (실측)
+YTDLP_PATH=/home/ubuntu/.venv-ytdlp/bin/yt-dlp
+
+# 쿠키를 쓰는 서버에서는 "직접 수신"(0단계)이 거의 항상 거부됩니다.
+# 두 곡이면 봇이 알아서 끄지만, 처음부터 꺼두는 편이 깔끔합니다.
+MUSIC_DIRECT_STREAM=false
+
+# 쿠키 파일 경로 (10절에서 만듭니다)
+YTDLP_COOKIES_FILE=/home/ubuntu/sarangbang-bot/cookies.txt
+```
+
+⚠️ **`YTDLP_JS_RUNTIME=false` 를 넣지 마세요.** 기동이 빨라져 보이지만
+   유튜브 서명을 못 풀어 **재생이 아예 안 됩니다.** 2026-09-02 에 실제로 겪었습니다.
+   (봇이 이 상황을 알아보고 "이 줄이 원인" 이라고 알려주긴 합니다)
 
 ---
 
