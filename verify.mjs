@@ -604,6 +604,15 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   // 쿠키를 쓰는 서버에서 실제로 겪은 문제입니다.
   ok('직접수신이 계속 실패하면 스스로 끔', yt.includes('directDisabled') && yt.includes('noteDirectFailure'));
   ok('성공하면 실패 기록을 지움', yt.includes('noteDirectSuccess'));
+  // ⚠️ Playing 이 떴다고 성공으로 치면 안 됩니다. 직접 수신이 거부돼도 플레이어는
+  //    Playing 을 잠깐 지나갑니다. 그러면 "두 번 연속 실패하면 끈다" 가 매번 0으로
+  //    되돌아가 **영영 작동하지 않고, 곡마다 헛걸음합니다.** (서버 로그에서 확인)
+  ok('직접 수신 성공은 소리가 난 뒤에 판정',
+    ga.includes('if (this.usedDirect) this.confirmDirectLater();') &&
+    !/Playing[\s\S]{0,400}?if \(this\.usedDirect\) noteDirectSuccess\(\);/.test(ga));
+  ok('판정 기준은 실제로 3초 이상 재생',
+    ga.includes("(resource?.playbackDuration ?? 0) >= 3000) noteDirectSuccess()"));
+  ok('그 사이 곡이 바뀌면 판정 안 함', ga.includes('this.currentResource !== resource) return;'));
 
   // 원본 준비의 **세 단계**. 1단계(뽑아둔 주소를 yt-dlp 가 받기)가 없으면
   // 쿠키를 쓰는 서버는 한 곡에 유튜브 추출을 **두 번** 합니다. (실측 3.5초 → 1.4초)
@@ -1546,7 +1555,10 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     ok('버튼 응답 전에 기다리지 않음', !/setTimeout\(r, 400\)/.test(pnl));
     ok('소리가 바뀌면 제어판이 따라옴', ga.includes('this.schedulePanelRefresh();'));
     ok('버튼 응답과 겹치지 않게 미룸', ga.includes('clearTimeout(this.panelTimer)'));
-    ok('나갈 때 예약된 갱신도 정리', ga.includes('this.panelTimer = null;\n    this.queue = [];'));
+    ok('나갈 때 예약된 갱신도 정리',
+      /destroy\(\)[\s\S]*?clearTimeout\(this\.panelTimer\);[\s\S]{0,200}?this\.queue = \[\];/.test(ga));
+    ok('나갈 때 직접수신 판정도 취소',
+      /destroy\(\)[\s\S]*?clearTimeout\(this\.directCheckTimer\);/.test(ga));
   }
 
   ok('갱신은 그 자리에서만 (지우거나 다시 보내지 않음)', rp.includes('msg.edit(') && !rp.includes('showPanel('));

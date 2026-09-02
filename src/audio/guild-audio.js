@@ -128,6 +128,7 @@ export class GuildAudio {
     this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
     this.panelTimer = null;        // 곡이 바뀐 뒤 제어판 갱신 (schedulePanelRefresh)
     this.prepStartedAt = null;     // 준비를 시작한 시각 (첫 소리까지 몇 초 걸렸는지 로그용)
+    this.directCheckTimer = null;  // 직접 수신이 정말 소리를 냈는지 나중에 확인 (confirmDirectLater)
     this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
     this.usedDirect = false;       // 이번 곡을 "직접 수신"(0단계) 으로 틀었는지
     this.srcLevel = SRC_DIRECT;    // 이번 곡을 어느 단계로 틀었는지 (ytdlp.js 의 SRC_* 참고)
@@ -152,8 +153,13 @@ export class GuildAudio {
         console.log(`[music] 첫 소리까지 ${sec}초 · ${SRC_LABEL[this.srcLevel]} · ${this.current?.track?.title ?? ''}`);
       }
       if (this.current) recordHistory(this.guild.id, this.current.track);
-      // 직접 수신으로 소리가 실제로 났으면, 앞선 실패는 일시적이었던 것입니다.
-      if (this.usedDirect) noteDirectSuccess();
+      // ⚠️ **여기서 곧바로 "직접 수신 성공" 으로 치면 안 됩니다.**
+      //    직접 수신이 거부돼도 플레이어는 Playing 을 잠깐 지나갑니다 — 소리는 안 나는데도.
+      //    그걸 성공으로 세면 "두 번 연속 실패하면 끈다" 는 장치가 **매번 0으로 되돌아가**
+      //    영영 작동하지 않습니다. 실제로 그랬습니다: 서버 로그에 곡마다
+      //    "직접 수신 실패" 가 찍히는데도 다음 곡에서 또 직접 수신부터 시도했습니다.
+      //    소리가 3초 넘게 **실제로** 났는지 확인한 뒤에 성공으로 칩니다.
+      if (this.usedDirect) this.confirmDirectLater();
       // 곡이 실제로 바뀐 순간에 제어판을 맞춰줍니다.
       // 이게 있어서 버튼 처리 쪽이 "다음 곡이 뜰 때까지" 기다릴 필요가 없어졌습니다.
       this.schedulePanelRefresh();
@@ -552,6 +558,23 @@ export class GuildAudio {
    * 그 응답이 "없는 메시지" 오류를 냅니다.
    */
   /**
+   * 직접 수신(0단계)이 **정말로 소리를 냈는지** 조금 뒤에 확인합니다.
+   *
+   * 판정 기준은 `playedNothing()` 과 같습니다 — 3초 넘게 났으면 진짜 소리가 난 것입니다.
+   * 이게 없으면 "두 번 연속 실패하면 끈다" 가 작동하지 않아, **곡마다 헛걸음**을 합니다.
+   */
+  confirmDirectLater() {
+    const resource = this.currentResource;
+    clearTimeout(this.directCheckTimer);
+    this.directCheckTimer = setTimeout(() => {
+      this.directCheckTimer = null;
+      // 그 사이에 곡이 바뀌었으면 이 확인은 의미가 없습니다.
+      if (this.destroyed || this.currentResource !== resource) return;
+      if ((resource?.playbackDuration ?? 0) >= 3000) noteDirectSuccess();
+    }, 5000);
+  }
+
+  /**
    * 곡이 바뀐 것을 제어판에 반영합니다. **버튼 응답과 겹치지 않게 살짝 미룹니다.**
    *
    * 예전에는 `⏮️ 이전` `⏭️ 다음` 버튼을 처리할 때 400ms 를 그냥 잤습니다.
@@ -782,6 +805,8 @@ export class GuildAudio {
     this.volumeTimer = null;
     clearTimeout(this.panelTimer);
     this.panelTimer = null;
+    clearTimeout(this.directCheckTimer);
+    this.directCheckTimer = null;
     this.queue = [];
     this.history = [];
     this.nextIntent = null;
