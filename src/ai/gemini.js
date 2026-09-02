@@ -105,10 +105,18 @@ function requestBody(prompt, { withoutThinking }) {
     contents: [{ role: 'user', parts: [{ text: prompt }] }],
     generationConfig: { maxOutputTokens: config.ai.maxOutputTokens },
   };
-  // ⚠️ 2.5 계열은 기본으로 "생각" 을 하고, **그 생각도 출력 토큰을 먹습니다.**
-  //    한도를 낮게 잡아두면 생각만 하다 답이 비어서 돌아옵니다. 그래서 껍니다.
-  //    다만 모델에 따라 이 항목을 모를 수 있어서, 거부하면 빼고 한 번 더 시도합니다.
-  if (!withoutThinking) body.generationConfig.thinkingConfig = { thinkingBudget: 0 };
+  // ⚠️ 제미나이는 기본으로 "생각" 을 하고, **그 생각도 출력 토큰을 먹습니다.**
+  //    한도를 낮게 잡아두면 생각만 하다 답이 비어서 돌아옵니다. 그래서 가장 낮게 둡니다.
+  //
+  // ⚠️ 필드 이름이 바뀌었습니다. 3.x 는 `thinkingLevel`(low·medium·high) 이고
+  //    예전 `thinkingBudget` 은 폐기됐습니다. 그래서 **모델마다 받는 이름이 다릅니다.**
+  //    거부하면 이 항목만 빼고 한 번 더 시도합니다 — 재생이 되는 게 먼저입니다.
+  //
+  // ⚠️ `temperature`·`topP`·`topK` 는 3.x 에서 폐기됐습니다(무시되거나 400).
+  //    **넣지 마세요.** 지금도 안 보냅니다.
+  if (!withoutThinking) {
+    body.generationConfig.thinkingConfig = { thinkingLevel: config.ai.thinkingLevel };
+  }
   return body;
 }
 

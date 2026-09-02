@@ -183,10 +183,12 @@ export const config = {
     // 제미나이만 붙입니다 (소유자 결정). 무료 등급이 있어서 시작이 쉽습니다.
     geminiKey: str('GEMINI_API_KEY', ''),
     // ⚠️ 모델 이름은 자주 바뀝니다. 무료로 쓰려면 Flash 계열을 고르세요.
-    geminiModel: str('GEMINI_MODEL', 'gemini-2.5-flash'),
+    geminiModel: str('GEMINI_MODEL', 'gemini-3.6-flash'),
     // 아래 넷이 요금(과 무료 한도)을 지키는 장치입니다. docs/망고야-기획.md 3절.
     maxInputChars: num('AI_MAX_INPUT_CHARS', 1000),
     maxOutputTokens: num('AI_MAX_OUTPUT_TOKENS', 800),
+    // "생각" 을 얼마나 할지. low·medium·high. 생각도 출력 토큰을 먹으므로 기본은 low.
+    thinkingLevel: str('AI_THINKING_LEVEL', 'low'),
     perUserHourly: num('AI_PER_USER_HOURLY', 10),
     perGuildDaily: num('AI_PER_GUILD_DAILY', 50),
     timeoutMs: num('AI_TIMEOUT_MS', 30000),
