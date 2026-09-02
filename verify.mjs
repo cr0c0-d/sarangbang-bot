@@ -275,6 +275,26 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
 
   ok('일시적 오류로 분류됨 (재시도 대상)',
     isTransient('ERROR: [youtube] abc: The page needs to be reloaded.'));
+
+  // ★ 같은 말이라도 JS 런타임을 꺼뒀으면 **원인이 그것**입니다.
+  //   2026-09-02 에 속도를 줄여보려고 껐다가 재생이 아예 안 됐습니다.
+  //   "일시적" 으로 보고 재시도하면 곡마다 40~60초를 버리고도 결국 실패합니다.
+  {
+    const saved = process.env.YTDLP_JS_RUNTIME;
+    process.env.YTDLP_JS_RUNTIME = 'false';
+    const msg = friendlyError('ERROR: [youtube] abc: The page needs to be reloaded.');
+    ok('런타임을 꺼뒀으면 그게 원인이라고 알림', msg.includes('YTDLP_JS_RUNTIME=false') && msg.includes('원인'));
+    ok('런타임을 꺼뒀으면 재시도하지 않음',
+      !isTransient('ERROR: [youtube] abc: The page needs to be reloaded.'));
+    if (saved === undefined) delete process.env.YTDLP_JS_RUNTIME;
+    else process.env.YTDLP_JS_RUNTIME = saved;
+    ok('되돌리면 다시 일시적 오류', isTransient('ERROR: [youtube] abc: The page needs to be reloaded.'));
+  }
+  // ⚠️ 느릴 때 이 설정을 권하면 안 됩니다. 재생 자체가 안 됩니다.
+  ok('느릴 때 런타임 끄기를 권하지 않음',
+    !/시간을 초과했습니다[\s\S]{0,300}?YTDLP_JS_RUNTIME=false` 를 넣고/.test(
+      fs.readFileSync('./src/music/ytdlp.js', 'utf8')
+    ));
   ok('삭제된 영상은 재시도 대상 아님',
     !isTransient('ERROR: [youtube] abc: Video unavailable'));
   // ⚠️ 유튜브는 **서로 다른 이유**를 전부 "Video unavailable" 로 뭉뚱그립니다.

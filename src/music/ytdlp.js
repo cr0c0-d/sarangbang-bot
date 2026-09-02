@@ -54,8 +54,23 @@ const TRANSIENT_PATTERNS = [
   'http error 5', // 500, 502, 503...
 ];
 
+/**
+ * 서명(n challenge)을 못 풀었을 때 유튜브가 뱉는 말.
+ *
+ * ⚠️ 이건 **JS 런타임을 꺼두면 반드시** 납니다. 그때는 다시 해봐야 똑같습니다.
+ *    "일시적" 으로 분류해 재시도하면 곡마다 40~60초를 버리고도 결국 실패합니다.
+ *    (실제로 겪었습니다: YTDLP_JS_RUNTIME=false 를 넣자 재생이 아예 안 됐습니다)
+ */
+const NEEDS_JS_PATTERNS = ['the page needs to be reloaded', 'n challenge solving failed', 'javascript runtime'];
+
+function looksLikeMissingJsRuntime(s) {
+  return !jsRuntimeEnabled() && NEEDS_JS_PATTERNS.some((p) => s.includes(p));
+}
+
 export function isTransient(text) {
   const s = String(text).toLowerCase();
+  // JS 런타임을 꺼둬서 나는 것이라면 다시 해도 소용없습니다. 빨리 실패하고 원인을 알립니다.
+  if (looksLikeMissingJsRuntime(s)) return false;
   return TRANSIENT_PATTERNS.some((p) => s.includes(p));
 }
 
@@ -190,7 +205,9 @@ async function run(args, { timeouts = timeoutLadder() } = {}) {
         const timedOut = err.message.includes('타임아웃');
         err.message += timedOut
           ? `\n\n${attempts}번 시도했지만 모두 시간을 초과했습니다. **서버가 느린 것**이지 차단은 아닙니다.` +
-            '\n· `.env.music` 에 `YTDLP_JS_RUNTIME=false` 를 넣고 재시작해보세요. (가장 효과 큼)' +
+            // ⚠️ 여기서 YTDLP_JS_RUNTIME=false 를 권하지 마세요. 실제로 권했다가
+            //    **재생이 아예 안 됐습니다.** 기동은 빨라지지만 서명을 못 풀어
+            //    "The page needs to be reloaded" 만 반복합니다. 되돌리는 값싼 조치가 아닙니다.
             '\n· 메모리 부족일 수 있습니다. 서버에서 `free -h` 로 swap 사용량을 확인하세요.' +
             '\n· 진단: 서버에서 `time ./bin/yt-dlp --version` — 5초를 넘으면 기동 자체가 느린 것입니다.'
           : `\n\n${attempts}번 다시 시도했지만 계속 실패했습니다. 일시적 문제가 아닐 수 있습니다.` +
@@ -245,6 +262,17 @@ export function friendlyError(stderr) {
   // n challenge(서명 계산)는 자바스크립트 런타임이 있어야 풀립니다.
   // 이게 실패하면 곧바로 "The page needs to be reloaded" 가 뒤따라 나오므로
   // **차단보다 먼저** 검사해야 원인을 제대로 짚습니다.
+  //
+  // ⚠️ 같은 말이라도 **JS 런타임을 꺼뒀는지**에 따라 원인이 완전히 다릅니다.
+  //    꺼뒀으면 그게 원인입니다 — "잠시 뒤 다시" 라고 안내하면 영원히 못 고칩니다.
+  //    (실제로 겪었습니다: 속도를 줄여보려고 껐다가 재생이 아예 안 됐습니다)
+  if (looksLikeMissingJsRuntime(s)) {
+    return (
+      '유튜브 서명 계산에 실패했습니다. **`.env.music` 의 `YTDLP_JS_RUNTIME=false` 가 원인입니다.**\n' +
+      '그 줄을 지우고 재시작해주세요. (지우면 기동이 조금 느려지는 대신 재생이 됩니다)\n' +
+      '`sed -i \'/^YTDLP_JS_RUNTIME=false/d\' .env.music && sudo systemctl restart music-sarangbang-bot`'
+    );
+  }
   if (s.includes('n challenge solving failed') || s.includes('javascript runtime')) {
     return (
       '유튜브 서명 계산에 필요한 자바스크립트 런타임이 없습니다.\n' +
