@@ -405,6 +405,24 @@ export async function getTracks(input) {
   return result.map((t) => ({ ...t }));
 }
 
+/**
+ * yt-dlp 를 **켜는 데만** 얼마나 걸리는지 재서 알려줍니다. (켤 때 한 번)
+ *
+ * 왜 재나: yt-dlp 는 PyInstaller 번들이라 실행할 때마다 파이썬 런타임을 풉니다.
+ * 이 비용은 **곡을 틀 때마다 그대로 깔립니다.** 집 PC 에서는 1.6초인데 느린 서버에서는
+ * 훨씬 클 수 있고, 그러면 "왜 느린가" 의 답이 여기서 끝납니다.
+ * 매번 서버에 들어가 `time ./bin/yt-dlp --version` 을 치게 하는 대신 봇이 알려줍니다.
+ */
+export function measureStartup() {
+  const t0 = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn(YTDLP, ['--version'], { stdio: 'ignore', windowsHide: true });
+    const done = (ok) => resolve(ok ? (Date.now() - t0) / 1000 : null);
+    child.once('error', () => done(false));
+    child.once('close', (code) => done(code === 0));
+  });
+}
+
 /** JS 런타임 지정을 끌 수 있게 합니다. 느린 서버에서 기동 비용을 줄일 때. */
 export function jsRuntimeEnabled() {
   return (process.env.YTDLP_JS_RUNTIME ?? 'true').toLowerCase() !== 'false';

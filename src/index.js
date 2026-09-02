@@ -20,6 +20,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
+import { measureStartup as measureYtdlpStartup } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { adoptGalleryPanel } from './images/panel.js';
 import { initPanelRegistry, cleanupPanelsOnStart, deleteMusicPanels } from './panel-registry.js';
@@ -83,6 +84,23 @@ client.once(Events.ClientReady, (c) => {
   //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)
   cleanupPanelsOnStart(c, adoptGalleryPanel);
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
+
+  // yt-dlp 를 **켜는 데만** 몇 초가 걸리는지 한 번 재둡니다.
+  // 이 시간은 곡을 틀 때마다 그대로 깔립니다. 느린 서버에서는 "왜 느린가" 의 답이
+  // 여기서 끝나는 경우가 많아, 서버에 들어가 재보게 하는 대신 봇이 알려줍니다.
+  if (inRole('music')) {
+    measureYtdlpStartup().then((sec) => {
+      if (sec === null) return console.warn('   yt-dlp 를 실행하지 못했습니다. `npm run update-ytdlp` 로 다시 받아보세요.');
+      console.log(`   yt-dlp 기동 ${sec.toFixed(1)}초 — 곡을 틀 때마다 이만큼이 깔립니다`);
+      if (sec >= 3) {
+        console.warn(
+          '   ⚠️ 기동만 3초가 넘습니다. 서버가 느린 것이지 유튜브 문제가 아닙니다.\n' +
+            '      `.env.music` 에 YTDLP_JS_RUNTIME=false 를 넣고 재시작하면 줄어들 수 있습니다.\n' +
+            '      (다만 그러면 곡을 아예 못 뽑을 수도 있으니, 넣은 뒤 한 곡 틀어 확인하세요)'
+        );
+      }
+    });
+  }
 
   // TTS 연결을 미리 데워둡니다.
   // 식은 연결에서 첫 발화는 약 1초, 따뜻하면 50~80ms 입니다 (실측).

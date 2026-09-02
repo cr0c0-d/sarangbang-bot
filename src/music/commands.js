@@ -95,7 +95,7 @@ function assertCanJoin(voiceChannel, guild) {
  * 슬래시 명령과 링크 자동감지 양쪽에서 같이 씁니다.
  * @returns {Promise<string>} 사용자에게 보여줄 결과 메시지
  */
-export async function enqueue({ query, guild, member, textChannel }) {
+export async function enqueue({ query, tracks: known = null, guild, member, textChannel }) {
   const voiceChannel = await resolveVoiceChannel(guild, member);
   assertCanJoin(voiceChannel, guild);
 
@@ -104,7 +104,22 @@ export async function enqueue({ query, guild, member, textChannel }) {
 
   // 유튜브 추출(수 초)과 음성채널 접속(수백 ms)을 **동시에** 합니다.
   // 예전에는 추출을 다 기다린 뒤에 접속해서 그만큼 더 늦었습니다.
-  const [tracks] = await Promise.all([getTracks(query), audio.connect(voiceChannel)]);
+  //
+  // known 이 있으면 추출을 아예 건너뜁니다 — 제목·길이를 이미 아는 경우입니다
+  // (지난 곡 목록). 대기열에 담기만 할 때 yt-dlp 를 부를 이유가 없습니다.
+  const t0 = Date.now();
+  let extractMs = 0;
+  const gettingTracks = known
+    ? Promise.resolve(known)
+    : getTracks(query).then((r) => {
+        extractMs = Date.now() - t0;
+        return r;
+      });
+  const [tracks] = await Promise.all([gettingTracks, audio.connect(voiceChannel)]);
+  if (extractMs > 0) {
+    // 느릴 때 어디서 느린지 눈에 보여야 합니다. 곡을 담을 때마다 한 줄.
+    console.log(`[music] 곡 정보 ${(extractMs / 1000).toFixed(1)}초 (yt-dlp 추출) · ${tracks[0]?.title ?? query}`);
+  }
   if (tracks.length === 0) throw userError('재생할 수 있는 곡을 찾지 못했습니다.');
 
   const wasIdle = !audio.isPlaying;
@@ -178,27 +193,43 @@ export async function handleHistoryComponent(interaction) {
   }
   if (interaction.customId !== 'm:hist:add') return;
 
-  // 곡마다 유튜브 추출이 있어 수 초씩 걸립니다. 먼저 응답부터 잡아둡니다.
   await interaction.deferUpdate();
 
   const urls = interaction.values;
   const added = [];
   const failed = [];
 
+  // ★ 지난 곡은 **제목과 길이를 이미 알고 있습니다.** yt-dlp 를 부를 이유가 없습니다.
+  //   예전에는 고른 곡마다 추출을 돌려서, 담기만 하는데도 곡당 몇 초씩 걸렸습니다.
+  //   (소유자 지적: "지난 곡에서 선택해서 대기열에 담는것도 오래걸려")
+  //   재생 주소는 어차피 90분이면 만료되므로 미리 뽑아둘 값어치도 없습니다 —
+  //   틀 때가 되면 prefetchNext() 가 미리 뽑아둡니다.
+  const remembered = new Map(recentHistory(interaction.guildId, 60).map((e) => [e.url, e]));
+  const tracks = urls.map((url) => {
+    const e = remembered.get(url);
+    return {
+      title: e?.title ?? url,
+      url,
+      duration: e?.duration ?? null,
+      thumbnail: null,
+      uploader: null,
+      streamUrl: null,
+      extractedAt: 0,
+    };
+  });
+
   // 붙여넣기로 들어온 곡들과 순서가 뒤엉키지 않게 서버별 줄에 세웁니다.
   await serialize(interaction.guildId, async () => {
-    for (const url of urls) {
-      try {
-        const { tracks } = await enqueue({
-          query: url,
-          guild: interaction.guild,
-          member: interaction.member,
-          textChannel: interaction.channel,
-        });
-        added.push(tracks[0]?.title ?? url);
-      } catch (err) {
-        failed.push(err.message);
-      }
+    try {
+      await enqueue({
+        tracks,
+        guild: interaction.guild,
+        member: interaction.member,
+        textChannel: interaction.channel,
+      });
+      added.push(...tracks.map((t) => t.title));
+    } catch (err) {
+      failed.push(err.message);
     }
   });
 

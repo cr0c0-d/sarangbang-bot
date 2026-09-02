@@ -127,6 +127,7 @@ export class GuildAudio {
     this.currentOffsetSec = 0;     // 이번 리소스가 몇 초 지점부터 시작했는지 (positionSec 참고)
     this.volumeTimer = null;       // 음량 버튼 연타를 모아서 한 번만 반영
     this.panelTimer = null;        // 곡이 바뀐 뒤 제어판 갱신 (schedulePanelRefresh)
+    this.prepStartedAt = null;     // 준비를 시작한 시각 (첫 소리까지 몇 초 걸렸는지 로그용)
     this.restartGen = 0;           // 준비 중에 또 눌렸는지 구분 (restartAtCurrentPosition)
     this.usedDirect = false;       // 이번 곡을 "직접 수신"(0단계) 으로 틀었는지
     this.srcLevel = SRC_DIRECT;    // 이번 곡을 어느 단계로 틀었는지 (ytdlp.js 의 SRC_* 참고)
@@ -143,6 +144,13 @@ export class GuildAudio {
     // 지난 재생 기록은 **소리가 실제로 나기 시작한 순간**에만 남깁니다.
     // 대기열에 넣을 때 남기면 재생에 실패한 곡까지 쌓여서, 다시 골라도 또 실패합니다.
     this.musicPlayer.on(AudioPlayerStatus.Playing, () => {
+      // 준비를 시작한 뒤 **첫 소리가 날 때까지** 얼마나 걸렸는지 한 줄로 남깁니다.
+      // 느릴 때 "곡 정보" 와 "첫 소리" 중 어디가 느린지 로그만 보고 알 수 있어야 합니다.
+      if (this.prepStartedAt) {
+        const sec = ((Date.now() - this.prepStartedAt) / 1000).toFixed(1);
+        this.prepStartedAt = null;
+        console.log(`[music] 첫 소리까지 ${sec}초 · ${SRC_LABEL[this.srcLevel]} · ${this.current?.track?.title ?? ''}`);
+      }
       if (this.current) recordHistory(this.guild.id, this.current.track);
       // 직접 수신으로 소리가 실제로 났으면, 앞선 실패는 일시적이었던 것입니다.
       if (this.usedDirect) noteDirectSuccess();
@@ -320,6 +328,7 @@ export class GuildAudio {
     this.current = item;
 
     try {
+      this.prepStartedAt = Date.now(); // 첫 소리까지 몇 초 걸렸는지 재려고 (Playing 에서 찍습니다)
       // 가장 빠른 단계부터 시작합니다. item.srcLevel 은 "그 단계가 실패해서
       // 한 칸 내려가 다시 시도하는 중" 이라는 뜻입니다. (ytdlp.js 의 SRC_* 참고)
       const src = createSource(item.track, { level: item.srcLevel ?? SRC_DIRECT });

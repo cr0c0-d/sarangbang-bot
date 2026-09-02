@@ -647,7 +647,19 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('타임아웃과 차단 안내를 구분', yt.includes('서버가 느린 것') && yt.includes('IP를 차단'));
   ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
   const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
-  ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([getTracks(query), audio.connect(voiceChannel)])'));
+  ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([gettingTracks, audio.connect(voiceChannel)])'));
+  // ★ 지난 곡은 제목·길이를 이미 압니다. 담기만 하는데 yt-dlp 를 부르면 곡당 몇 초씩 걸립니다.
+  //   (소유자 지적: "지난 곡에서 선택해서 대기열에 담는것도 오래걸려")
+  ok('아는 곡은 추출을 건너뜀', mc2.includes('known\n    ? Promise.resolve(known)'));
+  ok('지난 곡은 기록에서 제목을 씀', mc2.includes('recentHistory(interaction.guildId, 60)'));
+  ok('지난 곡 담기는 yt-dlp 를 안 부름',
+    /handleHistoryComponent[\s\S]*?enqueue\(\{\s*\n\s*tracks,/.test(mc2));
+  // 느릴 때 어디가 느린지 로그만 보고 알 수 있어야 합니다.
+  ok('곡 정보에 걸린 시간을 남김', mc2.includes('[music] 곡 정보 ${'));
+  ok('첫 소리까지 걸린 시간을 남김', ga.includes('[music] 첫 소리까지 ${sec}초'));
+  ok('yt-dlp 기동 시간을 켤 때 잼',
+    yt.includes('export function measureStartup()') &&
+    fs.readFileSync('./src/index.js', 'utf8').includes('yt-dlp 기동 ${sec.toFixed(1)}초'));
   ok('링크 감지 즉시 반응', mc2.includes("message.react('⏳')"));
   ok('미리추출: 대기열 변경 확인', ga.includes('this.queue.includes(next)'));
 
