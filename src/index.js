@@ -18,7 +18,7 @@ import { initStore } from './images/store.js';
 import { initSettings, getWithSource } from './settings.js';
 import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
-import { handleMusicComponent } from './music/panel.js';
+import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
 import { measureStartup as measureYtdlpStartup } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
@@ -82,7 +82,11 @@ client.once(Events.ClientReady, (c) => {
   // 재시작 전에 띄워둔 제어판을 정리합니다.
   //   음악 제어판 → 지웁니다 (재시작하면 음악이 이어지지 않으므로 "재생 중" 이 거짓말)
   //   갤러리 버튼 → 되찾아 그대로 씁니다 (링크 버튼이라 재시작 후에도 동작)
-  cleanupPanelsOnStart(c, adoptGalleryPanel);
+  //   음악 채팅방을 지정해뒀다면 그곳 제어판은 남기고 "비었다" 로 고쳐 씁니다 (adoptMusicPanel)
+  cleanupPanelsOnStart(c, adoptGalleryPanel, adoptMusicPanel)
+    // 지정해뒀는데 제어판이 아예 없으면(처음이거나 누가 지웠으면) 새로 띄웁니다.
+    .then(() => (inRole('music') ? ensureHomePanels(c) : null))
+    .catch((err) => console.error('[panel] 제어판 준비 실패:', err.message));
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
   // yt-dlp 를 **켜는 데만** 몇 초가 걸리는지 한 번 재둡니다.
@@ -355,8 +359,13 @@ async function shutdown(signal) {
   console.log(`\n${signal} 수신, 정리 중...`);
 
   // 제어판을 남겨두면 봇이 꺼진 뒤에도 "지금 재생 중" 으로 보입니다.
+  // 지정된 음악 채팅방의 것은 지우는 대신 "비었다" 로 고쳐 씁니다 — 꺼져 있는 동안에도
+  // 제어판 자리는 그대로여야 하고, 다시 켜면 그 메시지를 이어서 씁니다.
   // 디스코드가 늦게 답할 수 있으니 3초까지만 기다리고 나갑니다.
-  await Promise.race([deleteMusicPanels(client).catch(() => {}), new Promise((r) => setTimeout(r, 3000))]);
+  await Promise.race([
+    deleteMusicPanels(client, adoptMusicPanel).catch(() => {}),
+    new Promise((r) => setTimeout(r, 3000)),
+  ]);
 
   for (const guild of client.guilds.cache.values()) {
     peekGuildAudio(guild.id)?.destroy();

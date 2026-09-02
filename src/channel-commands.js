@@ -18,7 +18,9 @@ import {
   MessageFlags,
   PermissionFlagsBits,
 } from 'discord.js';
-import { KEYS, activeKeys, getWithSource, set, clear } from './settings.js';
+import { KEYS, activeKeys, getWithSource, set, clear, inRole } from './settings.js';
+import { ensureHomePanel } from './music/panel.js';
+import { peekGuildAudio } from './audio/guild-audio.js';
 
 // 이 봇이 맡은 항목만 물어봅니다.
 // 음악만 맡은 봇에게 읽어주기 채널을 지정하게 해봐야, 그 봇은 읽어주지 않습니다.
@@ -146,6 +148,15 @@ export const commands = [
       // 음성채널 안의 채팅을 읽어주기 채팅방으로 고르면, 음성채널을 따로 지정할 필요가 없습니다.
       if (key === 'ttsTextChannelId' && channel.isVoiceBased?.()) {
         notes.push('음성채널 안의 채팅이므로, **그 음성채널에서 그대로 읽어줍니다.**');
+      }
+
+      // 음악 채팅방으로 정했으면 **그 자리에 제어판을 바로 띄웁니다.**
+      // 정하자마자 보여야 "항상 보인다" 가 됩니다. (music/panel.js 의 isMusicHome)
+      if (key === 'musicTextChannelId' && inRole('music')) {
+        notes.push('이 채팅방에는 **음악 제어판이 항상 떠 있습니다.** (재생 중이 아니어도)');
+        ensureHomePanel(interaction.client, interaction.guildId, channel.id, peekGuildAudio(interaction.guildId)).catch(
+          (err) => console.error('[panel] 제어판 띄우기 실패:', err.message)
+        );
       }
 
       await interaction.reply(

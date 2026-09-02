@@ -1489,7 +1489,37 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('제어판 ID 를 디스크에 기억', pn.includes('rememberPanel(MUSIC'));
   ok('갤러리 버튼도 기억', ip.includes('rememberPanel(GALLERY'));
   ok('시작할 때 옛 제어판 정리', ix.includes('cleanupPanelsOnStart('));
-  ok('종료할 때도 제어판 삭제', ix.includes('deleteMusicPanels(client)'));
+  ok('종료할 때도 제어판 정리', ix.includes('deleteMusicPanels(client, adoptMusicPanel)'));
+
+  // ★ 지정된 음악 채팅방의 제어판은 **절대 사라지지 않아야** 합니다.
+  //   소유자 요청: "음악 채팅채널로 지정한곳에는 제어판이 항상 보였으면 좋겠어."
+  {
+    const pnl = fs.readFileSync('./src/music/panel.js', 'utf8');
+    const gax = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+    ok('지정된 음악 채팅방을 알아봄', pnl.includes("getSetting(guildId, 'musicTextChannelId') === channelId"));
+    // 되찾기와 "비었다" 로 고쳐쓰기를 **한 번에** 해야 그 사이에 거짓말이 안 남습니다.
+    ok('되찾으면서 곧바로 비었다고 고침',
+      /adoptMusicPanel[\s\S]{0,400}?await message\.edit\(buildPanel\(null, guildId\)\)/.test(pnl));
+    ok('없으면 새로 띄움', pnl.includes('export async function ensureHomePanel('));
+    ok('켤 때 서버마다 보장', ix.includes('ensureHomePanels(c)'));
+    ok('음악 채팅방을 정하면 바로 띄움',
+      fs.readFileSync('./src/channel-commands.js', 'utf8').includes('ensureHomePanel(interaction.client'));
+    // 나가도 지우지 않고 "비었다" 로 고쳐 씁니다.
+    ok('나갈 때 지정 채널이면 안 지움',
+      gax.includes('if (isMusicHome(this.guild.id, panel.channelId))') &&
+      gax.includes('panel.edit(buildPanel(null, this.guild.id))'));
+    // ⚠️ 훑기가 이걸 지우면 재시작마다 사라집니다. (갤러리와 같은 예외가 필요합니다)
+    ok('훑기가 남겨둔 제어판은 건드리지 않음',
+      reg.includes('const keepMusic = rememberedId(MUSIC, channel.id);') &&
+      reg.includes('isMusicPanel(msg, client.user.id) && msg.id !== keepMusic'));
+    // 재시작 뒤 첫 재생 때 이미 떠 있는 것을 못 찾으면 제어판이 둘이 됩니다.
+    ok('이미 떠 있는 제어판을 되찾아 씀',
+      pnl.includes('const known = rememberedId(MUSIC, channel.id);'));
+    // 비어 있어도 눌리는 버튼이 있습니다. 오류로 되돌려보내면 먹통으로 보입니다.
+    ok('재생 중이 아니어도 음량·새로고침은 동작',
+      pnl.includes("if (id !== 'm:refresh' && id !== 'm:vol-' && id !== 'm:vol+')"));
+    ok('빈 제어판에도 음량 표시', pnl.includes('const volume = `🔊 ${volumePercent(guildId'));
+  }
   ok('registry 를 로그인 전에 초기화', ix.indexOf('await initPanelRegistry()') < ix.indexOf('client.login'));
   ok('갤러리 버튼은 되찾아 재사용', ip.includes('adoptGalleryPanel') && reg.includes('adoptGallery?.('));
   ok('훑기는 봇 자기 메시지만 지움', reg.includes('msg.author?.id !== botId'));

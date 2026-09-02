@@ -64,12 +64,20 @@ async function fetchPanel(client, channelId, messageId) {
   return { channel, message: await channel.messages.fetch(messageId) };
 }
 
-/** 기억해둔 음악 제어판을 지웁니다. (시작 시 / 종료 시) */
-export async function deleteMusicPanels(client) {
+/**
+ * 기억해둔 음악 제어판을 지웁니다. (시작 시 / 종료 시)
+ *
+ * @param {(channelId: string, message: object) => Promise<boolean>} [adopt]
+ *   "이건 남겨야 한다" 고 답할 수 있는 콜백. 지정된 음악 채팅방의 제어판은
+ *   지우지 않고 **그 자리에서 '비었다' 로 고쳐 씁니다** (music/panel.js 의 adoptMusicPanel).
+ *   콜백이 true 를 주면 기억도 그대로 둡니다 — 다음 재생 때 그 메시지를 다시 씁니다.
+ */
+export async function deleteMusicPanels(client, adopt = null) {
   let deleted = 0;
   for (const [channelId, messageId] of Object.entries(store[MUSIC] ?? {})) {
     try {
       const { message } = await fetchPanel(client, channelId, messageId);
+      if (adopt && (await adopt(channelId, message).catch(() => false))) continue; // 남깁니다
       await message.delete();
       deleted++;
     } catch {
@@ -132,9 +140,15 @@ export async function sweepOrphanPanels(client, { perChannel = 50 } = {}) {
       }
 
       const keepGallery = rememberedId(GALLERY, channel.id);
+      // ⚠️ 음악 제어판도 **남겨야 할 것이 하나 있습니다.** 지정된 음악 채팅방의 제어판은
+      //    늘 떠 있어야 하는데, 여기서 무조건 지우면 재시작마다 사라집니다.
+      //    이 훑기는 cleanupPanelsOnStart 의 되찾기 **뒤에** 돕니다. 그래서 이 시점에
+      //    기억에 남아 있는 음악 제어판은 "남기기로 한 그것" 하나뿐입니다.
+      const keepMusic = rememberedId(MUSIC, channel.id);
       for (const msg of messages.values()) {
         const stale =
-          isMusicPanel(msg, client.user.id) || (isGalleryPanel(msg, client.user.id) && msg.id !== keepGallery);
+          (isMusicPanel(msg, client.user.id) && msg.id !== keepMusic) ||
+          (isGalleryPanel(msg, client.user.id) && msg.id !== keepGallery);
         if (!stale) continue;
         if (await msg.delete().then(() => true).catch(() => false)) deleted++;
       }
@@ -151,7 +165,7 @@ export async function sweepOrphanPanels(client, { perChannel = 50 } = {}) {
  * @param {(channelId: string, message: import('discord.js').Message) => void} adoptGallery
  *        되찾은 갤러리 버튼을 갤러리 모듈에 넘겨줄 콜백
  */
-export async function cleanupPanelsOnStart(client, adoptGallery) {
+export async function cleanupPanelsOnStart(client, adoptGallery, adoptMusic = null) {
   try {
     // 1) 갤러리 버튼은 되찾아서 계속 씁니다 (새로 만들지 않게).
     for (const [channelId, messageId] of Object.entries(store[GALLERY] ?? {})) {
@@ -164,7 +178,9 @@ export async function cleanupPanelsOnStart(client, adoptGallery) {
     }
 
     // 2) 음악 제어판은 지웁니다. 재시작하면 음악이 이어지지 않으므로 내용이 거짓말입니다.
-    const known = await deleteMusicPanels(client);
+    //    단 **지정된 음악 채팅방의 것만은 남깁니다** — 대신 그 자리에서 "비었다" 로
+    //    고쳐 쓰므로 거짓말이 남지는 않습니다. (adoptMusic 이 그 둘을 한 번에 합니다)
+    const known = await deleteMusicPanels(client, adoptMusic);
 
     // 3) 기억에 없는 옛것까지 훑어 지웁니다.
     const { deleted, scanned } = await sweepOrphanPanels(client);

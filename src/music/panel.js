@@ -13,17 +13,24 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { formatDuration } from './ytdlp.js';
-import { volumePercent, setVolume } from '../settings.js';
-import { rememberPanel, forgetPanel, MUSIC } from '../panel-registry.js';
+import { volumePercent, setVolume, get as getSetting } from '../settings.js';
+import { rememberPanel, forgetPanel, rememberedId, MUSIC } from '../panel-registry.js';
 
 // 드롭다운은 디스코드 제한으로 최대 25개까지만 담을 수 있습니다.
 const SELECT_LIMIT = 25;
 
 const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
-/** 제어판 메시지 본문(임베드 + 버튼)을 만듭니다. */
-export function buildPanel(audio) {
+/**
+ * 제어판 메시지 본문(임베드 + 버튼)을 만듭니다.
+ *
+ * @param {object|null} audio 재생 상태. **없어도 됩니다** — 지정된 음악 채팅방에는
+ *   봇이 음성채널에 없을 때도 제어판이 계속 떠 있습니다.
+ * @param {string} [guildId] 음량을 읽을 서버. audio 가 없을 때 반드시 넘겨야 합니다.
+ */
+export function buildPanel(audio, guildId = audio?.guild?.id) {
   const embed = new EmbedBuilder().setColor(0x5865f2);
+  const volume = `🔊 ${volumePercent(guildId, 'music')}%`;
 
   if (audio?.current) {
     const t = audio.current.track;
@@ -32,12 +39,13 @@ export function buildPanel(audio) {
       `**${cut(t.title, 200)}**\n${formatDuration(t.duration)}` +
         (audio.loop ? ' · 🔁 반복' : '') +
         (audio.isPaused ? ' · ⏸️ 일시정지' : '') +
-        ` · 🔊 ${volumePercent(audio.guild?.id, 'music')}%`
+        ` · ${volume}`
     );
     if (t.thumbnail) embed.setThumbnail(t.thumbnail);
   } else {
+    // 비어 있어도 음량은 보여줍니다. 이 상태에서도 🔉 🔊 버튼은 눌러지기 때문입니다.
     embed.setTitle('🎵 재생 중인 곡이 없습니다');
-    embed.setDescription('유튜브 링크를 붙여넣거나 `/재생 <검색어>` 를 써보세요.');
+    embed.setDescription(`유튜브 링크를 붙여넣거나 \`/재생 <검색어>\` 를 써보세요.\n${volume}`);
   }
 
   const q = audio?.queue ?? [];
@@ -151,6 +159,73 @@ async function isAtBottom(channel, messageId) {
 }
 
 /**
+ * 이 채널이 **지정된 음악 채팅방**인가. (`/채널설정` 의 음악 채팅방)
+ *
+ * 여기에 뜬 제어판은 **지우지 않습니다.** 봇이 음성채널에 없어도, 트는 곡이 없어도
+ * "재생 중인 곡이 없습니다" 로 계속 떠 있습니다.
+ * 소유자 요청: "음악 채팅채널로 지정한곳에는 제어판이 항상 보였으면 좋겠어."
+ *
+ * ⚠️ 지정하지 않은 채널은 **예전 그대로**입니다 — 틀 때 나타났다가 나갈 때 사라집니다.
+ *    아무 채널에나 영구 제어판을 남기면 채팅방을 어지럽힙니다.
+ */
+export function isMusicHome(guildId, channelId) {
+  if (!guildId || !channelId) return false;
+  return getSetting(guildId, 'musicTextChannelId') === channelId;
+}
+
+/**
+ * 재시작 후 남아 있던 음악 제어판을 **되찾습니다.** (panel-registry 가 부릅니다)
+ *
+ * 지정된 음악 채팅방이면 지우지 않고 그대로 씁니다. 단 **곧바로 "비었다" 로 고쳐 씁니다** —
+ * 재시작하면 음악이 이어지지 않으므로 "지금 재생 중" 은 거짓말이기 때문입니다 (3.6-1a).
+ * 되찾기와 고쳐쓰기를 **한 번에** 하는 이유가 그것입니다. 둘이 떨어지면 그 사이에 거짓말이 남습니다.
+ *
+ * @returns {Promise<boolean>} 되찾았으면 true, 지워야 하면 false
+ */
+export async function adoptMusicPanel(channelId, message) {
+  const guildId = message.guildId ?? message.guild?.id;
+  if (!isMusicHome(guildId, channelId)) return false;
+  await message.edit(buildPanel(null, guildId));
+  return true;
+}
+
+/**
+ * 지정된 음악 채팅방에 제어판이 **있는지 확인하고, 없으면 띄웁니다.**
+ *
+ * 켤 때 한 번, 그리고 `/채널설정` 으로 음악 채팅방을 정한 직후에 부릅니다.
+ * (정하자마자 보여야 "항상 보인다" 가 됩니다)
+ */
+export async function ensureHomePanel(client, guildId, channelId, audio = null) {
+  const channel = await client.channels.fetch(channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return null;
+
+  const known = rememberedId(MUSIC, channelId);
+  if (known) {
+    const msg = await channel.messages.fetch(known).catch(() => null);
+    if (msg) {
+      await msg.edit(buildPanel(audio, guildId)).catch(() => {});
+      return msg;
+    }
+    forgetPanel(MUSIC, channelId); // 누가 지웠습니다. 아래에서 새로 띄웁니다.
+  }
+
+  const sent = await channel
+    .send({ ...buildPanel(audio, guildId), flags: MessageFlags.SuppressNotifications })
+    .catch(() => null);
+  if (sent) rememberPanel(MUSIC, channelId, sent.id);
+  return sent;
+}
+
+/** 켤 때: 음악 채팅방을 지정해둔 서버마다 제어판을 하나씩 보장합니다. */
+export async function ensureHomePanels(client) {
+  for (const guild of client.guilds.cache.values()) {
+    const channelId = getSetting(guild.id, 'musicTextChannelId');
+    if (!channelId) continue;
+    await ensureHomePanel(client, guild.id, channelId).catch(() => {});
+  }
+}
+
+/**
  * 제어판을 **항상 채팅방의 가장 아래**에 보여줍니다.
  *
  * 규칙:
@@ -171,6 +246,14 @@ export function showPanel(audio, channel) {
 
 async function showPanelNow(audio, channel) {
   if (audio.destroyed) return;
+
+  // 재시작 뒤 첫 재생이면 audio 는 갓 만들어져서 제어판을 모릅니다.
+  // 그런데 지정된 음악 채팅방에는 **이미 떠 있습니다.** 기억해둔 것을 되찾아 씁니다.
+  // 안 그러면 그 아래에 하나가 더 생겨 제어판이 둘이 됩니다.
+  if (!audio.panelMessage) {
+    const known = rememberedId(MUSIC, channel.id);
+    if (known) audio.panelMessage = await channel.messages.fetch(known).catch(() => null);
+  }
 
   if (audio.panelMessage) {
     if (await isAtBottom(channel, audio.panelMessage.id)) {
@@ -200,14 +283,31 @@ async function showPanelNow(audio, channel) {
 
 /** 버튼·드롭다운 클릭 처리. customId 가 `m:` 으로 시작하는 것만 옵니다. */
 export async function handleMusicComponent(interaction, audio) {
-  if (!audio) {
-    return interaction.reply({
-      content: '재생 중인 곡이 없습니다. 유튜브 링크를 붙여넣어 보세요.',
-      flags: MessageFlags.Ephemeral,
-    });
-  }
-
   const id = interaction.customId;
+
+  // 지정된 음악 채팅방에는 제어판이 **늘 떠 있습니다.** 그러니 재생 중이 아닐 때도
+  // 눌리는 버튼이 있습니다. 여기서 오류로 되돌려보내면 "버튼이 먹통" 이 됩니다.
+  //   · 🔉 🔊 — 음량은 서버 설정이라 재생 중이 아니어도 바꿔둘 수 있습니다
+  //   · 🔄     — 그냥 다시 그립니다
+  // (🕐 지난 곡은 index.js 에서 먼저 가로챕니다)
+  if (!audio) {
+    if (id !== 'm:refresh' && id !== 'm:vol-' && id !== 'm:vol+') {
+      return interaction.reply({
+        content: '재생 중인 곡이 없습니다. 유튜브 링크를 붙여넣어 보세요.',
+        flags: MessageFlags.Ephemeral,
+      });
+    }
+    let note = null;
+    if (id !== 'm:refresh') {
+      const step = id === 'm:vol+' ? 10 : -10;
+      const now = setVolume(interaction.guildId, 'music', volumePercent(interaction.guildId, 'music') + step);
+      note = `🔊 음악 음량 **${now}%** — 다음 곡부터 이 크기로 나옵니다.`;
+    }
+    rememberPanel(MUSIC, interaction.channelId, interaction.message.id);
+    await interaction.update(buildPanel(null, interaction.guildId));
+    if (note) await interaction.followUp({ content: note, flags: MessageFlags.Ephemeral }).catch(() => {});
+    return;
+  }
   let toast = null;
 
   switch (id) {

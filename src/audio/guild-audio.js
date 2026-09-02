@@ -29,7 +29,7 @@ import {
   SRC_EXTRACT,
 } from '../music/ytdlp.js';
 import { toOggOpus } from './ffmpeg.js';
-import { showPanel, buildPanel } from '../music/panel.js';
+import { showPanel, buildPanel, isMusicHome } from '../music/panel.js';
 import { forgetPanel, MUSIC } from '../panel-registry.js';
 import { record as recordHistory } from '../music/history.js';
 
@@ -786,12 +786,22 @@ export class GuildAudio {
     this.history = [];
     this.nextIntent = null;
     this.current = null;
-    // 봇이 나가면 제어판은 거짓말이 됩니다. 지우고 기억에서도 뺍니다.
+    // 봇이 나가면 "지금 재생 중" 은 거짓말이 됩니다. 다만 처리가 두 갈래입니다.
+    //   · 지정된 음악 채팅방 → **지우지 않고** "재생 중인 곡이 없습니다" 로 고쳐 씁니다.
+    //     소유자 요청: "봇이 음성채널에 없거나 재생중인 곡이 없을때도 계속 보이게"
+    //   · 그 밖의 채널     → 예전대로 지웁니다. 안 그러면 아무 채팅방에나 남습니다.
+    //
+    // ⚠️ 여기서 refreshPanel() 을 쓰면 안 됩니다. 위에서 destroyed 를 이미 켰기 때문에
+    //    그 함수는 조용히 아무것도 하지 않습니다. 메시지를 직접 고칩니다.
     const panel = this.panelMessage;
     this.panelMessage = null;
     if (panel) {
-      forgetPanel(MUSIC, panel.channelId);
-      panel.delete().catch(() => {});
+      if (isMusicHome(this.guild.id, panel.channelId)) {
+        panel.edit(buildPanel(null, this.guild.id)).catch(() => {});
+      } else {
+        forgetPanel(MUSIC, panel.channelId);
+        panel.delete().catch(() => {});
+      }
     }
     this.killCurrent?.();
     this.killCurrent = null;
