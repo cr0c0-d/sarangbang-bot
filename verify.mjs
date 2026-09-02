@@ -306,6 +306,41 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('내 목소리가 기본값을 덮음', st.voiceFor(G, U) === 'en-US-AvaMultilingualNeural');
   ok('다른 사람은 기본값 그대로', st.voiceFor(G, U2) === config.tts.voice);
   ok('내 목소리 해제하면 기본값으로', st.clearUserVoice(G, U) && st.voiceFor(G, U) === config.tts.voice);
+
+  // ★ 읽는 속도도 **사람마다** 저장합니다 (소유자 요청). 목소리와 같은 자리·같은 방식.
+  ok('속도 기본은 .env 값', st.speedFor(G, U) === config.tts.speed, `${st.speedFor(G, U)}`);
+  ok('내 속도가 기본값을 덮음', st.setUserSpeed(G, U, 130) === 130 && st.speedFor(G, U) === 130);
+  ok('다른 사람은 그대로', st.speedFor(G, U2) === config.tts.speed);
+  ok('상한·하한을 지킴',
+    st.setUserSpeed(G, U, 500) === st.SPEED_MAX && st.setUserSpeed(G, U, 1) === st.SPEED_MIN);
+  // 기본값이면 저장하지 않습니다 — 설정 파일에 쓸모없는 값이 쌓이지 않게.
+  ok('기본값으로 되돌리면 저장 안 함', st.setUserSpeed(G, U, config.tts.speed) && st.userSpeed(G, U) === null);
+  st.setUserSpeed(G, U, 150);
+  ok('해제하면 기본값으로', st.clearUserSpeed(G, U) && st.speedFor(G, U) === config.tts.speed);
+
+  // 속도가 실제로 SSML 까지 가는가. (네트워크 없이 템플릿만 확인)
+  {
+    const { MsEdgeTTS } = await import('msedge-tts');
+    const t = new MsEdgeTTS();
+    t._metadataOptions = { voiceLocale: 'ko-KR' };
+    t._voice = 'ko-KR-HyunsuMultilingualNeural';
+    const rateOf = (opts) => t._SSMLTemplate('안녕', opts).match(/rate="([^"]*)"/)[1];
+    ok('속도를 안 주면 기본(1)', rateOf(undefined) === '1');
+    ok('속도가 SSML 에 들어감', rateOf({ rate: 1.3 }) === '1.3' && rateOf({ rate: 0.5 }) === '0.5');
+    // 퍼센트를 배수로 바꿔 넘겨야 합니다 (130% → 1.3). 그대로 넘기면 130배가 됩니다.
+    const synth = fs.readFileSync('./src/tts/synth.js', 'utf8');
+    ok('퍼센트를 배수로 바꿔 넘김', synth.includes('return { rate: p / 100 };'));
+    ok('100%면 아무것도 넘기지 않음', synth.includes('p === 100) return undefined'));
+    // ⚠️ 속도는 호출할 때마다 넘겨야 합니다. 연결에 묶으면 사람이 바뀔 때마다
+    //    연결을 다시 맺어 예열(1.7초)이 매번 날아갑니다.
+    ok('속도는 연결이 아니라 호출에 붙음',
+      synth.includes('engine.toStream(text, opts)') && !synth.includes('engineSpeed'));
+    const ttsSrc = fs.readFileSync('./src/tts/index.js', 'utf8');
+    ok('읽을 때 그 사람 속도를 씀', ttsSrc.includes('synthesize(spoken, voice, speed)'));
+    // 명령어를 새로 만들지 않고 /목소리 에 칸을 더했습니다 (3.6-6).
+    ok('/목소리 에 속도 칸이 있음', /addIntegerOption[\s\S]{0,60}setName\('속도'\)/.test(ttsSrc));
+    ok('명령어를 새로 만들지 않음', !ttsSrc.includes("setName('속도조절')"));
+  }
   ok('서버 기본 목소리 설정은 제거됨', st.setGuildVoice === undefined && st.guildVoice === undefined);
 }
 

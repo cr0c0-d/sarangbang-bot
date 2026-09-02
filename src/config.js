@@ -166,6 +166,8 @@ export const config = {
     maxChars: num('TTS_MAX_CHARS', 200),
     // ㅋㅋㅋ 같은 반복을 몇 개까지 읽을지. 웃음 길이도 표현이라 너무 짧으면 심심합니다.
     maxRepeat: Math.max(1, num('TTS_MAX_REPEAT', 6)),
+    // 읽는 속도(%). 100 = 원래 속도. 사람마다 /목소리 로 따로 정할 수 있습니다.
+    speed: Math.max(50, Math.min(200, num('TTS_SPEED', 100))),
     readAuthor: bool('TTS_READ_AUTHOR', false),
   },
 

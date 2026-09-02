@@ -16,6 +16,11 @@ import {
   voiceFor,
   setUserVoice,
   clearUserVoice,
+  speedFor,
+  setUserSpeed,
+  clearUserSpeed,
+  SPEED_MIN,
+  SPEED_MAX,
   ttsAbbrev,
   setTtsAbbrev,
   clearTtsAbbrev,
@@ -247,7 +252,9 @@ export async function handleTtsMessage(message) {
     await audio.connect(voiceChannel);
     // 글쓴이가 자기 목소리를 정해뒀으면 그걸 씁니다.
     const voice = voiceFor(message.guildId, message.author.id);
-    audio.speak(() => synthesize(spoken, voice), voiceChannel.id);
+    // 글쓴이가 정한 속도로 읽습니다. 안 정했으면 서버 기본값(.env 의 TTS_SPEED).
+    const speed = speedFor(message.guildId, message.author.id);
+    audio.speak(() => synthesize(spoken, voice, speed), voiceChannel.id);
   } catch (err) {
     console.error('[tts] 실패:', err.message);
     await message.react('⚠️').catch(() => {});
@@ -286,32 +293,58 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('목소리')
-      .setDescription('내 글을 읽을 목소리를 고릅니다 (사람마다 다르게 쓸 수 있습니다)')
+      .setDescription('내 글을 읽을 목소리와 속도를 정합니다 (사람마다 다르게 쓸 수 있습니다)')
       .addStringOption((o) =>
         o
           .setName('목소리')
-          .setDescription('고르지 않으면 기본 목소리로 되돌립니다')
+          .setDescription('고르지 않으면 지금 것을 그대로 둡니다')
           .setRequired(false)
           .addChoices(...VOICE_CHOICES)
+      )
+      // 속도도 **사람마다** 저장합니다. 목소리와 같은 자리에 두는 것이 자연스럽고,
+      // 명령어를 새로 만들지 않아도 됩니다 (3.6-6).
+      .addIntegerOption((o) =>
+        o
+          .setName('속도')
+          .setDescription(`읽는 속도 %. 100 = 원래 속도 (${SPEED_MIN}~${SPEED_MAX})`)
+          .setRequired(false)
+          .setMinValue(SPEED_MIN)
+          .setMaxValue(SPEED_MAX)
       ),
     async execute(interaction) {
       const picked = interaction.options.getString('목소리');
+      const speed = interaction.options.getInteger('속도');
+      const { guildId, user } = interaction;
 
-      if (!picked) {
-        // 비우고 실행하면 내 설정을 지웁니다 (기본값으로 돌아감).
-        const had = clearUserVoice(interaction.guildId, interaction.user.id);
-        const now = voiceFor(interaction.guildId, interaction.user.id);
+      if (!picked && speed === null) {
+        // 둘 다 비우고 실행하면 내 설정을 지웁니다 (서버 기본값으로 돌아감).
+        const hadVoice = clearUserVoice(guildId, user.id);
+        const hadSpeed = clearUserSpeed(guildId, user.id);
+        const nowVoice = voiceFor(guildId, user.id);
+        const nowSpeed = speedFor(guildId, user.id);
         return interaction.reply({
-          content: had
-            ? `🔄 내 목소리 설정을 지웠습니다. 이제 기본 목소리 **${voiceLabel(now)}** 를 씁니다.`
-            : `지금 기본 목소리 **${voiceLabel(now)}** 를 쓰고 있습니다.`,
+          content:
+            (hadVoice || hadSpeed ? '🔄 내 설정을 지웠습니다. 이제 ' : '지금 ') +
+            `기본값 **${voiceLabel(nowVoice)}** · **${nowSpeed}%** 를 씁니다.\n` +
+            '`/목소리 목소리:...` 또는 `/목소리 속도:130` 으로 정할 수 있습니다.',
           flags: MessageFlags.Ephemeral,
         });
       }
 
-      setUserVoice(interaction.guildId, interaction.user.id, picked);
+      const said = [];
+      if (picked) {
+        setUserVoice(guildId, user.id, picked);
+        said.push(`목소리 **${voiceLabel(picked)}**`);
+      }
+      if (speed !== null) {
+        const v = setUserSpeed(guildId, user.id, speed);
+        said.push(`속도 **${v}%**`);
+      }
+
       await interaction.reply({
-        content: `🗣️ 앞으로 내 글은 **${voiceLabel(picked)}** 로 읽습니다.${koreanOnlyWarning(picked)}`,
+        content:
+          `🗣️ 앞으로 내 글은 ${said.join(' · ')} 로 읽습니다.` +
+          (picked ? koreanOnlyWarning(picked) : ''),
         flags: MessageFlags.Ephemeral,
       });
     },

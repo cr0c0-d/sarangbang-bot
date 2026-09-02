@@ -98,11 +98,25 @@ export function stopKeepalive() {
 }
 
 /**
+ * 읽는 속도를 msedge-tts 가 받는 모양으로 바꿉니다.
+ *
+ * `toStream(text, { rate })` 의 기본값이 `1.0` (배수)이므로 **퍼센트를 100으로 나눕니다.**
+ * SSML 의 `<prosody rate="1.3">` 로 들어갑니다.
+ * 100이면 아무것도 넘기지 않습니다 — 기본 동작을 그대로 두는 편이 안전합니다.
+ */
+function rateOptions(speedPercent) {
+  const p = Number(speedPercent);
+  if (!Number.isFinite(p) || p === 100) return undefined;
+  return { rate: p / 100 };
+}
+
+/**
  * @param {string} text 읽을 문장
  * @param {string} voice 예: ko-KR-HyunsuMultilingualNeural
+ * @param {number} [speedPercent] 읽는 속도(%). 100 = 원래 속도
  * @returns {Promise<import('node:stream').Readable>} mp3 스트림
  */
-export async function synthesize(text, voice) {
+export async function synthesize(text, voice, speedPercent = 100) {
   lastUsed = Date.now();
   startKeepalive();
 
@@ -111,13 +125,16 @@ export async function synthesize(text, voice) {
     engineVoice = voice;
   }
 
+  // ⚠️ 속도는 **호출할 때마다** 넘깁니다. 연결(engine)에 묶이는 값이 아니라서
+  //    사람마다 다른 속도를 써도 연결을 다시 맺지 않습니다 (예열이 그대로 살아 있음).
+  const opts = rateOptions(speedPercent);
   try {
-    return engine.toStream(text).audioStream;
+    return engine.toStream(text, opts).audioStream;
   } catch (err) {
     // 웹소켓이 끊겨 있으면 한 번 새로 만들어서 재시도합니다.
     engine = await createEngine(voice);
     engineVoice = voice;
-    return engine.toStream(text).audioStream;
+    return engine.toStream(text, opts).audioStream;
   }
 }
 

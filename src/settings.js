@@ -184,6 +184,49 @@ export function voiceFor(guildId, userId) {
   return userVoice(guildId, userId) ?? config.tts.voice;
 }
 
+// ── 읽어주기 속도 (사람마다 따로) ─────────────────────────────
+//
+// 목소리와 같은 자리에 둡니다. **읽는 사람마다 취향이 다릅니다** —
+// 누구는 빠르게 듣고 싶고, 누구는 또박또박 듣고 싶습니다.
+// 100 = 원래 속도. msedge-tts 의 `rate` 로 넘겨집니다(배수).
+
+export const SPEED_DEFAULT = 100;
+/** 이 밖으로 나가면 알아듣기 어렵습니다. 50%는 늘어지고 200%는 뭉갭니다. */
+export const SPEED_MIN = 50;
+export const SPEED_MAX = 200;
+
+export function userSpeed(guildId, userId) {
+  return store[guildId]?.userSpeeds?.[userId] ?? null;
+}
+
+export function setUserSpeed(guildId, userId, percent) {
+  const v = Math.max(SPEED_MIN, Math.min(SPEED_MAX, Math.round(percent)));
+  store[guildId] ??= {};
+  store[guildId].userSpeeds ??= {};
+  // 기본값이면 저장하지 않습니다 — 설정 파일에 쓸모없는 값이 쌓이지 않게.
+  if (v === config.tts.speed) delete store[guildId].userSpeeds[userId];
+  else store[guildId].userSpeeds[userId] = v;
+
+  if (Object.keys(store[guildId].userSpeeds).length === 0) delete store[guildId].userSpeeds;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return v;
+}
+
+export function clearUserSpeed(guildId, userId) {
+  if (!store[guildId]?.userSpeeds?.[userId]) return false;
+  delete store[guildId].userSpeeds[userId];
+  if (Object.keys(store[guildId].userSpeeds).length === 0) delete store[guildId].userSpeeds;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return true;
+}
+
+/** 이 사람의 글을 읽을 때 쓸 속도(%). 안 정했으면 `.env` 의 기본값. */
+export function speedFor(guildId, userId) {
+  return userSpeed(guildId, userId) ?? config.tts.speed;
+}
+
 // ── 읽어주기 축약어 (서버마다 따로) ───────────────────────────
 //
 // `tts/index.js` 에 기본 축약어 표가 있습니다(ㅇㅇ → 응응 …). 그런데 친구들끼리
