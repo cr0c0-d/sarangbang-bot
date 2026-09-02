@@ -68,10 +68,30 @@ export async function initSettlements() {
 const won = (n) => `${n.toLocaleString('ko-KR')}원`;
 
 /**
+ * 고른 사람들의 ID를 **고른 순서대로** 돌려줍니다.
+ *
+ * ⚠️ **`getSelectedUsers()` 를 쓰지 마세요.** 그건 `resolved.users` **객체**를 훑어
+ *    만든 Collection 이라, 순서가 **디스코드가 그 객체를 어떤 순서로 내보냈는지**에
+ *    달려 있습니다. 고른 순서와 다를 수 있습니다.
+ *
+ * 실제로 겪은 일: 금액 `100`·`1000` 과 사람 `A(본인)`·`B` 를 넣었더니
+ * **A 에 1000원, B 에 100원**이 붙었습니다. 순서가 뒤집힌 것입니다.
+ *
+ * `values` 는 고른 값이 담긴 **배열**이라 순서가 그대로입니다. 그걸 씁니다.
+ * (배열이 없는 경우에만 Collection 으로 물러납니다 — 없는 것보다 낫습니다)
+ */
+export function selectedUserIds(interaction, customId) {
+  const field = interaction.fields.getField(customId);
+  if (Array.isArray(field?.values) && field.values.length > 0) return [...field.values];
+  return [...interaction.fields.getSelectedUsers(customId).keys()];
+}
+
+/**
  * 금액 칸을 읽습니다.
  *
  * 숫자 **하나**면 총액을 인원수로 **균등분할**합니다 (가장 흔한 경우).
- * 줄 수가 인원수와 같으면 **순서대로 개별 금액**입니다.
+ * 줄 수가 인원수와 같으면 **순서대로 개별 금액**입니다 —
+ * 그 "순서" 는 `selectedUserIds()` 가 돌려주는 순서(= 고른 순서)입니다.
  * `120,000` `12만` `120000원` 처럼 적어도 읽습니다.
  */
 export function parseAmounts(raw, count) {
@@ -159,7 +179,7 @@ export const commands = [
             ),
             new LabelBuilder()
               .setLabel('금액')
-              .setDescription('숫자 하나면 균등분할. 여러 줄이면 순서대로 개별 금액. (12만 · 120,000 도 됩니다)')
+              .setDescription('숫자 하나면 균등분할. 여러 줄이면 아래에서 고른 순서대로 한 줄씩. (12만 · 120,000 도 됩니다)')
               .setTextInputComponent(
                 new TextInputBuilder()
                   .setCustomId('amount')
@@ -169,7 +189,7 @@ export const commands = [
               ),
             new LabelBuilder()
               .setLabel('나눌 사람')
-              .setDescription('결제한 본인도 넣으면 자기 몫으로 표시되고 송금 대상에서는 빠집니다.')
+              .setDescription('고른 순서대로 위 금액이 붙습니다. 본인도 넣으면 자기 몫으로 표시되고 송금 대상에서는 빠집니다.')
               .setUserSelectMenuComponent(
                 new UserSelectMenuBuilder().setCustomId('who').setRequired(true).setMinValues(1).setMaxValues(20)
               )
@@ -182,7 +202,7 @@ export const commands = [
 export async function handleSettleModal(interaction) {
   if (interaction.customId !== 'st:new') return;
 
-  const users = [...interaction.fields.getSelectedUsers('who').keys()];
+  const users = selectedUserIds(interaction, 'who');
   const amounts = parseAmounts(interaction.fields.getTextInputValue('amount'), users.length);
   if (!amounts) {
     return interaction.reply({

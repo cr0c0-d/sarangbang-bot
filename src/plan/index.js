@@ -638,7 +638,13 @@ export async function handlePlanModal(interaction, client) {
   }
 }
 
-/** 모달의 사람·역할 고르기 값. 안 골랐으면 빈 배열입니다. */
+/**
+ * 모달의 사람·역할 고르기 값. 안 골랐으면 빈 배열입니다.
+ *
+ * ⚠️ 여기는 **순서를 쓰지 않습니다** — 고른 사람 전원에게 채널 권한을 주기만 합니다.
+ *    순서가 필요한 곳에서는 이렇게 쓰면 안 됩니다. `plan/settle.js` 의
+ *    `selectedUserIds()` 를 보세요. 정산에서 금액이 뒤바뀌는 버그가 실제로 있었습니다.
+ */
 function pickIds(fields, id) {
   try {
     const got = id === 'users' ? fields.getSelectedUsers(id) : fields.getSelectedRoles(id);

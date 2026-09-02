@@ -1678,6 +1678,48 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('개수가 안 맞으면 거부', st3.parseAmounts('10000\n20000', 3) === null);
   ok('금액을 못 읽으면 거부', st3.parseAmounts('', 3) === null && st3.parseAmounts('돈', 3) === null);
 
+  // ★ 금액과 사람이 뒤바뀌던 버그. 소유자 보고:
+  //   금액 `100`·`1000` + 사람 `A(본인)`·`B` → **A 에 1000, B 에 100** 이 붙었습니다.
+  //
+  //   원인: getSelectedUsers() 는 `resolved.users` **객체**를 훑어 만든 Collection 이라
+  //   순서가 **디스코드가 그 객체를 어떤 순서로 내보냈는지**에 달려 있습니다.
+  //   고른 순서가 담긴 것은 `values` **배열** 쪽입니다.
+  {
+    const A = '900000000000000000'; // 먼저 고른 사람 (ID 가 큼)
+    const B = '100000000000000000';
+    // values 는 고른 순서, Collection 은 그와 다른 순서인 상황을 만듭니다.
+    const interaction = {
+      fields: {
+        getField: () => ({ values: [A, B] }),
+        getSelectedUsers: () => new Map([[B, {}], [A, {}]]),
+      },
+    };
+    ok('고른 순서(values)를 씀', JSON.stringify(st3.selectedUserIds(interaction, 'who')) === JSON.stringify([A, B]));
+
+    // 금액이 고른 순서대로 붙는가 — 소유자가 겪은 그 조합 그대로
+    const users = st3.selectedUserIds(interaction, 'who');
+    const amounts = st3.parseAmounts('100\n1000', users.length);
+    const shares = users.map((userId, i) => ({ userId, amount: amounts[i] }));
+    ok('먼저 고른 사람에게 첫 금액', shares[0].userId === A && shares[0].amount === 100,
+      `${shares[0].amount}원`);
+    ok('두 번째 사람에게 두 번째 금액', shares[1].userId === B && shares[1].amount === 1000);
+
+    // values 가 없으면(모양이 바뀌면) Collection 으로 물러나야 합니다 — 없는 것보다 낫습니다.
+    const noValues = {
+      fields: { getField: () => ({}), getSelectedUsers: () => new Map([[B, {}], [A, {}]]) },
+    };
+    ok('values 가 없으면 물러나서라도 동작',
+      JSON.stringify(st3.selectedUserIds(noValues, 'who')) === JSON.stringify([B, A]));
+
+    // ⚠️ 순서에 기대는 코드가 다시 getSelectedUsers 로 돌아가면 안 됩니다.
+    const src = fs.readFileSync('./src/plan/settle.js', 'utf8');
+    ok('정산은 selectedUserIds 로만 사람을 읽음',
+      src.includes("const users = selectedUserIds(interaction, 'who');") &&
+      !/const users = \[\.\.\.interaction\.fields\.getSelectedUsers/.test(src));
+    // 고른 순서가 금액 순서라는 것을 **화면에도** 적어야 합니다. 안 보이면 확인할 수가 없습니다.
+    ok('모달에 순서를 알려줌', src.includes('고른 순서대로 위 금액이 붙습니다'));
+  }
+
   const settle = {
     title: '숙소', payerId: 'p', total: 120000,
     shares: [{ userId: 'p', amount: 40000, sent: false }, { userId: 'a', amount: 40000, sent: true },
