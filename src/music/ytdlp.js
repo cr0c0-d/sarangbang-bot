@@ -82,6 +82,8 @@ function runOnce(args, timeoutMs) {
 
     const timer = setTimeout(() => {
       child.kill();
+      // 다음부터는 이 제한시간을 근거로 더 넉넉히 잡습니다. (noteTimeout 참고)
+      noteTimeout(timeoutMs);
       fail(`yt-dlp 가 ${timeoutMs / 1000}초 안에 응답하지 않았습니다 (타임아웃).`, true);
     }, timeoutMs);
 
@@ -134,23 +136,38 @@ const MAX_FIRST_MS = 60_000;
 
 let startupMs = null;      // 켤 때 잰 yt-dlp 기동 시간
 let slowestOkMs = 0;       // 성공한 추출 중 가장 느렸던 것
+let timedOutAtMs = 0;      // 시간을 초과해본 적 있는 제한시간 중 가장 큰 것
 
 function noteSuccessDuration(ms) {
   if (ms > slowestOkMs) slowestOkMs = ms;
 }
 
 /**
+ * 시간 초과 자체가 **"이 제한시간으로는 부족하다" 는 증거**입니다. 다음부터 두 배로 잡습니다.
+ *
+ * 기동 시간만으로 짐작하는 것보다 이쪽이 확실합니다. 실측에서 기동은 3.1~5.7초로
+ * 들쭉날쭉했는데 추출은 12~25초였습니다. 재시작할 때 기동이 3.1초로 찍히면
+ * 짐작값이 20초에 머물러 **또 잘립니다.** 한 번 잘리면 그걸 근거로 올립니다.
+ */
+function noteTimeout(ms) {
+  if (ms > timedOutAtMs) timedOutAtMs = ms;
+}
+
+/**
  * 계산만 하는 순수 함수로 떼어뒀습니다. 이래야 느린 서버 값을 넣고 검사할 수 있습니다.
  * (verify 가 기동 5.7초짜리 서버를 흉내 내 확인합니다)
  */
-export function timeoutsFor(startup = null, slowestOk = 0) {
-  const first = Math.min(MAX_FIRST_MS, Math.max(BASE_FIRST_MS, startup ? startup * 5 : 0, slowestOk * 2));
+export function timeoutsFor(startup = null, slowestOk = 0, timedOutAt = 0) {
+  const first = Math.min(
+    MAX_FIRST_MS,
+    Math.max(BASE_FIRST_MS, startup ? startup * 5 : 0, slowestOk * 2, timedOutAt * 2)
+  );
   // 두 번째는 넉넉히. 단계를 셋으로 늘리지 마세요 — 정말 멈춘 경우에 너무 오래 붙잡습니다.
   return [first, Math.min(120_000, first * 2)];
 }
 
 export function timeoutLadder() {
-  return timeoutsFor(startupMs, slowestOkMs);
+  return timeoutsFor(startupMs, slowestOkMs, timedOutAtMs);
 }
 
 async function run(args, { timeouts = timeoutLadder() } = {}) {
