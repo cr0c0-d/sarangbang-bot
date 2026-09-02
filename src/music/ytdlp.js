@@ -166,7 +166,9 @@ export function friendlyError(stderr) {
   //      Sign in to confirm you're not a bot → 서버 전체의 문제 (IP 차단)
   //    예전에는 둘 다 "봇으로 판단해 차단" 이라고 답했습니다. 그래서 연령 제한 영상
   //    하나를 틀려다 실패한 사람이 멀쩡한 쿠키를 다시 뽑는 헛수고를 했습니다.
-  if (s.includes('confirm your age') || (s.includes('age') && s.includes('restrict'))) {
+  //    ⚠️ 여기서 `age` 만으로 판별하지 말 것. `webpage` · `page` 에도 들어 있어서
+  //       엉뚱한 오류가 연령 제한으로 오진됩니다. (위의 `bot` 과 같은 함정입니다)
+  if (s.includes('confirm your age') || s.includes('age-restrict') || s.includes('age restrict')) {
     return (
       '연령 제한이 걸린 영상입니다. **이 영상 하나만의 문제**이니 다른 곡은 그대로 됩니다.\n' +
       '(성인 인증된 계정의 쿠키를 `.env.music` 의 YTDLP_COOKIES_FILE 에 넣으면 풀립니다)'

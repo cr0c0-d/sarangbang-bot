@@ -356,4 +356,8 @@ async function shutdown(signal) {
 
 process.on('SIGINT', () => shutdown('SIGINT'));
 process.on('SIGTERM', () => shutdown('SIGTERM'));
-process.on('unhandledRejection', (err) => logError('[처리되지 않은 오류]', err));
+// ⚠️ 여기만은 **스택을 반드시 남깁니다.** logError 를 쓰지 마세요.
+//    처리되지 않은 오류는 그 자체가 버그입니다 — 어딘가에 catch 가 빠진 것입니다.
+//    메시지만 찍으면 "연령 제한이 걸린 영상입니다" 처럼 **멀쩡해 보이는 한 줄**이 되어
+//    그냥 넘어가게 되고, 정작 어디에 catch 가 빠졌는지는 영영 못 찾습니다.
+process.on('unhandledRejection', (err) => console.error('[처리되지 않은 오류]', err));

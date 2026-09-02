@@ -308,6 +308,12 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
     ok('연령 제한을 IP 차단으로 오진하지 않음', !age.includes('봇으로 판단'));
     ok('진짜 IP 차단은 그대로 잡힘',
       friendlyError("ERROR: [youtube] abc: Sign in to confirm you're not a bot").includes('봇으로 판단'));
+    // ⚠️ `age` 만으로 판별하면 `webpage` 에 걸려 엉뚱한 오류가 연령 제한이 됩니다.
+    //    (`bot` 이 sarangbang-bot 에 걸리던 것과 같은 함정)
+    ok('webpage 를 연령 제한으로 오진하지 않음',
+      !friendlyError('ERROR: Unable to download webpage: restricted').includes('연령 제한'));
+    ok('age-restricted 는 잡힘',
+      friendlyError('ERROR: [youtube] abc: This video is age-restricted').includes('연령 제한'));
   }
 }
 
@@ -325,8 +331,13 @@ ok('TTS 정제', got === '누군가 야 링크 봐 굵게 크크크', JSON.strin
   ok('로그를 한 곳으로 모음', idx.includes('function logError(tag, err)'));
   ok('예상된 오류는 메시지만', idx.includes('isExpected(err) ? err.message : err'));
   // 한 군데라도 빠지면 거기서만 스택이 쏟아집니다.
-  ok('모든 오류 로그가 logError 를 거침',
-    !/console\.error\((?:'\[(?:입력 창|버튼|메시지 처리|처리되지 않은 오류)\]'|`\[명령어)/.test(idx));
+  ok('일부러 잡은 오류는 전부 logError 를 거침',
+    !/console\.error\((?:'\[(?:입력 창|버튼|메시지 처리)\]'|`\[명령어)/.test(idx));
+  // ⚠️ 반대로 **처리되지 않은 오류만은 스택을 남겨야** 합니다.
+  //    그 자체가 catch 가 빠진 버그라, 메시지만 찍으면 어디가 빠졌는지 못 찾습니다.
+  ok('처리되지 않은 오류는 스택을 남김',
+    idx.includes("console.error('[처리되지 않은 오류]', err)") &&
+    !idx.includes("logError('[처리되지 않은 오류]'"));
 
   const paths = ['./src/music/commands.js', './src/music/ytdlp.js', './src/audio/guild-audio.js'];
   ok('사용자에게 보여줄 오류는 userError 로',
