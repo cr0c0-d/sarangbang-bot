@@ -669,14 +669,18 @@ export async function warmUpCache(url = 'https://www.youtube.com/watch?v=dQw4w9W
  *    자기를 조정하는데, 망고 프로세스에는 그 실적이 없어서 기본 20초/40초가 됩니다.
  *    메타데이터 한 번 읽는 일에 1분을 기다리면 사람은 고장으로 봅니다.
  *
- * @returns {Promise<{startedAt: number|null, liveStatus: string, title: string}>}
+ * `videoId` 도 함께 돌려줍니다. **`@계정/live` 같은 고정 주소를 지금 방송으로 풀기 위해서**입니다
+ * (실측: `youtube.com/@ABCNews/live` → `id=iipR5yUp36o` · `status=is_live`).
+ * 그 덕에 사람마다 주소를 한 번만 저장해두면 매번 링크를 붙이지 않아도 됩니다.
+ *
+ * @returns {Promise<{videoId: string, startedAt: number|null, liveStatus: string, title: string}>}
  *   `startedAt` 은 유닉스 초. 유튜브가 안 알려주면 `null` (부르는 쪽이 대체값을 씁니다)
  */
 export async function liveInfo(url) {
   const out = await run(
     [
       '--print',
-      '%(release_timestamp)s\t%(live_status)s\t%(title)s',
+      '%(id)s\t%(release_timestamp)s\t%(live_status)s\t%(title)s',
       '--no-warnings',
       '--ignore-config',
       '--no-playlist',
@@ -686,9 +690,10 @@ export async function liveInfo(url) {
     { timeouts: [10_000, 20_000] }
   );
 
-  const [ts, status, ...rest] = String(out).trim().split('\n')[0].split('\t');
+  const [id, ts, status, ...rest] = String(out).trim().split('\n')[0].split('\t');
   const n = Number(ts);
   return {
+    videoId: id && id !== 'NA' ? id : '',
     // yt-dlp 는 값이 없으면 문자열 'NA' 를 찍습니다. Number('NA') 는 NaN 입니다.
     startedAt: Number.isFinite(n) && n > 0 ? n : null,
     liveStatus: status === 'NA' ? '' : (status ?? ''),

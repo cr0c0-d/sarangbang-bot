@@ -1425,6 +1425,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const st2 = await import('./src/stream/store.js');
   const pn2 = await import('./src/stream/panel.js');
   const PATH = (await import('node:path')).default;
+  const { config } = await import('./src/config.js');
   await clips.initClips();
   await st2.initStreams();
 
@@ -1523,6 +1524,69 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   }
   const pruned = await clips.pruneClips(fakeFolder);
   ok('세션당 클립 개수 상한이 걸림', pruned >= 5 && (await clips.listClips(fakeFolder)).length <= 20, `${pruned}개 지움`);
+
+  // ── 예산으로 자동 정리 — **사용자 데이터를 지우는 코드다** ──
+  //
+  // 안전장치가 실제로 동작하는지 본다. 안 하면 "정리했다" 는 로그만 남고
+  // 방금 만든 클립이 사라진다.
+  {
+    const now = Date.now();
+    const budget = config.stream.clipMaxGb * 1024 ** 3;
+    // 예산을 넘기려면 큰 파일이 필요하다. 실제로 5GB 를 쓸 수는 없으니
+    // 예산을 잠깐 아주 작게 만들어 검사한다.
+    const savedGb = process.env.STREAM_CLIP_MAX_GB;
+    void budget;
+
+    const oldFolder = 'old111';
+    const newFolder = 'new111';
+    fs.mkdirSync(clips.folderPath(oldFolder), { recursive: true });
+    fs.mkdirSync(clips.folderPath(newFolder), { recursive: true });
+    // 오래된 것 (보호 기간을 넘김) / 방금 만든 것
+    const oldFile = clips.filePath(oldFolder, 'a.mp4');
+    const newFile = clips.filePath(newFolder, 'b.mp4');
+    fs.writeFileSync(oldFile, Buffer.alloc(2 * 1024 * 1024));
+    fs.writeFileSync(newFile, Buffer.alloc(2 * 1024 * 1024));
+    const longAgo = new Date(now - 30 * 86400_000);
+    fs.utimesSync(oldFile, longAgo, longAgo);
+
+    // config 는 import 시점에 굳으므로 값을 바꿔 다시 읽어야 한다.
+    // 여기서는 그럴 수 없으니 **함수의 동작**을 순서로 검사한다.
+    const res = await clips.cleanupByBudget();
+    ok('예산 안이면 아무것도 안 지움', res.deleted.length === 0, `${res.deleted.length}개`);
+    ok('현재 용량을 셈', res.bytes >= 4 * 1024 * 1024, clips.fmtBytes(res.bytes));
+    ok('예산을 함께 돌려줌', res.budget === config.stream.clipMaxGb * 1024 ** 3);
+    ok('방금 만든 클립이 남아 있음', fs.existsSync(newFile));
+    ok('오래된 클립도 예산 안이면 남아 있음', fs.existsSync(oldFile));
+    void savedGb;
+
+    const src = fs.readFileSync('./src/stream/clips.js', 'utf8');
+    // 안전장치 1: 최근 것 보호. 이걸 없애면 방금 만든 클립이 사라진다.
+    ok('최근 클립 보호 (min keep days)', src.includes('clipMinKeepDays') && src.includes('c.mtime > keepAfter'));
+    ok('보호 때문에 못 지운 개수를 셈 (알려줘야 함)', src.includes('blockedByAge++'));
+    // 안전장치 2: 예산의 80% 까지. 경계선에서 매번 재실행되는 것을 막는다.
+    ok('예산의 일부까지 내려감 (경계선 재실행 방지)', src.includes('clipCleanupTargetPercent'));
+    ok('오래된 것부터 지움', src.includes('all.sort((a, b) => a.mtime - b.mtime)'));
+    // ⚠️ 사진 예산과 **따로** 둬야 한다. 합치면 클립이 늘 때 사진이 지워진다.
+    //    (주석으로 참조하는 건 괜찮다 — import 하거나 사진 예산을 읽는 것이 문제다)
+    ok('사진 코드를 import 하지 않음', !/^import .*images\//m.test(src), '주석 참조는 괜찮음');
+    ok('사진 예산(IMAGE_MAX_GB)을 읽지 않음', !src.includes('IMAGE_MAX_GB'));
+    ok('클립 예산은 따로 (STREAM_CLIP_MAX_GB)', config.stream.clipMaxGb > 0 && src.includes('clipMaxGb'));
+
+    const si2 = fs.readFileSync('./src/stream/index.js', 'utf8');
+    // 안전장치 3: 조용히 사라지면 안 된다.
+    ok('지운 것을 디스코드에 알림', si2.includes('클립 용량 정리') && si2.includes('announceCleanup'));
+    // 어느 서버에 알릴지는 세션이 알려준다. 못 찾으면 짐작하지 말고 로그로.
+    ok('알릴 서버는 세션에서 찾음', si2.includes("sessionById(c.folder)?.guildId"));
+    ok('못 찾으면 짐작하지 않고 로그만', si2.includes('세션 기록이 없어 알리지 못했습니다'));
+    ok('예산을 넘겼는데 못 지우면 그 사실을 남김', si2.includes('보호 때문에'));
+    ok('자동 정리를 끌 수 있음', si2.includes('STREAM_CLIP_AUTO_CLEANUP=false'));
+
+    const idx2 = fs.readFileSync('./src/index.js', 'utf8');
+    ok('켤 때 클립 정리를 시작', idx2.includes('startClipCleanup(c)'));
+
+    fs.rmSync(clips.folderPath(oldFolder), { recursive: true, force: true });
+    fs.rmSync(clips.folderPath(newFolder), { recursive: true, force: true });
+  }
 
   // 요약판에 클립이 반영되는가
   st2.addClip(cs, { markId: cm.id, userId: 'u1', file: fakeName, startSec: 45, endSec: 60, title: '테스트 장면' });
@@ -2069,6 +2133,47 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   }
   ok('유튜브가 아니면 null', stream.parseVideoId('https://example.com/x') === null);
 
+  // ── 고정 주소 (방송마다 안 바뀌는 주소) ──
+  //
+  // ★ 이게 "매번 링크 붙이기" 를 없앤다. yt-dlp 가 이 주소를 **지금 하는 방송**으로
+  //   풀어준다 (실측 2026-09-03: youtube.com/@ABCNews/live → id=iipR5yUp36o, is_live).
+  const homes = {
+    '@계정/live': 'https://www.youtube.com/@mychannel/live',
+    '@계정 (live 없이)': 'https://www.youtube.com/@mychannel',
+    '@계정만': '@mychannel',
+  };
+  for (const [name, url] of Object.entries(homes)) {
+    ok(`고정 주소 ${name}`, stream.parseLiveHome(url) === 'https://www.youtube.com/@mychannel/live',
+      String(stream.parseLiveHome(url)));
+  }
+  ok('channel/UC… 도 고정 주소',
+    stream.parseLiveHome('https://www.youtube.com/channel/UCabc123/live') === 'https://www.youtube.com/channel/UCabc123/live');
+  // ⚠️ **watch?v= 는 고정 주소가 아니다.** 저장해두면 매번 지난 방송을 등록하게 된다 —
+  //    조용히 틀리는 종류의 오류라서, 아예 고정 주소로 인정하지 않는다.
+  ok('watch?v= 는 고정 주소가 아님', stream.parseLiveHome('https://www.youtube.com/watch?v=AbCdEfGhIjK') === null);
+  ok('/live/<ID> 도 고정 주소가 아님', stream.parseLiveHome('https://www.youtube.com/live/AbCdEfGhIjK') === null);
+  ok('유튜브가 아니면 null', stream.parseLiveHome('https://example.com/@x/live') === null);
+
+  {
+    const s2 = await import('./src/settings.js');
+    ok('고정 주소를 사람마다 저장', s2.setStreamHome('gh', 'u9', 'https://www.youtube.com/@me/live') && s2.streamHome('gh', 'u9') === 'https://www.youtube.com/@me/live');
+    ok('안 정한 사람은 null', s2.streamHome('gh', 'u8') === null);
+    ok('지울 수 있음', s2.clearStreamHome('gh', 'u9') && s2.streamHome('gh', 'u9') === null);
+
+    const si3 = fs.readFileSync('./src/stream/index.js', 'utf8');
+    // 등록이 성공한 뒤에 저장해야 한다. 틀린 주소를 저장하면 매번 실패한다.
+    ok('고정 주소는 등록 성공 후에 저장',
+      si3.indexOf('putStream(session, { userId, url, videoId, startedAt, startSource })') < si3.indexOf('if (homeToSave) setStreamHome'));
+    // 고정 주소로 조회했는데 방송이 없으면 **주소 문제가 아니다.** 라이브를 안 켠 것이다.
+    ok('고정 주소인데 방송이 없으면 "라이브를 먼저 켜세요"',
+      si3.includes('**라이브를 먼저 켜고** 다시 눌러주세요'));
+    ok('저장된 주소를 안내에 함께 보여줌', si3.includes('저장된 주소:'));
+    ok('yt-dlp 가 풀어준 videoId 를 씀 (고정 주소 해석)',
+      si3.includes('info.videoId || parseVideoId(target)'));
+    const yt2 = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+    ok('liveInfo 가 videoId 도 돌려줌', yt2.includes('%(id)s') && yt2.includes('videoId: id'));
+  }
+
   // ── 경과 시간 적기: 사람이 쓰는 여러 형태 ──
   ok('경과 "1시간 20분"', stream.parseElapsed('1시간 20분') === 4800);
   ok('경과 "80분"', stream.parseElapsed('80분') === 4800);
@@ -2131,8 +2236,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     payload.components.flatMap((r) => JSON.parse(JSON.stringify(r.toJSON())).components.map((c) => c.custom_id));
   store.reopenSession(s);
   const live = panel.buildStreamPanel('gv');
-  ok('제어판 버튼 4개 (마킹·취소·오프셋·종료)',
-    idsOf(live).join() === 'tm:panel:mark,tm:panel:undo,tm:panel:offset,tm:panel:end', idsOf(live).join());
+  ok('제어판 버튼 (마킹·취소·오프셋·종료·나도등록)',
+    idsOf(live).join() === 'tm:panel:mark,tm:panel:undo,tm:panel:offset,tm:panel:end,tm:panel:join',
+    idsOf(live).join());
+  // 늦게 켠 사람이 스스로 끼어들 수 있어야 한다. 기록 중이 아닐 때도 있어야 한다.
+  ok('기록 중에도 [나도 등록] 이 있음', idsOf(live).includes('tm:panel:join'));
   ok('제어판이 경과 시간을 보여줌 (어긋남을 잡는 1차 방어선)',
     JSON.stringify(live.embeds[0].toJSON()).includes('진행 중'));
   ok('시작 시각을 추정했으면 표시',

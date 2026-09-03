@@ -191,6 +191,15 @@ export const config = {
     clipMaxHeight: Math.max(240, num('STREAM_CLIP_MAX_HEIGHT', 720)),
     clipPerSession: Math.max(1, num('STREAM_CLIP_PER_SESSION', 20)),
     clipTotal: Math.max(1, num('STREAM_CLIP_TOTAL', 200)),
+    // 클립 폴더가 쓸 수 있는 예산(GB). 넘으면 오래된 것부터 지웁니다.
+    // ⚠️ 사진 예산(IMAGE_MAX_GB)과 **따로** 둡니다. 한 예산을 나눠 쓰면
+    //    클립이 늘 때 사진이 지워집니다. (ARCHITECTURE 3.6-5 · 3.6-9)
+    clipAutoCleanup: bool('STREAM_CLIP_AUTO_CLEANUP', true),
+    clipMaxGb: Math.max(0.1, num('STREAM_CLIP_MAX_GB', 5)),
+    // 이만큼 안 지난 클립은 예산을 넘겨도 지우지 않습니다. 방금 만든 것이 사라지면 안 됩니다.
+    clipMinKeepDays: Math.max(0, num('STREAM_CLIP_MIN_KEEP_DAYS', 3)),
+    // 한 번 정리할 때 예산의 몇 %까지 내려갈지. 경계선에서 매번 재실행되는 것을 막습니다.
+    clipCleanupTargetPercent: Math.min(95, Math.max(10, num('STREAM_CLIP_CLEANUP_TARGET_PERCENT', 80))),
   },
 
   // 영화 정보 (TMDB). 없으면 /영화 만 안내하고 기능은 꺼둡니다 — 봇 전체가 죽으면 안 됩니다.

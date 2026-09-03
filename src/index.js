@@ -32,7 +32,7 @@ import { handleMovieComponent } from './movie/index.js';
 import { handlePlanComponent, handlePlanModal, makeReminderFire } from './plan/index.js';
 import { initPlans, restoreReminders, flushPlans } from './plan/store.js';
 import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlements } from './plan/settle.js';
-import { handleStreamComponent, handleStreamModal } from './stream/index.js';
+import { handleStreamComponent, handleStreamModal, startClipCleanup } from './stream/index.js';
 import { initStreams, flushStreams } from './stream/store.js';
 import { initClips } from './stream/clips.js';
 import { ensureStreamPanels } from './stream/panel.js';
@@ -97,6 +97,9 @@ client.once(Events.ClientReady, (c) => {
     // 디스크에 남아 이어지므로 "기록 중" 이 거짓말이 되지 않습니다.
     .then(() => (inRole('stream') ? ensureStreamPanels(c) : null))
     .catch((err) => console.error('[panel] 제어판 준비 실패:', err.message));
+  // 클립은 한 개가 수 MB 입니다. 예산을 넘으면 오래된 것부터 지우고 **알립니다.**
+  // (사진 예산과 따로입니다 — 합치면 클립이 늘 때 사진이 지워집니다)
+  if (inRole('stream')) startClipCleanup(c);
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
   // yt-dlp 를 **켜는 데만** 몇 초가 걸리는지 한 번 재둡니다.

@@ -129,6 +129,8 @@ export function buildStreamPanel(guildId) {
           .setStyle(ButtonStyle.Danger)
       )
     );
+    // 늦게 켠 사람이 스스로 끼어들 수 있어야 합니다. 저장해둔 고정 주소를 씁니다.
+    rows.push(new ActionRowBuilder().addComponents(joinButton()));
     return { embeds: [embed], components: rows };
   }
 
@@ -150,19 +152,34 @@ export function buildStreamPanel(guildId) {
   // ⚠️ **[▶️ 이어서 기록] 이 있어야 "종료"가 비파괴가 됩니다.**
   //    누구나 누를 수 있는 버튼이라, 다섯 명이 아직 게임 중인데 눌릴 수 있습니다.
   //    저장이 안 지워지는 것만으로는 부족합니다 — 되돌리는 버튼이 있어야 합니다.
+  const idleButtons = [joinButton()];
   if (last) {
-    rows.push(
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder()
-          .setCustomId(`tm:panel:reopen:${last.id}`)
-          .setLabel('이어서 기록')
-          .setEmoji('▶️')
-          .setStyle(ButtonStyle.Primary)
-      )
+    idleButtons.push(
+      new ButtonBuilder()
+        .setCustomId(`tm:panel:reopen:${last.id}`)
+        .setLabel('이어서 기록')
+        .setEmoji('▶️')
+        .setStyle(ButtonStyle.Secondary)
     );
   }
+  rows.push(new ActionRowBuilder().addComponents(...idleButtons));
 
   return { embeds: [embed], components: rows };
+}
+
+/**
+ * **[🎬 나도 등록]** — 저장해둔 고정 주소로 한 번에 등록합니다.
+ *
+ * ★ 이게 "매번 링크 붙이기" 를 없애는 자리입니다. 명령어를 새로 만들지 않고
+ *   버튼으로 둡니다 — `/방송` 을 인자 없이 치면 상태 보기라서 겹치고,
+ *   자주 하는 조작은 버튼이어야 합니다 (규칙 3.6-6).
+ */
+function joinButton() {
+  return new ButtonBuilder()
+    .setCustomId('tm:panel:join')
+    .setLabel('나도 등록')
+    .setEmoji('🎬')
+    .setStyle(ButtonStyle.Primary);
 }
 
 /**

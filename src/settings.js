@@ -236,6 +236,36 @@ export function speedFor(guildId, userId) {
   return userSpeed(guildId, userId) ?? config.tts.speed;
 }
 
+// ── 내 라이브 고정 주소 (사람마다 따로) ───────────────────────
+//
+// ★ 왜 필요한가: 유튜브 라이브 주소는 방송마다 바뀝니다. 그래서 매번 `/방송 링크:…` 로
+//   붙여넣어야 했습니다. 그런데 **채널 고정 주소**(`youtube.com/@계정/live`)는 안 바뀌고,
+//   yt-dlp 가 그걸 **지금 하는 방송**으로 풀어줍니다 (실측 확인).
+//   그러니 사람마다 한 번만 저장해두면 그다음부터는 제어판의 버튼 하나로 끝납니다.
+//
+// ⚠️ **`watch?v=` 주소는 저장하지 않습니다.** 그건 그 방송 하나만 가리켜서,
+//    저장해두면 매번 **지난 방송을 등록하게 됩니다.** 조용히 틀리는 종류의 오류입니다.
+
+export function streamHome(guildId, userId) {
+  return store[guildId]?.streamHomes?.[userId] ?? null;
+}
+
+export function setStreamHome(guildId, userId, url) {
+  store[guildId] ??= {};
+  store[guildId].streamHomes ??= {};
+  store[guildId].streamHomes[userId] = url;
+  save();
+  return url;
+}
+
+export function clearStreamHome(guildId, userId) {
+  if (!store[guildId]?.streamHomes?.[userId]) return false;
+  delete store[guildId].streamHomes[userId];
+  if (Object.keys(store[guildId].streamHomes).length === 0) delete store[guildId].streamHomes;
+  save();
+  return true;
+}
+
 // ── 읽어주기 축약어 (서버마다 따로) ───────────────────────────
 //
 // `tts/index.js` 에 기본 축약어 표가 있습니다(ㅇㅇ → 응응 …). 그런데 친구들끼리

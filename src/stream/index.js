@@ -16,7 +16,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { userError } from '../user-error.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, streamHome, setStreamHome } from '../settings.js';
 import { liveInfo } from '../music/ytdlp.js';
 import {
   activeSession,
@@ -53,7 +53,7 @@ import {
   scheduleStreamPanelRefresh,
   DESC_PER_PAGE,
 } from './panel.js';
-import { makeClip, clipPageUrl, fmtBytes } from './clips.js';
+import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget } from './clips.js';
 import { config } from '../config.js';
 
 /** 오프셋을 이 범위 밖으로 두면 실수입니다. 6시간이면 어떤 방송이든 덮습니다. */
@@ -90,6 +90,28 @@ export function parseVideoId(input) {
 
 const watchUrl = (videoId) => `https://www.youtube.com/watch?v=${videoId}`;
 
+/**
+ * **채널 고정 주소**인가. (`youtube.com/@계정/live` 처럼 방송마다 안 바뀌는 주소)
+ *
+ * ★ 이걸 알아보는 것이 "매번 링크 붙이기" 를 없애는 열쇠입니다.
+ *   yt-dlp 가 이 주소를 **지금 하는 방송**으로 풀어줍니다 (실측: `@ABCNews/live` → 현재 방송).
+ *   그래서 사람마다 한 번만 저장해두면 그다음부터 버튼 하나로 등록됩니다.
+ */
+export function parseLiveHome(input) {
+  const text = String(input ?? '').trim();
+  if (!text) return null;
+
+  // @계정 만 적은 경우도 받아줍니다.
+  const handle = text.match(/^@([\w.-]{3,30})$/);
+  if (handle) return `https://www.youtube.com/@${handle[1]}/live`;
+
+  const m = text.match(
+    /^https?:\/\/(?:www\.|m\.)?youtube\.com\/((?:@[\w.-]+)|(?:channel\/[\w-]+)|(?:c\/[\w.-]+)|(?:user\/[\w.-]+))(?:\/live)?\/?$/i
+  );
+  if (!m) return null;
+  return `https://www.youtube.com/${m[1]}/live`;
+}
+
 /** `/방송` 을 쓸 수 있는 상태인지 확인하고 방송 채널 ID 를 돌려줍니다. */
 function requireHomeChannel(guildId) {
   const channelId = getSetting(guildId, 'streamChannelId');
@@ -107,7 +129,7 @@ function requireHomeChannel(guildId) {
 //
 // 상태를 보는 명령어를 따로 만들지 않습니다. 명령어가 불어납니다. (규칙 3.6-6)
 
-function buildStatus(guildId) {
+function buildStatus(guildId, userId) {
   const embed = new EmbedBuilder().setColor(0xe67e22).setTitle('🎥 방송 기록');
   const session = activeSession(guildId);
   const channelId = getSetting(guildId, 'streamChannelId');
@@ -133,6 +155,16 @@ function buildStatus(guildId) {
     lines.push('기록 중인 방송이 없습니다.');
     lines.push('`/방송 링크:<내 라이브 주소> 게임명:<이름>` 으로 시작하세요.');
   }
+
+  // 저장해둔 고정 주소를 보여줍니다. 무엇이 저장됐는지 볼 수 없으면 고칠 수도 없습니다.
+  const home = streamHome(guildId, userId);
+  lines.push('');
+  lines.push(
+    home
+      ? `📌 내 고정 주소: ${home}\n(제어판의 **🎬 나도 등록** 이 이 주소를 씁니다. 바꾸려면 \`/방송 링크:…\` 로 다시 등록하세요)`
+      : '📌 내 고정 주소가 없습니다. `/방송 링크:https://www.youtube.com/@내계정/live` 로 **한 번만** 등록하면\n' +
+          '그다음부터는 제어판의 **🎬 나도 등록** 버튼만 누르면 됩니다.'
+  );
 
   const past = recentSessions(guildId, 6).filter((s) => s.closedAt);
   if (past.length > 0) {
@@ -175,69 +207,224 @@ export const commands = [
         // 여기서 다시 부를 수 있어야 합니다.
         const picker = buildSessionPicker(guildId);
         return interaction.reply({
-          embeds: [buildStatus(guildId)],
+          embeds: [buildStatus(guildId, interaction.user.id)],
           ...(picker ? { components: [picker] } : {}),
           flags: MessageFlags.Ephemeral,
         });
       }
 
-      const channelId = requireHomeChannel(guildId);
-      const videoId = parseVideoId(link);
-      if (!videoId) {
-        throw userError(
-          '유튜브 라이브 주소를 알아볼 수 없습니다.\n' +
-            '이런 형태여야 합니다: `https://www.youtube.com/live/…` · `https://youtu.be/…` · `https://www.youtube.com/watch?v=…`'
-        );
-      }
-
-      // yt-dlp 를 부르므로 3초를 넘길 수 있습니다. 먼저 답해둡니다.
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-      const url = watchUrl(videoId);
-      const info = await liveInfo(url);
-
-      if (info.liveStatus === 'is_upcoming') {
-        throw userError(
-          '아직 시작하지 않은 방송입니다. **라이브를 켠 다음에** 등록해주세요.\n' +
-            '(켜기 전에 등록하면 마킹 시간이 전부 어긋납니다)'
-        );
-      }
-      if (info.liveStatus === 'not_live') {
-        throw userError('라이브가 아니라 일반 영상입니다. 라이브 방송 주소를 넣어주세요.');
-      }
-
-      const session = activeSession(guildId) ?? openSession(guildId, channelId, game);
-      if (game) setGame(session, game);
-
-      // 유튜브가 시작 시각을 안 알려주면 지금 시각으로 대체합니다.
-      // ⚠️ 그때는 **반드시 사람에게 말해줘야** 합니다. 조용히 넘기면 전부 어긋난 채로 갑니다.
-      const startedAt = info.startedAt ?? nowSec();
-      const startSource = info.startedAt ? 'release_timestamp' : 'command';
-      putStream(session, { userId: interaction.user.id, url, videoId, startedAt, startSource });
-
-      const elapsed = humanDuration(nowSec() - startedAt);
-      const lines = [
-        `✅ 등록했습니다 · 방송 시작 <t:${startedAt}:t> · **지금 ${elapsed} 진행 중**`,
-        '',
-        // ★ 이 확인 요청이 어긋난 t=0 을 잡는 1차 방어선입니다. (기획 2.2a)
-        '**"지금 ' + elapsed + ' 진행 중" 이 맞습니까?** 실제와 다르면 제어판의 `⏱️ 시간 어긋남` 으로 맞춰주세요.',
-        `제어판: <#${channelId}> · 이제 재미있을 때 **✂️ 지금!** 을 누르면 됩니다.`,
-      ];
-      if (startSource === 'command') {
-        lines.splice(
-          1,
-          0,
-          '⚠️ 유튜브에서 방송 시작 시각을 못 읽어서 **지금 시각을 시작점으로** 잡았습니다.\n' +
-            '   이미 켜둔 지 오래됐다면 `⏱️ 시간 어긋남` 으로 반드시 맞춰주세요.'
-        );
-      }
-      if (info.title) lines.push(`제목: ${info.title.slice(0, 150)}`);
-
-      await interaction.editReply(lines.join('\n'));
-      await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
+      return registerStream(interaction, { link, game });
     },
   },
 ];
+
+/**
+ * 방송을 등록합니다. `/방송 링크:…` 와 제어판의 **[🎬 나도 등록]** 이 함께 씁니다.
+ *
+ * @param {object} interaction
+ * @param {{link?: string|null, game?: string|null}} opts
+ *   `link` 가 없으면 **저장해둔 고정 주소**를 씁니다.
+ */
+async function registerStream(interaction, { link = null, game = null } = {}) {
+  const guildId = interaction.guildId;
+  const userId = interaction.user.id;
+  const channelId = requireHomeChannel(guildId);
+
+  // 무엇을 조회할지 정합니다. 세 갈래입니다.
+  let target;
+  let homeToSave = null;
+  /** 고정 주소로 조회하는가. 오류 안내 문구가 달라집니다. */
+  let usingHome = false;
+
+  if (link) {
+    const videoId = parseVideoId(link);
+    if (videoId) {
+      // 이 방송 하나만 가리키는 주소입니다. **저장하지 않습니다** —
+      // 저장해두면 다음 방송에서 지난 방송을 등록하게 됩니다.
+      target = watchUrl(videoId);
+    } else {
+      homeToSave = parseLiveHome(link);
+      if (!homeToSave) {
+        throw userError(
+          '유튜브 주소를 알아볼 수 없습니다. 둘 중 하나로 적어주세요.\n' +
+            '· **고정 주소(추천)** — `https://www.youtube.com/@내계정/live`\n' +
+            '  한 번만 등록하면 저장됩니다. 다음부터는 제어판의 **🎬 나도 등록** 만 누르면 됩니다.\n' +
+            '· 이번 방송 주소 — `https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`'
+        );
+      }
+      target = homeToSave;
+      usingHome = true;
+    }
+  } else {
+    usingHome = true;
+    const saved = streamHome(guildId, userId);
+    if (!saved) {
+      throw userError(
+        '저장해둔 주소가 없습니다. **한 번만** 등록해주세요.\n' +
+          '`/방송 링크:https://www.youtube.com/@내계정/live`\n' +
+          '그다음부터는 이 버튼만 누르면 됩니다. (방송마다 바뀌는 주소가 아니라 고정 주소입니다)'
+      );
+    }
+    target = saved;
+  }
+
+  // yt-dlp 를 부르므로 3초를 넘길 수 있습니다. 먼저 답해둡니다.
+  if (!interaction.deferred && !interaction.replied) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+
+  const info = await liveInfo(target);
+
+  if (info.liveStatus === 'is_upcoming' || (usingHome && !info.videoId)) {
+    // ⚠️ 고정 주소를 쓸 때는 **주소가 잘못된 게 아닙니다.** 아직 안 켠 것입니다.
+    //    "주소를 확인하세요" 라고 하면 멀쩡한 주소를 들여다보게 만듭니다.
+    throw userError(
+      usingHome
+        ? '지금 하는 방송을 찾지 못했습니다. **라이브를 먼저 켜고** 다시 눌러주세요.\n' +
+            `(저장된 주소: ${target})`
+        : '아직 시작하지 않은 방송입니다. **라이브를 켠 다음에** 등록해주세요.\n' +
+            '(켜기 전에 등록하면 마킹 시간이 전부 어긋납니다)'
+    );
+  }
+  if (info.liveStatus === 'not_live') {
+    throw userError('라이브가 아니라 일반 영상입니다. 라이브 방송 주소를 넣어주세요.');
+  }
+
+  const videoId = info.videoId || parseVideoId(target);
+  const url = watchUrl(videoId);
+
+  const session = activeSession(guildId) ?? openSession(guildId, channelId, game);
+  if (game) setGame(session, game);
+
+  // 유튜브가 시작 시각을 안 알려주면 지금 시각으로 대체합니다.
+  // ⚠️ 그때는 **반드시 사람에게 말해줘야** 합니다. 조용히 넘기면 전부 어긋난 채로 갑니다.
+  const startedAt = info.startedAt ?? nowSec();
+  const startSource = info.startedAt ? 'release_timestamp' : 'command';
+  putStream(session, { userId, url, videoId, startedAt, startSource });
+
+  // 고정 주소는 등록이 **성공한 뒤에** 저장합니다. 틀린 주소를 저장하면 안 됩니다.
+  if (homeToSave) setStreamHome(guildId, userId, homeToSave);
+
+  const elapsed = humanDuration(nowSec() - startedAt);
+  const lines = [
+    `✅ 등록했습니다 · 방송 시작 <t:${startedAt}:t> · **지금 ${elapsed} 진행 중**`,
+    '',
+    // ★ 이 확인 요청이 어긋난 t=0 을 잡는 1차 방어선입니다. (기획 2.2a)
+    '**"지금 ' + elapsed + ' 진행 중" 이 맞습니까?** 실제와 다르면 제어판의 `⏱️ 시간 어긋남` 으로 맞춰주세요.',
+    `제어판: <#${channelId}> · 이제 재미있을 때 **✂️ 지금!** 을 누르면 됩니다.`,
+  ];
+  if (startSource === 'command') {
+    lines.splice(
+      1,
+      0,
+      '⚠️ 유튜브에서 방송 시작 시각을 못 읽어서 **지금 시각을 시작점으로** 잡았습니다.\n' +
+        '   이미 켜둔 지 오래됐다면 `⏱️ 시간 어긋남` 으로 반드시 맞춰주세요.'
+    );
+  }
+  if (homeToSave) {
+    lines.push(`📌 이 주소를 저장했습니다. 다음부터는 제어판의 **🎬 나도 등록** 만 누르면 됩니다.`);
+  }
+  if (info.title) lines.push(`제목: ${info.title.slice(0, 150)}`);
+
+  await interaction.editReply(lines.join('\n'));
+  await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
+}
+
+// ── 클립 용량 자동 정리 ───────────────────────────────────────
+//
+// ⚠️ **사용자 데이터를 영구 삭제합니다.** 안전장치는 `clips.js` 의 cleanupByBudget 에 있습니다.
+//    여기서는 그것을 주기적으로 부르고 **결과를 알립니다.** 조용히 사라지면 안 됩니다.
+
+let cleanupTimer = null;
+
+/** 지운 클립들을 세션 → 서버 → 방송 채널로 되짚어 알립니다. */
+async function announceCleanup(client, result) {
+  // 어느 서버에 알려야 하는지는 **세션이 알려줍니다.**
+  // ⚠️ 못 찾으면 "첫 번째 서버" 같은 짐작을 하지 말고 로그에만 남깁니다 —
+  //    엉뚱한 채널에 남의 방송 이야기를 올리게 됩니다.
+  const byGuild = new Map();
+  const orphans = [];
+  for (const c of result.deleted) {
+    const guildId = sessionById(c.folder)?.guildId;
+    if (!guildId) {
+      orphans.push(c);
+      continue;
+    }
+    if (!byGuild.has(guildId)) byGuild.set(guildId, []);
+    byGuild.get(guildId).push(c);
+  }
+
+  if (orphans.length > 0) {
+    console.warn(
+      `[stream] 정리한 클립 ${orphans.length}개는 세션 기록이 없어 알리지 못했습니다 ` +
+        `(폴더: ${[...new Set(orphans.map((c) => c.folder))].join(', ')})`
+    );
+  }
+
+  for (const [guildId, list] of byGuild) {
+    const channelId = getSetting(guildId, 'streamChannelId');
+    if (!channelId) continue;
+    const channel = await client.channels.fetch(channelId).catch(() => null);
+    if (!channel?.isTextBased?.()) continue;
+
+    const freed = list.reduce((a, c) => a + c.bytes, 0);
+    await channel
+      .send({
+        content:
+          `🧹 **클립 용량 정리** — 오래된 클립 ${list.length}개를 지웠습니다 (${fmtBytes(freed)} 확보)\n` +
+          `예산 ${fmtBytes(result.budget)} 를 넘어서 오래된 것부터 지웠습니다. ` +
+          `최근 ${config.stream.clipMinKeepDays}일 안에 만든 것은 지우지 않습니다.\n` +
+          `타임라인 텍스트는 그대로 있으니 필요하면 다시 뽑을 수 있습니다.`,
+        flags: MessageFlags.SuppressNotifications,
+      })
+      .catch(() => {});
+  }
+}
+
+async function maybeCleanup(client) {
+  try {
+    const result = await cleanupByBudget();
+    if (result.deleted.length === 0) {
+      // 예산을 넘었는데 전부 최근 것이면 지울 수 없습니다. 그건 알려줘야 합니다.
+      if (result.bytes > result.budget && result.blockedByAge > 0) {
+        console.warn(
+          `[stream] 클립이 예산을 넘었습니다 (${fmtBytes(result.bytes)} / ${fmtBytes(result.budget)}) ` +
+            `— 최근 ${config.stream.clipMinKeepDays}일 보호 때문에 ${result.blockedByAge}개를 지우지 못했습니다.\n` +
+            '        STREAM_CLIP_MAX_GB 를 늘리거나 웹페이지에서 손으로 지워주세요.'
+        );
+      }
+      return;
+    }
+    console.log(
+      `[stream] 클립 정리: ${result.deleted.length}개 · ${fmtBytes(result.freed)} 확보 ` +
+        `(남은 용량 ${fmtBytes(result.bytes)} / 예산 ${fmtBytes(result.budget)})`
+    );
+    await announceCleanup(client, result);
+  } catch (err) {
+    console.error('[stream] 클립 정리 실패:', err.message);
+  }
+}
+
+export function startClipCleanup(client) {
+  if (cleanupTimer) return;
+  if (!config.stream.clipAutoCleanup) {
+    console.log('   클립 자동 정리 꺼짐 (STREAM_CLIP_AUTO_CLEANUP=false)');
+    return;
+  }
+  console.log(
+    `   클립 자동 정리 켜짐: 예산 ${fmtBytes(config.stream.clipMaxGb * 1024 ** 3)}, ` +
+      `${config.stream.clipCleanupTargetPercent}% 까지 정리, 최근 ${config.stream.clipMinKeepDays}일 보호`
+  );
+  // 켜자마자 한 번 봅니다. 꺼져 있는 동안 쌓였을 수 있습니다.
+  maybeCleanup(client);
+  cleanupTimer = setInterval(() => maybeCleanup(client), 60 * 60_000);
+  cleanupTimer.unref?.();
+}
+
+export function stopClipCleanup() {
+  if (cleanupTimer) clearInterval(cleanupTimer);
+  cleanupTimer = null;
+}
 
 // ── 버튼·드롭다운 ─────────────────────────────────────────────
 
@@ -245,6 +432,7 @@ export async function handleStreamComponent(interaction, client) {
   const id = interaction.customId;
   const guildId = interaction.guildId;
 
+  if (id === 'tm:panel:join') return registerStream(interaction);
   if (id === 'tm:panel:mark') return markNow(interaction, client);
   if (id === 'tm:panel:undo') return undoMark(interaction, client);
   if (id === 'tm:panel:offset') return openOffsetModal(interaction);

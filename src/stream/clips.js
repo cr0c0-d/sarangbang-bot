@@ -108,7 +108,56 @@ async function cleanLeftovers(folder, stem) {
   }
 }
 
-/** 오래된 클립부터 지워 상한 안으로 맞춥니다. @returns {number} 지운 개수 */
+/**
+ * 예산(GB)을 넘었으면 오래된 클립부터 지웁니다.
+ *
+ * ⚠️ **사용자 데이터를 영구 삭제합니다.** `src/images/cleanup.js` 와 같은 안전장치를 둡니다
+ *    (그 파일의 머리말이 이유를 자세히 적어뒀습니다 — ARCHITECTURE 3.6-5).
+ *      1. 최근 것은 지우지 않습니다 (`STREAM_CLIP_MIN_KEEP_DAYS`).
+ *         방금 만든 클립이 사라지면 사람이 뭘 잃었는지도 모릅니다.
+ *      2. 예산의 80% 까지 내려갑니다. 경계선에서 매번 재실행되는 것을 막습니다.
+ *      3. 지운 내용을 디스코드에 알립니다. 조용히 사라지면 안 됩니다. (부르는 쪽이 합니다)
+ *
+ * ⚠️ 예산을 **사진과 따로** 둡니다. 하나로 합치면 클립이 늘 때 사진이 지워집니다.
+ *
+ * @returns {Promise<{deleted: Array, freed: number, bytes: number, budget: number, blockedByAge: number}>}
+ */
+export async function cleanupByBudget() {
+  const budget = config.stream.clipMaxGb * 1024 ** 3;
+  const target = budget * (config.stream.clipCleanupTargetPercent / 100);
+  const keepAfter = Date.now() - config.stream.clipMinKeepDays * 86400_000;
+
+  const folders = await listFolders();
+  const all = [];
+  for (const f of folders) {
+    for (const c of await listClips(f.name)) all.push({ folder: f.name, ...c });
+  }
+  let bytes = all.reduce((a, c) => a + c.bytes, 0);
+  if (bytes <= budget) return { deleted: [], freed: 0, bytes, budget, blockedByAge: 0 };
+
+  // 오래된 것부터 (mtime 오름차순)
+  all.sort((a, b) => a.mtime - b.mtime);
+
+  const deleted = [];
+  let freed = 0;
+  let blockedByAge = 0;
+  for (const c of all) {
+    if (bytes - freed <= target) break;
+    // 안전장치 1: 최근 것은 건드리지 않습니다.
+    if (c.mtime > keepAfter) {
+      blockedByAge++;
+      continue;
+    }
+    if (await deleteClip(c.folder, c.name)) {
+      deleted.push(c);
+      freed += c.bytes;
+    }
+  }
+
+  return { deleted, freed, bytes: bytes - freed, budget, blockedByAge };
+}
+
+/** 오래된 클립부터 지워 **개수** 상한 안으로 맞춥니다. @returns {number} 지운 개수 */
 export async function pruneClips(folder) {
   let removed = 0;
 
