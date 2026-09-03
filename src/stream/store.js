@@ -53,6 +53,22 @@ export async function initStreams() {
   const before = store.sessions.length;
   store.sessions = store.sessions.filter((s) => !s.closedAt || s.closedAt > cutoff);
   if (store.sessions.length !== before) save();
+
+  // ⚠️ `forUserId` 가 없는 옛 마킹은 **전원 요약판에 들어갑니다.**
+  //    옛 기록에는 맞는 해석이지만(그때는 그게 실제 동작이었음), 새 규칙을 시험하는
+  //    중이라면 섞여서 헷갈립니다. 조용히 두면 "왜 남의 마킹이 있지?" 가 됩니다.
+  const legacy = store.sessions.reduce(
+    (a, s) => a + s.marks.filter((m) => m.forUserId === undefined).length,
+    0
+  );
+  if (legacy > 0) {
+    console.warn(
+      `[stream] 옛 방식 마킹 ${legacy}개가 있습니다 — 이건 **전원 요약판에** 들어갑니다.\n` +
+        '        지금은 마킹이 찍은 사람의 방송에만 들어갑니다. 시험 기록이라면\n' +
+        `        \`rm ${path.join(config.dataDir, 'streams.json')}\` 로 지우고 시작하세요.`
+    );
+  }
+
   return store.sessions.length;
 }
 
@@ -248,7 +264,14 @@ export function markSecondsFor(stream, mark) {
   return mark.at - stream.startedAt - (stream.offsetSec ?? 0);
 }
 
-/** 이 마킹이 그 사람 타임라인에 들어가는가. `forUserId` 가 없으면 **모두의 것**입니다. */
+/**
+ * 이 마킹이 그 사람 타임라인에 들어가는가. `forUserId` 가 없으면 **모두의 것**입니다.
+ *
+ * ⚠️ **`forUserId` 칸이 생기기 전에 만든 마킹은 전원에게 들어갑니다.**
+ *    그때는 그게 실제 동작이었으니 옛 기록에는 맞는 해석입니다. 하지만 새 규칙을
+ *    시험해보는 중이라면 옛 세션이 섞여 헷갈립니다 — `data/streams.json` 을 지우고
+ *    시작하세요. (기동할 때 그런 마킹이 있으면 로그로 알려줍니다)
+ */
 export function markBelongsTo(mark, userId) {
   return !mark.forUserId || mark.forUserId === userId;
 }

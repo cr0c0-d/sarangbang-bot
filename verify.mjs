@@ -2345,6 +2345,17 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('내가 찍은 게 없으면 아무것도 안 지움', store.removeLastMark(s, 'u77') === null);
   store.removeLastMark(s, 'u2');
 
+  // 옛 데이터(forUserId 칸이 없던 시절)는 전원에게 들어간다. 옛 기록에는 맞는 해석이지만
+  // 새 규칙을 시험할 때 섞이면 헷갈리므로 기동할 때 알려줘야 한다.
+  {
+    const legacyMark = { id: 'L1', at: now - 100, byUserId: 'u1', text: '' }; // forUserId 없음
+    ok('옛 마킹은 모두의 것으로 봄 (그때는 그게 실제 동작이었다)',
+      store.markBelongsTo(legacyMark, 'u1') && store.markBelongsTo(legacyMark, 'u2'));
+    const ssrc = fs.readFileSync('./src/stream/store.js', 'utf8');
+    ok('옛 마킹이 있으면 기동할 때 알려줌',
+      ssrc.includes('옛 방식 마킹') && ssrc.includes("m.forUserId === undefined"));
+  }
+
   const si0 = fs.readFileSync('./src/stream/index.js', 'utf8');
   ok('마킹 버튼이 내 방송에만 찍음',
     si0.includes('addMark(session, userId, mine ? userId : null)'));
