@@ -180,9 +180,17 @@ export const config = {
   // docs/게임방송-기획.md
   stream: {
     channelId: str('STREAM_CHANNEL_ID'),
-    // 클립을 만들 때 기본으로 잡을 구간 (마킹 앞 / 뒤). Phase 2 에서 씁니다.
+    // 클립을 만들 때 기본으로 잡을 구간 (마킹 앞 / 뒤).
     clipBeforeSec: Math.max(0, num('STREAM_CLIP_BEFORE_SEC', 15)),
     clipAfterSec: Math.max(1, num('STREAM_CLIP_AFTER_SEC', 25)),
+    // ⚠️ **길이 상한이 용량 상한입니다.** 720p 가 초당 약 0.19MB 라(실측 15초=2.8MB),
+    //    180초면 한 개 34MB 입니다. 이걸 안 막으면 한 번에 30분(약 340MB)을 요청할 수 있고,
+    //    개수 제한은 바이트를 전혀 막지 못합니다. 디스크가 차면 사진 정리가 돌아
+    //    **원인은 그대로 둔 채 사진을 지웁니다** (images/cleanup.js 머리말).
+    clipMaxSec: Math.max(5, num('STREAM_CLIP_MAX_SEC', 180)),
+    clipMaxHeight: Math.max(240, num('STREAM_CLIP_MAX_HEIGHT', 720)),
+    clipPerSession: Math.max(1, num('STREAM_CLIP_PER_SESSION', 20)),
+    clipTotal: Math.max(1, num('STREAM_CLIP_TOTAL', 200)),
   },
 
   // 영화 정보 (TMDB). 없으면 /영화 만 안내하고 기능은 꺼둡니다 — 봇 전체가 죽으면 안 됩니다.

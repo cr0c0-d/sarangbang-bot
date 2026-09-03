@@ -1415,6 +1415,143 @@ ok('이동: 암호 없으면 401',
 
 ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.0.1', server.address().address);
 
+// 8b) 방송 클립 — 경로 안전장치 · 길이 상한 · 웹 라우트
+//
+// ⚠️ **실제 추출은 여기서 하지 않습니다** (네트워크를 타고 15초쯤 걸림).
+//    yt-dlp 로 직접 확인해뒀습니다 (2026-09-03, 15초 구간 = 2.4MB, `-> #0:0 (copy)`, H.264).
+//    여기서는 그 앞뒤 — 값 만들기, 경로, 상한, 웹 — 를 봅니다.
+{
+  const clips = await import('./src/stream/clips.js');
+  const st2 = await import('./src/stream/store.js');
+  const pn2 = await import('./src/stream/panel.js');
+  const PATH = (await import('node:path')).default;
+  await clips.initClips();
+  await st2.initStreams();
+
+  // ★ 불변조건은 "clips/ 밖으로 못 나간다" 다.
+  //   뿌리를 data/ 에 두면 settings.json · streams.json 이 한 칸 거리에 놓인다.
+  ok('클립 뿌리는 data/clips (data/ 가 아님)', clips.baseDir().endsWith(PATH.join('clips')));
+  for (const bad of ['..', '../..', 'a/b', '..%2fx', '', 'AB', 'toolongfoldername', '../settings']) {
+    let threw = false;
+    try { clips.folderPath(bad); } catch { threw = true; }
+    ok(`클립 폴더 이름 거부: ${JSON.stringify(bad)}`, threw);
+  }
+  for (const bad of ['../../settings.json', '..\\..\\x', 'a/b/c', '....//x']) {
+    const p = clips.filePath('abc123', bad);
+    ok(`클립 파일 이름이 폴더를 못 벗어남: ${JSON.stringify(bad)}`,
+      p.startsWith(clips.folderPath('abc123') + PATH.sep), p);
+  }
+
+  // 클립 만들기 창 — 기본값이 시:분:초여야 한다.
+  // parseElapsed 는 숫자만 적으면 **분**으로 보므로(90 → 90분) 기본값으로 그 길을 막는다.
+  const cs = st2.openSession('gc', 'chc', '테스트');
+  st2.putStream(cs, { userId: 'u1', url: 'https://www.youtube.com/watch?v=' + 'A'.repeat(11), videoId: 'A'.repeat(11), startedAt: st2.nowSec() - 3600, startSource: 'release_timestamp' });
+  const cm = st2.addMark(cs, 'u1');
+  cm.at = st2.nowSec() - 3600 + 60; // 영상 60초 지점
+  st2.setMarkText(cs, cm.id, '테스트 장면');
+  const cStream = st2.streamOf(cs, 'u1');
+  const clipModal = JSON.stringify(pn2.buildClipModal(cs, cStream, cm).toJSON());
+  ok('클립 창 시작이 마킹 15초 앞 (시:분:초)', clipModal.includes('"value":"00:00:45"'), clipModal.match(/"value":"[^"]*"/g)?.join(' '));
+  ok('클립 창 끝이 마킹 25초 뒤', clipModal.includes('"value":"00:01:25"'));
+  ok('클립 창 제목이 마킹 설명으로 채워짐', clipModal.includes('테스트 장면'));
+  ok('클립 창 안내가 시:분:초 형식을 유도', clipModal.includes('01:20:30'));
+  // 설명이 없는 마킹에 setValue('') 를 하면 창이 조용히 안 뜬다. (규칙 7-1)
+  const bare = { ...cm, text: '' };
+  const bareModal = JSON.stringify(pn2.buildClipModal(cs, cStream, bare).toJSON());
+  ok('설명 없는 마킹의 제목 칸에 value 를 넣지 않음', !/"value":""/.test(bareModal));
+
+  // ★ 길이 상한이 실질적인 **용량** 상한이다. 개수 제한은 바이트를 못 막는다.
+  let capped = null;
+  await clips.makeClip({ folder: 'abc123', url: 'x', startSec: 0, endSec: 600, title: 't' }).catch((e) => (capped = e.message));
+  ok('클립 길이 상한이 막음 (용량 폭주 방지)', /180초까지/.test(capped ?? ''), (capped ?? '').split('\n')[0]);
+  let rev = null;
+  await clips.makeClip({ folder: 'abc123', url: 'x', startSec: 60, endSec: 30, title: 't' }).catch((e) => (rev = e.message));
+  ok('끝이 시작보다 앞이면 막음', /뒤여야/.test(rev ?? ''));
+
+  // 오류 안내 — 원인을 모르면 원문을 그대로 보여줘야 한다. (ARCHITECTURE 3.1-4)
+  ok('다시보기가 아직 없으면 그렇게 안내',
+    clips.clipError('ERROR: This live stream recording is not available.').includes('다시보기를 만들고 있습니다'));
+  ok('비공개면 일부공개로 바꾸라고 안내',
+    clips.clipError('ERROR: Private video').includes('일부공개'));
+  ok('영상이 사라졌으면 그렇게 안내',
+    clips.clipError('ERROR: Video unavailable').includes('사라졌습니다'));
+  ok('모르는 오류는 원문을 그대로 보여줌',
+    clips.clipError('ERROR: 처음 보는 오류입니다') === 'ERROR: 처음 보는 오류입니다');
+
+  // 웹 라우트 — 가짜 파일로 확인한다 (실제 추출 없이).
+  const fakeFolder = 'zz99zz';
+  const fakeName = '000045-테스트.mp4';
+  fs.mkdirSync(clips.folderPath(fakeFolder), { recursive: true });
+  fs.writeFileSync(clips.filePath(fakeFolder, fakeName), Buffer.alloc(4096, 1));
+  // .mp4 가 아닌 반쪽 파일은 목록에 나오면 안 된다.
+  fs.writeFileSync(clips.filePath(fakeFolder, `${fakeName}.part`), Buffer.alloc(10));
+
+  const listed = await clips.listClips(fakeFolder);
+  ok('클립 목록은 .mp4 만 (반쪽 파일 제외)', listed.length === 1 && listed[0].name === fakeName, listed.map((x) => x.name).join());
+
+  const cp = await fetch(`${base}/c/${fakeFolder}`);
+  ok('클립 페이지는 암호 없이 200 (갤러리와 같은 경계)', cp.status === 200, String(cp.status));
+  const cpHtml = await cp.text();
+  ok('클립 페이지에 재생기', cpHtml.includes('<video'));
+  ok('클립 페이지에 받기 링크', cpHtml.includes(`/cdl/${fakeFolder}/`));
+  ok('클립 페이지에 반쪽 파일이 안 보임', !cpHtml.includes('.part'));
+
+  const cf = await fetch(`${base}/clip/${fakeFolder}/${encodeURIComponent(fakeName)}`);
+  ok('클립 파일 200', cf.status === 200, String(cf.status));
+  ok('mp4 로 내려옴', (cf.headers.get('content-type') ?? '').includes('mp4'), cf.headers.get('content-type') ?? '');
+  await cf.arrayBuffer();
+  // Range 가 안 되면 브라우저에서 재생 중 건너뛰기가 안 된다.
+  const rg = await fetch(`${base}/clip/${fakeFolder}/${encodeURIComponent(fakeName)}`, { headers: { Range: 'bytes=0-1023' } });
+  ok('Range 요청 지원 (206) — 재생 중 건너뛰기', rg.status === 206, String(rg.status));
+  await rg.arrayBuffer();
+
+  const noKey = await fetch(`${base}/api/clip-delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ folder: fakeFolder, files: [fakeName] }),
+  });
+  ok('클립 삭제: 암호 없으면 401', noKey.status === 401, String(noKey.status));
+  const withKey = await fetch(`${base}/api/clip-delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
+    body: JSON.stringify({ folder: fakeFolder, files: [fakeName] }),
+  });
+  ok('클립 삭제: 맞는 암호면 200', withKey.status === 200, String(withKey.status));
+  ok('클립이 실제로 지워짐', !fs.existsSync(clips.filePath(fakeFolder, fakeName)));
+
+  // 상한을 넘기면 오래된 것부터 지운다.
+  for (let i = 0; i < 25; i++) {
+    fs.writeFileSync(clips.filePath(fakeFolder, `p${i}.mp4`), Buffer.alloc(64));
+  }
+  const pruned = await clips.pruneClips(fakeFolder);
+  ok('세션당 클립 개수 상한이 걸림', pruned >= 5 && (await clips.listClips(fakeFolder)).length <= 20, `${pruned}개 지움`);
+
+  // 요약판에 클립이 반영되는가
+  st2.addClip(cs, { markId: cm.id, userId: 'u1', file: fakeName, startSec: 45, endSec: 60, title: '테스트 장면' });
+  const withClip = pn2.buildSummary(cs, cStream).at(-1);
+  const wcJson = JSON.stringify(withClip.components.map((r) => r.toJSON()));
+  ok('만든 마킹에 ✅ 표시', wcJson.includes('✅'));
+  ok('요약판에 [클립 보기] 링크', wcJson.includes(`/c/${cs.id}`));
+
+  // 마킹이 25개를 넘으면 드롭다운을 나눠야 한다 (디스코드 제한).
+  for (let i = 0; i < 30; i++) {
+    const m = st2.addMark(cs, 'u1');
+    m.at = st2.nowSec() - 3000 + i;
+  }
+  const paged = pn2.buildSummary(cs, cStream, 0).at(-1);
+  const pagedJson = JSON.parse(JSON.stringify(paged.components.map((r) => r.toJSON())));
+  const opts = pagedJson.flatMap((r) => r.components).find((c) => c.type === 3)?.options ?? [];
+  ok('드롭다운은 25개까지만', opts.length === 25, `${opts.length}개`);
+  ok('넘치면 쪽 넘기기 버튼이 생김',
+    pagedJson.flatMap((r) => r.components).some((c) => String(c.custom_id ?? '').startsWith('tm:cpage:')));
+
+  // 지난 방송의 요약판을 다시 부를 길 (종료 뒤 클립으로 가는 유일한 입구가 밀려 올라가므로)
+  st2.closeSession(cs);
+  const sp = pn2.buildSessionPicker('gc');
+  ok('지난 방송 요약판 다시 올리기 드롭다운', Boolean(sp) && JSON.stringify(sp.toJSON()).includes('tm:resum'));
+  ok('지난 방송이 없으면 드롭다운도 없음', pn2.buildSessionPicker('없는서버') === null);
+
+  fs.rmSync(clips.baseDir(), { recursive: true, force: true });
+}
+
 // 6u) 투표
 {
   const poll = await import('./src/poll/index.js');
@@ -2014,8 +2151,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('요약판이 코드블록 (유튜브 설명란에 그대로 복사)', joined.includes('```'));
   ok('요약판에 설명이 들어감', joined.includes('차에 치임'));
   ok('설명 없는 마킹도 줄은 남김', joined.includes('(설명 없음)'));
-  ok('요약판 버튼은 tm:desc: (tm:panel: 이 아님 — 훑기가 지우면 안 됨)',
-    idsOf(summary[summary.length - 1]).every((x) => x.startsWith('tm:desc:')), idsOf(summary[summary.length - 1]).join());
+  // 요약판이 tm:panel: 을 쓰면 **훑기가 요약판을 제어판으로 오인해 지운다.**
+  ok('요약판 조작부에 tm:panel: 이 없음 (훑기가 지우면 안 됨)',
+    idsOf(summary[summary.length - 1]).every((x) => !x.startsWith('tm:panel:')),
+    idsOf(summary[summary.length - 1]).join());
+  ok('요약판에 클립 뽑기 드롭다운이 있음',
+    idsOf(summary[summary.length - 1]).some((x) => x.startsWith('tm:clip:')));
   ok('요약판이 2000자를 넘지 않음', summary.every((m) => m.content.length <= 2000));
 
   // 마킹이 많아도 나뉘어야 한다. 6명 × 여러 개가 한 장에 안 들어간다.

@@ -34,6 +34,7 @@ import { initPlans, restoreReminders, flushPlans } from './plan/store.js';
 import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlements } from './plan/settle.js';
 import { handleStreamComponent, handleStreamModal } from './stream/index.js';
 import { initStreams, flushStreams } from './stream/store.js';
+import { initClips } from './stream/clips.js';
 import { ensureStreamPanels } from './stream/panel.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
@@ -364,7 +365,10 @@ if (inRole('plan')) {
 }
 if (inRole('music')) await initHistory();
 // 방송 기록은 **몇 시간에 걸친 세션**입니다. 재시작을 견뎌야 의미가 있습니다.
-if (inRole('stream')) await initStreams();
+if (inRole('stream')) {
+  await initStreams();
+  await initClips();
+}
 // 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
 if (inRole('ai')) await initAiUsage();
 

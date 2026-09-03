@@ -4,8 +4,12 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import ffmpegPath from 'ffmpeg-static';
 import { ROOT, config } from '../config.js';
 import { userError } from '../user-error.js';
+
+/** yt-dlp 에게 알려줄 ffmpeg 경로. `--download-sections` 가 ffmpeg 을 필요로 합니다. */
+const FFMPEG = ffmpegPath;
 
 /**
  * yt-dlp 실행 파일.
@@ -690,6 +694,65 @@ export async function liveInfo(url) {
     liveStatus: status === 'NA' ? '' : (status ?? ''),
     title: rest.join('\t').trim(),
   };
+}
+
+/**
+ * 영상의 **한 구간만** 잘라 파일로 내려받습니다. (방송 기록의 클립 추출)
+ *
+ * ★ **재인코딩을 하지 않습니다.** `--force-keyframes-at-cuts` 를 붙이지 마세요.
+ *   yt-dlp 도움말이 직접 말합니다: "This is slow due to needing a re-encode".
+ *   1코어 서버에서 몇 분씩 걸립니다. 대신 키프레임 경계에서 잘려 ±2~3초 오차가 나는데,
+ *   40초 클립에서는 감수할 만합니다.
+ *
+ * ★ **H.264(avc1)를 우선합니다.** 그냥 `height<=720` 만 주면 유튜브가 AV1 을 주는데
+ *   (실측 확인), 브라우저·기기 호환이 떨어집니다. 화질을 낮추는 것도 재인코딩이 아니라
+ *   **낮은 포맷을 골라 받는 것**이라 공짜입니다.
+ *
+ * ⚠️ `--ffmpeg-location` 을 반드시 넘깁니다. `--download-sections` 는 ffmpeg 이 필요한데,
+ *    서버에 ffmpeg 이 깔려 있지 않을 수 있습니다. 이 프로젝트는 ffmpeg-static 을 씁니다.
+ *
+ * ⚠️ 실측 (집 PC, 15초 구간): 약 14초 · 2.8MB · `Stream #0:0 -> #0:0 (copy)` 확인.
+ *    1코어 서버는 더 걸리므로 제한시간을 넉넉히 줍니다.
+ *
+ * ⚠️ 이 호출은 `noteSuccessDuration` / `noteTimeout` 을 건드려 **공용 제한시간 사다리를
+ *    늘립니다**(`timeoutLadder`). 지금은 망고의 모든 호출(`liveInfo`·`downloadSection`)이
+ *    제한시간을 직접 넘기므로 문제가 없습니다. 망고에서 yt-dlp 를 새로 부를 때는
+ *    **반드시 `timeouts` 를 함께 넘기세요.**
+ *
+ * @param {string} url 영상 주소
+ * @param {{startSec:number, endSec:number, outPath:string, maxHeight?:number}} opts
+ *   `outPath` 는 확장자 없는 경로입니다. yt-dlp 가 `.mp4` 를 붙입니다.
+ * @returns {Promise<string>} yt-dlp 가 남긴 출력 (진단용)
+ */
+export function downloadSection(url, { startSec, endSec, outPath, maxHeight = 720 }) {
+  const h = Math.max(240, Math.round(maxHeight));
+  const format =
+    `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]/` +
+    `b[height<=${h}][vcodec^=avc1]/` +
+    `bv*[height<=${h}]+ba/b[height<=${h}]/b`;
+
+  return run(
+    [
+      '--no-warnings',
+      '--no-progress',
+      '--ignore-config',
+      '--no-playlist',
+      '--ffmpeg-location',
+      FFMPEG,
+      '--download-sections',
+      `*${Math.max(0, Math.floor(startSec))}-${Math.floor(endSec)}`,
+      '-f',
+      format,
+      '--merge-output-format',
+      'mp4',
+      '--force-overwrites',
+      '-o',
+      `${outPath}.%(ext)s`,
+      ...extraArgs(),
+      url,
+    ],
+    { timeouts: [180_000, 300_000] }
+  );
 }
 
 /** 캐시가 실제로 쌓였는지. 안 쌓이면 곡마다 플레이어 JS 를 다시 받습니다. */

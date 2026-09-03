@@ -11,6 +11,7 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  StringSelectMenuBuilder,
   ModalBuilder,
   LabelBuilder,
   TextInputBuilder,
@@ -19,14 +20,17 @@ import {
 } from 'discord.js';
 import { rememberPanel, forgetPanel, rememberedId, STREAM } from '../panel-registry.js';
 import { get as getSetting } from '../settings.js';
+import { config } from '../config.js';
 import {
   activeSession,
   recentSessions,
   timelineFor,
+  clipsOf,
   hhmmss,
   humanDuration,
   nowSec,
 } from './store.js';
+import { clipPageUrl } from './clips.js';
 
 /** 임베드 설명 칸의 상한(4096)에 여유를 두고 자릅니다. */
 const DESC_LIMIT = 3800;
@@ -34,6 +38,11 @@ const DESC_LIMIT = 3800;
 const MESSAGE_LIMIT = 1900;
 /** 설명 채우기 모달 한 장에 담을 마킹 수. 디스코드 모달은 칸 5개가 상한입니다. */
 export const DESC_PER_PAGE = 5;
+
+/** 드롭다운 선택지 상한. 디스코드 제한입니다 — 넘으면 페이지를 나눠야 합니다. */
+export const SELECT_LIMIT = 25;
+
+const cut = (s, n) => (s.length > n ? s.slice(0, n - 1) + '…' : s);
 
 /** 이 채널이 지정된 방송 채널인가. */
 export function isStreamHome(guildId, channelId) {
@@ -225,6 +234,30 @@ export function scheduleStreamPanelRefresh(client, guildId, channelId) {
   pendingRefresh.set(guildId, timer);
 }
 
+/**
+ * 지난 방송의 요약판을 다시 올리는 드롭다운.
+ *
+ * 왜 필요한가: 종료 뒤에는 **요약판이 클립 뽑기로 가는 유일한 입구**입니다.
+ * 채팅이 쌓여 위로 밀려 올라가면 찾아 올라가기 어렵습니다. 여기서 다시 부를 수 있게 합니다.
+ */
+export function buildSessionPicker(guildId) {
+  const past = recentSessions(guildId, SELECT_LIMIT).filter((s) => s.closedAt && s.streams.length > 0);
+  if (past.length === 0) return null;
+
+  return new ActionRowBuilder().addComponents(
+    new StringSelectMenuBuilder()
+      .setCustomId('tm:resum')
+      .setPlaceholder('📝 지난 방송의 요약판 다시 올리기')
+      .addOptions(
+        past.map((s) => ({
+          label: cut(`${s.game || '이름 없음'} · 마킹 ${s.marks.length}개`, 90),
+          description: `${new Date(s.openedAt * 1000).toLocaleDateString('ko-KR')} · ${s.streams.length}명`,
+          value: s.id,
+        }))
+      )
+  );
+}
+
 // ── 입력 창 ───────────────────────────────────────────────────
 //
 // ⚠️ 화면을 만드는 함수는 **여기에 둡니다.** 그래야 verify 가 `toJSON()` 을 불러
@@ -279,6 +312,58 @@ export function buildDescModal(session, stream, from = 0) {
   return { modal, marks: page.map((x) => x.mark), total: rows.length, next: start + DESC_PER_PAGE };
 }
 
+/**
+ * 클립 구간을 받는 창. 마킹을 중심으로 기본값을 채워둡니다.
+ *
+ * ⚠️ 시간 형식을 **`01:20:45` 로 유도합니다.** `parseElapsed` 는 숫자만 적으면 **분**으로
+ *    보기 때문에(`90` → 90분), 기본값과 안내를 시:분:초로 채워 그 길로 안 가게 합니다.
+ */
+export function buildClipModal(session, stream, mark) {
+  const sec = timelineFor(session, stream).find((x) => x.mark.id === mark.id)?.sec ?? 0;
+  const from = Math.max(0, sec - config.stream.clipBeforeSec);
+  const to = sec + config.stream.clipAfterSec;
+
+  const modal = new ModalBuilder()
+    .setCustomId(`tm:clipm:${session.id}:${stream.userId}:${mark.id}`)
+    .setTitle(`클립 만들기 (${hhmmss(sec)})`)
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('시작 시간')
+        .setDescription('시:분:초 로 적어주세요. 예: 01:20:30')
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('from')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('01:20:30')
+            .setValue(hhmmss(from))
+        ),
+      new LabelBuilder()
+        .setLabel('끝 시간')
+        .setDescription(`한 개는 ${config.stream.clipMaxSec}초까지입니다`)
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('to')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('01:21:10')
+            .setValue(hhmmss(to))
+        )
+    );
+
+  const titleInput = new TextInputBuilder()
+    .setCustomId('title')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(false)
+    .setMaxLength(60)
+    .setPlaceholder('차에 치임');
+  // ⚠️ 빈 문자열로 setValue 하면 창이 조용히 안 뜹니다. (규칙 7-1)
+  if (mark.text) titleInput.setValue(mark.text);
+  modal.addLabelComponents(new LabelBuilder().setLabel('클립 제목').setTextInputComponent(titleInput));
+
+  return modal;
+}
+
 // ── 요약판 ────────────────────────────────────────────────────
 
 /**
@@ -289,7 +374,7 @@ export function buildDescModal(session, stream, from = 0) {
  *
  * @returns {Array<{content: string, components?: Array}>} 순서대로 보낼 메시지들
  */
-export function buildSummary(session, stream) {
+export function buildSummary(session, stream, clipPage = 0) {
   const rows = timelineFor(session, stream);
   const header =
     `📝 <@${stream.userId}> 의 타임라인` +
@@ -323,17 +408,65 @@ export function buildSummary(session, stream) {
     const content = (i === 0 ? `${header}\n` : '') + '```\n' + chunk.join('\n') + '\n```';
     // 버튼은 **마지막 조각에만** 붙입니다. 조각마다 붙으면 어느 걸 눌러야 할지 헷갈립니다.
     if (i < chunks.length - 1) return { content };
-    return {
-      content,
-      components: [
-        new ActionRowBuilder().addComponents(
-          new ButtonBuilder()
-            .setCustomId(`tm:desc:${session.id}:${stream.userId}:0`)
-            .setLabel('설명 채우기')
-            .setEmoji('✏️')
-            .setStyle(ButtonStyle.Primary)
-        ),
-      ],
-    };
+    return { content, components: summaryControls(session, stream, rows, clipPage) };
   });
+}
+
+/**
+ * 요약판 아래의 조작부. 클립 뽑기 드롭다운 + 버튼들.
+ *
+ * 마킹이 25개를 넘으면 드롭다운에 다 못 담아서(디스코드 제한) 페이지로 나눕니다.
+ */
+function summaryControls(session, stream, rows, clipPage) {
+  const pages = Math.max(1, Math.ceil(rows.length / SELECT_LIMIT));
+  const page = Math.min(Math.max(0, clipPage), pages - 1);
+  const slice = rows.slice(page * SELECT_LIMIT, page * SELECT_LIMIT + SELECT_LIMIT);
+  const madeIds = new Set(clipsOf(session, stream.userId).map((c) => c.markId));
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`tm:clip:${session.id}:${stream.userId}:${page}`)
+    .setPlaceholder(
+      pages > 1 ? `🎥 클립 만들 순간 고르기 (${page + 1}/${pages}쪽)` : '🎥 클립 만들 순간 고르기'
+    )
+    .addOptions(
+      slice.map(({ mark, sec }) => ({
+        label: `${hhmmss(sec)}${madeIds.has(mark.id) ? ' ✅' : ''}`,
+        description: mark.text ? cut(mark.text, 90) : '설명 없음',
+        value: mark.id,
+      }))
+    );
+
+  const buttons = [
+    new ButtonBuilder()
+      .setCustomId(`tm:desc:${session.id}:${stream.userId}:0`)
+      .setLabel('설명 채우기')
+      .setEmoji('✏️')
+      .setStyle(ButtonStyle.Primary),
+  ];
+  if (pages > 1) {
+    buttons.push(
+      new ButtonBuilder()
+        .setCustomId(`tm:cpage:${session.id}:${stream.userId}:${page - 1}`)
+        .setLabel('이전 쪽')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page === 0),
+      new ButtonBuilder()
+        .setCustomId(`tm:cpage:${session.id}:${stream.userId}:${page + 1}`)
+        .setLabel('다음 쪽')
+        .setStyle(ButtonStyle.Secondary)
+        .setDisabled(page >= pages - 1)
+    );
+  }
+  // 클립을 하나라도 만들었으면 보러 가는 링크를 붙입니다. (링크 버튼은 customId 가 없습니다)
+  if (clipsOf(session).length > 0) {
+    buttons.push(
+      new ButtonBuilder()
+        .setLabel('클립 보기')
+        .setEmoji('🎥')
+        .setStyle(ButtonStyle.Link)
+        .setURL(clipPageUrl(session.id))
+    );
+  }
+
+  return [new ActionRowBuilder().addComponents(select), new ActionRowBuilder().addComponents(...buttons)];
 }

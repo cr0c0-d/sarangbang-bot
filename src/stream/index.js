@@ -32,6 +32,8 @@ import {
   addMark,
   removeLastMark,
   setMarkText,
+  addClip,
+  clipsOf,
   timelineFor,
   hhmmss,
   humanDuration,
@@ -42,11 +44,15 @@ import {
   buildSummary,
   buildOffsetModal,
   buildDescModal,
+  buildClipModal,
+  buildSessionPicker,
   ensureStreamPanel,
   repostStreamPanel,
   scheduleStreamPanelRefresh,
   DESC_PER_PAGE,
 } from './panel.js';
+import { makeClip, clipPageUrl, fmtBytes } from './clips.js';
+import { config } from '../config.js';
 
 /** 오프셋을 이 범위 밖으로 두면 실수입니다. 6시간이면 어떤 방송이든 덮습니다. */
 const OFFSET_LIMIT_SEC = 6 * 3600;
@@ -163,7 +169,14 @@ export const commands = [
           const channelId = getSetting(guildId, 'streamChannelId');
           if (channelId) await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
         }
-        return interaction.reply({ embeds: [buildStatus(guildId)], flags: MessageFlags.Ephemeral });
+        // 요약판은 종료 뒤 **클립 뽑기로 가는 유일한 입구**입니다. 밀려 올라갔을 때
+        // 여기서 다시 부를 수 있어야 합니다.
+        const picker = buildSessionPicker(guildId);
+        return interaction.reply({
+          embeds: [buildStatus(guildId)],
+          ...(picker ? { components: [picker] } : {}),
+          flags: MessageFlags.Ephemeral,
+        });
       }
 
       const channelId = requireHomeChannel(guildId);
@@ -236,9 +249,35 @@ export async function handleStreamComponent(interaction, client) {
   if (id === 'tm:panel:end') return endSession(interaction, client);
   if (id.startsWith('tm:panel:reopen:')) return reopen(interaction, client, id.split(':')[3]);
   if (id.startsWith('tm:desc:')) return openDescModal(interaction, id);
+  if (id.startsWith('tm:clip:')) return openClipModal(interaction, id);
+  if (id.startsWith('tm:cpage:')) return turnClipPage(interaction, id);
+  if (id === 'tm:resum') return resendPastSummary(interaction, client);
 
   // 모르는 버튼입니다. 조용히 넘기면 디스코드가 "응답하지 않았어요" 를 띄웁니다.
-  return interaction.reply(eph('⚠️ 이 버튼은 더 쓰지 않습니다. 제어판을 새로 띄워주세요.')).catch(() => {});
+  // (기능을 늘릴 때 여기 갈래를 먼저 추가하세요 — 안 하면 새 버튼이 이 안내에 삼켜집니다)
+  return interaction.reply(eph('⚠️ 이 버튼은 더 쓰지 않습니다. `/방송` 으로 요약판을 다시 올려주세요.')).catch(() => {});
+}
+
+/** 지난 방송을 골라 요약판을 다시 올립니다. */
+async function resendPastSummary(interaction, client) {
+  const session = sessionById(interaction.values?.[0]);
+  if (!session) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const channel = await client.channels.fetch(session.channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) {
+    return interaction.editReply('방송 채널을 찾지 못했습니다. `/채널설정` 에서 확인해주세요.');
+  }
+
+  for (const stream of session.streams) {
+    for (const payload of buildSummary(session, stream)) {
+      await channel
+        .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
+        .catch(() => {});
+    }
+  }
+  await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
+  await interaction.editReply(`📝 요약판을 <#${session.channelId}> 에 다시 올렸습니다.`);
 }
 
 async function markNow(interaction, client) {
@@ -356,13 +395,116 @@ function openDescModal(interaction, customId) {
   return interaction.showModal(built.modal);
 }
 
+/** 요약판의 드롭다운에서 마킹을 고르면 구간 창을 띄웁니다. */
+function openClipModal(interaction, customId) {
+  const [, , sessionId, userId] = customId.split(':');
+  const session = sessionById(sessionId);
+  if (!session) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+
+  const stream = streamOf(session, userId);
+  if (!stream) return interaction.reply(eph('그 사람의 방송 기록을 찾지 못했습니다.'));
+
+  const mark = session.marks.find((m) => m.id === interaction.values?.[0]);
+  if (!mark) return interaction.reply(eph('그 마킹을 찾지 못했습니다. 요약판을 다시 올려주세요.'));
+
+  return interaction.showModal(buildClipModal(session, stream, mark));
+}
+
+/** 마킹이 25개를 넘으면 드롭다운을 페이지로 나눕니다. */
+async function turnClipPage(interaction, customId) {
+  const [, , sessionId, userId, pageRaw] = customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session ? streamOf(session, userId) : null;
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+
+  // 요약판은 여러 장일 수 있고, 조작부는 **마지막 장에만** 있습니다.
+  // 지금 누른 그 메시지만 고쳐야 하므로 마지막 장을 씁니다.
+  const pages = buildSummary(session, stream, Number(pageRaw) || 0);
+  const last = pages[pages.length - 1];
+  return interaction.update({ content: last.content, components: last.components ?? [] });
+}
+
 // ── 입력 창(모달) 제출 ────────────────────────────────────────
 
 export async function handleStreamModal(interaction, client) {
   const id = interaction.customId;
   if (id === 'tm:offsetm') return submitOffset(interaction, client);
   if (id.startsWith('tm:descm:')) return submitDesc(interaction, client);
+  if (id.startsWith('tm:clipm:')) return submitClip(interaction, client);
   return interaction.reply(eph('⚠️ 알 수 없는 입력 창입니다.')).catch(() => {});
+}
+
+/** 구간을 받아 실제로 잘라냅니다. 오래 걸리므로 진행 상황을 먼저 보여줍니다. */
+async function submitClip(interaction, client) {
+  const [, , sessionId, userId, markId] = interaction.customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session ? streamOf(session, userId) : null;
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+
+  // ⚠️ 시간 칸에도 `parseElapsed` 를 씁니다. 숫자만 적으면 **분**으로 보므로
+  //    (`90` → 90분) 창의 기본값과 안내를 시:분:초로 채워뒀습니다.
+  const rawFrom = interaction.fields.getTextInputValue('from');
+  const rawTo = interaction.fields.getTextInputValue('to');
+  const from = parseElapsed(rawFrom);
+  const to = parseElapsed(rawTo);
+  if (from === null || to === null) {
+    throw userError(
+      `시간을 알아볼 수 없습니다 (시작 "${rawFrom}" · 끝 "${rawTo}").\n` +
+        '`01:20:30` 처럼 **시:분:초** 로 적어주세요.'
+    );
+  }
+  if (to <= from) throw userError('끝 시간이 시작 시간보다 뒤여야 합니다.');
+
+  const length = to - from;
+  if (length > config.stream.clipMaxSec) {
+    throw userError(
+      `${hhmmss(from)} ~ ${hhmmss(to)} 는 **${length}초**입니다. 한 개는 ${config.stream.clipMaxSec}초까지입니다.\n` +
+        '길면 용량이 금방 차고, 그러면 사진 자동 정리가 돌아 사진이 지워질 수 있습니다.\n' +
+        '구간을 나눠서 여러 개로 만들어주세요.'
+    );
+  }
+
+  const title = (interaction.fields.getTextInputValue('title') ?? '').trim();
+
+  // 잘라내는 데 서버에서 30초~2분이 걸립니다. 먼저 답해두고 끝나면 고쳐 씁니다.
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  await interaction
+    .editReply(`🎬 ${hhmmss(from)} ~ ${hhmmss(to)} (${length}초) 를 잘라내고 있습니다… 30초쯤 걸립니다.`)
+    .catch(() => {});
+
+  const made = await makeClip({
+    folder: session.id,
+    url: stream.url,
+    startSec: from,
+    endSec: to,
+    title: title || hhmmss(from),
+  });
+
+  addClip(session, {
+    markId,
+    userId,
+    file: made.file,
+    startSec: from,
+    endSec: to,
+    title: title || hhmmss(from),
+  });
+
+  const lines = [
+    `🎥 **클립을 만들었습니다** — ${hhmmss(from)} ~ ${hhmmss(to)} (${length}초)`,
+    `${made.file} · ${fmtBytes(made.bytes)} · ${made.seconds.toFixed(0)}초 걸림`,
+    '',
+    `보기: ${clipPageUrl(session.id)}`,
+    `이 방송의 클립 ${clipsOf(session).length}개`,
+  ];
+  if (made.pruned > 0) {
+    lines.push(
+      `\n🧹 상한(세션당 ${config.stream.clipPerSession}개 · 전체 ${config.stream.clipTotal}개)을 넘어 오래된 클립 ${made.pruned}개를 지웠습니다.`
+    );
+  }
+  await interaction.editReply(lines.join('\n'));
+
+  // 요약판의 ✅ 표시와 [클립 보기] 링크가 따라오게 다시 올립니다.
+  await resendSummary(client, session, stream).catch(() => {});
 }
 
 /**

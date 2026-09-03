@@ -169,6 +169,24 @@ export function removeLastMark(session) {
   return gone;
 }
 
+// ── 클립 ──────────────────────────────────────────────────────
+
+/** 만든 클립을 기록해둡니다. 파일 자체는 `clips.js` 가 다룹니다. */
+export function addClip(session, clip) {
+  session.clips ??= [];
+  // 같은 마킹·같은 사람으로 다시 만들면 갈아끼웁니다. 목록이 중복으로 불지 않게.
+  const i = session.clips.findIndex((c) => c.markId === clip.markId && c.userId === clip.userId);
+  if (i >= 0) session.clips[i] = { ...clip, madeAt: nowSec() };
+  else session.clips.push({ ...clip, madeAt: nowSec() });
+  save();
+  return session.clips;
+}
+
+export function clipsOf(session, userId = null) {
+  const all = session.clips ?? [];
+  return userId ? all.filter((c) => c.userId === userId) : all;
+}
+
 export function setMarkText(session, markId, text) {
   const mark = session.marks.find((m) => m.id === markId);
   if (!mark) return false;

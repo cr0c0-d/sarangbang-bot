@@ -9,6 +9,8 @@
 import express from 'express';
 import crypto from 'node:crypto';
 import { config } from '../config.js';
+import { inRole } from '../settings.js';
+import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
 import {
   listFolders,
   listFiles,
@@ -131,6 +133,55 @@ export function createWebServer() {
       next(e);
     }
   });
+
+  // ── 방송 클립 ──
+  //
+  // 갤러리와 **같은 인증 경계**입니다 (3.6-3): 보기·내려받기는 주소를 알면 누구나,
+  // 삭제만 WEB_TOKEN. 라이브 자체가 일부공개(주소만 알면 누구나)라서 클립을 더 잠글 이유가 없습니다.
+  //
+  // ⚠️ `res.sendFile` 을 쓰면 Range 요청이 자동으로 처리됩니다.
+  //    그래야 브라우저에서 재생 중 앞뒤로 건너뛸 수 있습니다.
+  if (inRole('stream')) {
+    app.get('/c/:folder', async (req, res, next) => {
+      try {
+        const folder = req.params.folder;
+        const files = await listClips(folder);
+        res.type('html').send(layout(`클립 ${folder}`, clipPage(folder, files)));
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    app.get('/clip/:folder/:file', (req, res, next) => {
+      try {
+        res.sendFile(clipFilePath(req.params.folder, req.params.file), {
+          headers: { 'Cache-Control': 'private, max-age=3600' },
+        });
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    app.get('/cdl/:folder/:file', (req, res, next) => {
+      try {
+        res.download(clipFilePath(req.params.folder, req.params.file), req.params.file);
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    app.post('/api/clip-delete', requireToken, async (req, res, next) => {
+      try {
+        const { folder, files } = req.body ?? {};
+        if (!Array.isArray(files) || files.length === 0) return res.status(400).json({ error: '파일이 없습니다.' });
+        let deleted = 0;
+        for (const f of files) if (await deleteClip(folder, f)) deleted++;
+        res.json({ deleted });
+      } catch (e) {
+        next(e);
+      }
+    });
+  }
 
   // ── 관리 API ──
   app.post('/api/move', requireToken, async (req, res, next) => {
@@ -318,6 +369,75 @@ function foldersPage(folders) {
 
   return `<header><h1>📁 폴더 목록</h1><span class="muted">${folders.length}개 폴더 · 총 ${total}장</span></header>
 <main>${cards ? `<div class="folders">${cards}</div>` : '<p class="empty">아직 저장된 이미지가 없습니다.<br>디스코드에서 지정한 채널에 이미지를 올려보세요.</p>'}</main>`;
+}
+
+/**
+ * 방송 클립 목록 페이지.
+ *
+ * 사진 갤러리와 다르게 **여러 개를 한꺼번에 받을 일이 거의 없습니다** (한 개가 수 MB 라서).
+ * 그래서 체크박스·일괄 다운로드를 만들지 않고, 카드마다 재생기와 받기 버튼만 둡니다.
+ */
+function clipPage(folder, files) {
+  const cards = files
+    .map((f) => {
+      const src = `/clip/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
+      const dl = `/cdl/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
+      const when = new Date(f.mtime).toLocaleString('ko-KR');
+      return `<div class="clip" data-name="${esc(f.name)}">
+        <video src="${esc(src)}" controls preload="metadata" playsinline></video>
+        <div class="clip-info">
+          <b>${esc(f.name.replace(/\.mp4$/i, ''))}</b>
+          <span class="muted">${fmtBytes(f.bytes)} · ${esc(when)}</span>
+        </div>
+        <div class="clip-actions">
+          <a class="btn primary" href="${esc(dl)}">⬇️ 받기</a>
+          <button class="btn danger" data-del>🗑️</button>
+        </div>
+      </div>`;
+    })
+    .join('');
+
+  return `<header>
+  <h1>🎥 방송 클립</h1>
+  <span class="muted">${files.length}개 · ${fmtBytes(files.reduce((a, f) => a + f.bytes, 0))}</span>
+</header>
+<main>
+  ${
+    files.length
+      ? `<div class="clips">${cards}</div>`
+      : '<p class="empty">이 방송에는 아직 만든 클립이 없습니다.<br>디스코드의 요약판에서 <b>🎥 클립 만들 순간 고르기</b> 로 만드세요.</p>'
+  }
+</main>
+<style>
+  .clips { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
+  .clip { border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
+  .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16/9; }
+  .clip-info { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px; }
+  .clip-info b { font-size: 14px; word-break: break-all; }
+  .clip-actions { padding: 8px 12px 12px; display: flex; gap: 8px; }
+  .clip-actions .btn { text-decoration: none; }
+  .empty { color: var(--muted); text-align: center; padding: 60px 20px; line-height: 1.9; }
+</style>
+<script>
+(function () {
+  var folder = ${JSON.stringify(folder)};
+  document.querySelectorAll('.clip').forEach(function (card) {
+    card.querySelector('[data-del]').addEventListener('click', function () {
+      var name = card.dataset.name;
+      if (!confirm(name + ' 을 지웁니다. 되돌릴 수 없습니다.')) return;
+      fetch('/api/clip-delete', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ folder: folder, files: [name] }),
+      }).then(function (r) {
+        if (r.status === 401) { alert('관리 암호가 필요합니다. (봇 설정의 WEB_TOKEN)'); return; }
+        if (!r.ok) { alert('지우지 못했습니다.'); return; }
+        card.remove();
+      }).catch(function () { alert('연결에 실패했습니다.'); });
+    });
+  });
+})();
+</script>`;
 }
 
 function galleryPage(folder, files) {
