@@ -962,6 +962,75 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('index.js: 타이머 복구 호출', src2.includes('initTimers('));
 }
 
+// 6z) /채널설정 — 비공개 채널도 지정할 수 있어야 한다
+//
+// ★ 비공개 채널이 **채널 고르기 칸에 안 뜨는** 경우가 있다 (소유자 보고).
+//   그때 지정할 방법이 아예 없으면 안 된다 → 채널을 비우면 **지금 이 채널**로 지정한다.
+//   그리고 비공개 채널은 봇에게 권한이 없기 쉬운데, 그러면 지정은 되고
+//   **조용히 동작하지 않는다.** 그 자리에서 무엇이 없는지 알려줘야 한다.
+{
+  const cc = await import('./src/channel-commands.js');
+  const dj2 = await import('discord.js');
+  const src = fs.readFileSync('./src/channel-commands.js', 'utf8');
+
+  ok('채널을 비우면 지금 이 채널로 지정', src.includes('const target = channel ?? interaction.channel'));
+  ok('그렇게 지정했음을 알려줌', src.includes('**지금 이 채널**로 지정했습니다'));
+  const opt = cc.commands[0].data.toJSON().options.find((o) => o.name === '채널');
+  ok('채널 칸 설명이 비웠을 때를 알려줌', opt.description.includes('비우면'), opt.description);
+  ok('채널 칸은 여전히 선택 입력', opt.required !== true);
+
+  // 없는 권한만 골라서 알려주는가. 가짜 채널로 검사한다.
+  const fakeInteraction = (username = '망고') => ({
+    guild: { members: { me: { id: 'bot' } } },
+    client: { user: { username } },
+  });
+  const chan = (has) => ({
+    id: 'c1',
+    name: '방송기록',
+    isTextBased: () => true,
+    isVoiceBased: () => false,
+    permissionsFor: () => ({ has: (p) => has.includes(p) }),
+  });
+  const P = dj2.PermissionFlagsBits;
+  const all = [P.ViewChannel, P.SendMessages, P.ReadMessageHistory, P.EmbedLinks];
+
+  ok('권한이 다 있으면 잔소리하지 않음',
+    cc.permissionWarnings(fakeInteraction(), 'streamChannelId', chan(all)).length === 0);
+
+  const noView = cc.permissionWarnings(fakeInteraction(), 'streamChannelId', chan([]));
+  ok('권한이 없으면 알려줌', noView.length === 1);
+  ok('없는 권한을 한국어로 이름 지어 알려줌',
+    noView[0].includes('채널 보기') && noView[0].includes('메시지 보내기'), noView[0].split('\n')[0]);
+  ok('지정은 됐지만 안 된다고 분명히 말함', noView[0].includes('그대로는 동작하지 않습니다'));
+  ok('어디를 눌러야 하는지까지 적음', noView[0].includes('권한') && noView[0].includes('망고'));
+  ok('비공개 채널은 봇도 초대해야 한다고 알려줌', noView[0].includes('봇도 따로 초대'));
+
+  // 있는 권한은 목록에 넣지 않는다. 다 나열하면 무엇이 문제인지 안 보인다.
+  const onlyEmbed = cc.permissionWarnings(fakeInteraction(), 'streamChannelId',
+    chan([P.ViewChannel, P.SendMessages, P.ReadMessageHistory]));
+  ok('있는 권한은 안 적음 (없는 것만)',
+    onlyEmbed[0].includes('링크 첨부') && !onlyEmbed[0].includes('채널 보기'), onlyEmbed[0].split('\n')[0]);
+
+  // 음성채널은 다른 권한을 본다.
+  const voiceChan = {
+    id: 'v1', name: '음성', isTextBased: () => true, isVoiceBased: () => true,
+    permissionsFor: () => ({ has: (p) => p === P.ViewChannel }),
+  };
+  const vw = cc.permissionWarnings(fakeInteraction(), 'ttsVoiceChannelId', voiceChan);
+  ok('음성채널은 연결·말하기를 봄', vw[0].includes('연결') && vw[0].includes('말하기'), vw[0].split('\n')[0]);
+  ok('음성채널에 메시지 권한을 요구하지 않음', !vw[0].includes('메시지 보내기'));
+
+  // 카테고리는 검사할 것이 없다.
+  ok('카테고리는 권한 검사를 건너뜀',
+    cc.permissionWarnings(fakeInteraction(), 'planCategoryId', chan([])).length === 0);
+  // 봇 정보를 못 읽으면 잔소리하지 않는다 (엉뚱한 경고보다 침묵이 낫다).
+  ok('봇 정보를 못 읽으면 조용히 넘김',
+    cc.permissionWarnings({ guild: null, client: { user: {} } }, 'streamChannelId', chan([])).length === 0);
+
+  // 방송 채널을 정하면 그 자리에 제어판이 바로 떠야 한다 ("여기가 그 채널" 임을 알게).
+  ok('방송 채널을 정하면 제어판을 바로 띄움', src.includes("key === 'streamChannelId'"));
+}
+
 // 6o) 기능 on/off
 {
   const st = await import('./src/settings.js');

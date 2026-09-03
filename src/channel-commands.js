@@ -20,6 +20,7 @@ import {
 } from 'discord.js';
 import { KEYS, activeKeys, getWithSource, set, clear, inRole } from './settings.js';
 import { ensureHomePanel } from './music/panel.js';
+import { ensureStreamPanel } from './stream/panel.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 
 // 이 봇이 맡은 항목만 물어봅니다.
@@ -51,6 +52,47 @@ function checkKind(key, channel) {
     return `**${spec.label}** 에는 음성채널을 골라주세요. (${channel.name} 은 채팅 전용 채널입니다)`;
   }
   return null;
+}
+
+/**
+ * 봇이 그 채널을 실제로 쓸 수 있는지 확인해서 **없는 권한만** 알려줍니다.
+ *
+ * ★ 왜 필요한가: 비공개 채널을 지정하면 봇에게 권한이 없는 경우가 많습니다.
+ *   그러면 지정은 되는데 제어판이 안 뜨고 읽어주기도 안 됩니다. 그런데
+ *   **아무 오류도 안 납니다** — 사람은 "왜 안 되지" 만 하게 됩니다.
+ *   그 자리에서 무엇이 없는지 알려주는 것이 이 함수의 목적입니다.
+ *
+ * ⚠️ 권한 이름을 한국어로 적습니다. 디스코드 한국어판의 표기와 맞춰야
+ *    소유자가 어디를 눌러야 할지 찾을 수 있습니다.
+ */
+export function permissionWarnings(interaction, key, channel) {
+  const spec = KEYS[key];
+  const me = interaction.guild?.members?.me;
+  if (!me || spec.kind === 'category') return [];
+
+  const perms = channel.permissionsFor?.(me);
+  if (!perms) return [];
+
+  const missing = [];
+  if (!perms.has(PermissionFlagsBits.ViewChannel)) missing.push('채널 보기');
+
+  if (spec.kind === 'text') {
+    if (!perms.has(PermissionFlagsBits.SendMessages)) missing.push('메시지 보내기');
+    if (!perms.has(PermissionFlagsBits.ReadMessageHistory)) missing.push('메시지 기록 보기');
+    if (!perms.has(PermissionFlagsBits.EmbedLinks)) missing.push('링크 첨부');
+  }
+  if (spec.kind === 'voice') {
+    if (!perms.has(PermissionFlagsBits.Connect)) missing.push('연결');
+    if (!perms.has(PermissionFlagsBits.Speak)) missing.push('말하기');
+  }
+
+  if (missing.length === 0) return [];
+  return [
+    `⚠️ **봇에게 이 권한이 없습니다: ${missing.join(', ')}**\n` +
+      `  지정은 됐지만 **그대로는 동작하지 않습니다.** 채널 이름 옆 ⚙️ → 권한 → ` +
+      `\`${interaction.client.user.username}\` 을 더하고 위 권한을 켜주세요.\n` +
+      '  (비공개 채널은 봇도 따로 초대해줘야 합니다)',
+  ];
 }
 
 /** 현재 설정 + 해제 버튼. (예전 /채널확인 + /채널해제 를 흡수) */
@@ -116,7 +158,8 @@ export const commands = [
       .addChannelOption((o) =>
         o
           .setName('채널')
-          .setDescription('지정할 채널')
+          // 비우면 지금 이 채널로 지정합니다. 비공개 채널이 목록에 안 뜰 때 쓰는 길입니다.
+          .setDescription('지정할 채널 (비우면 지금 이 채널)')
           .setRequired(false)
           .addChannelTypes(...TEXT_TYPES, ...VOICE_TYPES, ...CATEGORY_TYPES)
       ),
@@ -128,39 +171,66 @@ export const commands = [
       if (!key && !channel) {
         return interaction.reply({ ...panel(interaction.guildId), flags: MessageFlags.Ephemeral });
       }
-      if (!key || !channel) {
+      if (!key) {
         return interaction.reply({
-          content: '지정하려면 **종류와 채널을 둘 다** 골라주세요.\n둘 다 비우면 현재 설정을 보여줍니다.',
+          content: '무엇을 지정할지(**종류**)를 골라주세요.\n둘 다 비우면 현재 설정을 보여줍니다.',
           flags: MessageFlags.Ephemeral,
         });
       }
 
+      // ★ **채널을 비우면 지금 이 채널로 지정합니다.**
+      //   비공개 채널이 채널 고르기 칸에 안 뜨는 경우가 있습니다. 그때 지정할 방법이
+      //   아예 없으면 안 됩니다. 그 채널에 들어가서 이 명령을 치면 됩니다.
+      const target = channel ?? interaction.channel;
+      if (!target) {
+        return interaction.reply({
+          content: '채널을 고르거나, **지정하려는 채널에 들어가서** 채널 칸을 비우고 실행해주세요.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      const usedHere = !channel;
+
       const spec = KEYS[key];
-      const problem = checkKind(key, channel);
+      const problem = checkKind(key, target);
       if (problem) {
         return interaction.reply({ content: `⚠️ ${problem}`, flags: MessageFlags.Ephemeral });
       }
 
-      set(interaction.guildId, key, channel.id);
+      set(interaction.guildId, key, target.id);
 
       const notes = [];
+      if (usedHere) notes.push('채널을 안 고르셨으므로 **지금 이 채널**로 지정했습니다.');
       if (spec.multi) notes.push('이미 지정된 채널이 있으면 함께 유지됩니다.');
       // 음성채널 안의 채팅을 읽어주기 채팅방으로 고르면, 음성채널을 따로 지정할 필요가 없습니다.
-      if (key === 'ttsTextChannelId' && channel.isVoiceBased?.()) {
+      if (key === 'ttsTextChannelId' && target.isVoiceBased?.()) {
         notes.push('음성채널 안의 채팅이므로, **그 음성채널에서 그대로 읽어줍니다.**');
       }
+
+      // ★ **봇이 그 채널을 실제로 쓸 수 있는지 지금 확인합니다.**
+      //   비공개 채널을 지정하면 봇에게 권한이 없는 경우가 많습니다. 그러면 지정은
+      //   되지만 제어판이 안 뜨고 읽어주기도 안 되는데, **아무 오류도 안 납니다.**
+      //   조용히 안 되는 것이 제일 나쁩니다 — 그 자리에서 무엇이 없는지 알려줍니다.
+      notes.push(...permissionWarnings(interaction, key, target));
 
       // 음악 채팅방으로 정했으면 **그 자리에 제어판을 바로 띄웁니다.**
       // 정하자마자 보여야 "항상 보인다" 가 됩니다. (music/panel.js 의 isMusicHome)
       if (key === 'musicTextChannelId' && inRole('music')) {
         notes.push('이 채팅방에는 **음악 제어판이 항상 떠 있습니다.** (재생 중이 아니어도)');
-        ensureHomePanel(interaction.client, interaction.guildId, channel.id, peekGuildAudio(interaction.guildId)).catch(
+        ensureHomePanel(interaction.client, interaction.guildId, target.id, peekGuildAudio(interaction.guildId)).catch(
           (err) => console.error('[panel] 제어판 띄우기 실패:', err.message)
         );
       }
 
+      // 방송 채널도 같습니다. 정하자마자 제어판이 보여야 "여기가 그 채널" 임을 압니다.
+      if (key === 'streamChannelId' && inRole('stream')) {
+        notes.push('이 채팅방에는 **방송 제어판이 항상 떠 있습니다.**');
+        ensureStreamPanel(interaction.client, interaction.guildId, target.id).catch((err) =>
+          console.error('[panel] 방송 제어판 띄우기 실패:', err.message)
+        );
+      }
+
       await interaction.reply(
-        `✅ **${spec.label}** 을(를) <#${channel.id}> 로 지정했습니다.` +
+        `✅ **${spec.label}** 을(를) <#${target.id}> 로 지정했습니다.` +
           (notes.length ? '\n' + notes.map((n) => `· ${n}`).join('\n') : '')
       );
     },
