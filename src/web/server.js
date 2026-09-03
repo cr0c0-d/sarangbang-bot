@@ -433,19 +433,40 @@ function clipPage(folder, files) {
 <script>
 (function () {
   var folder = ${JSON.stringify(folder)};
+  // 암호는 이 페이지의 메모리에만 둡니다. 공개 보기에는 인증을 요구하지 않습니다.
+  var token = null;
+  async function removeClip(name, retry) {
+    var headers = { 'Content-Type': 'application/json' };
+    if (token) {
+      var bytes = new TextEncoder().encode('admin:' + token);
+      headers.Authorization = 'Basic ' + btoa(Array.from(bytes, function (b) { return String.fromCharCode(b); }).join(''));
+    }
+    var r = await fetch('/api/clip-delete', {
+      method: 'POST', headers: headers,
+      body: JSON.stringify({ folder: folder, files: [name] }),
+    });
+    if (r.status === 401) {
+      token = null;
+      if (retry) { alert('암호가 틀렸습니다. 다시 삭제를 눌러 입력해주세요.'); return false; }
+      token = window.prompt('관리 암호를 입력해주세요. (봇 .env의 WEB_TOKEN · 아이디는 필요 없습니다)');
+      if (!token) return false;
+      return removeClip(name, true);
+    }
+    if (!r.ok) { alert('지우지 못했습니다. 잠시 뒤 다시 시도해주세요.'); return false; }
+    var result = await r.json();
+    if (result.deleted !== 1) { alert('파일을 찾지 못했습니다. 페이지를 새로고침해주세요.'); return false; }
+    return true;
+  }
   document.querySelectorAll('.clip').forEach(function (card) {
-    card.querySelector('[data-del]').addEventListener('click', function () {
+    var button = card.querySelector('[data-del]');
+    button.addEventListener('click', async function () {
       var name = card.dataset.name;
       if (!confirm(name + ' 을 지웁니다. 되돌릴 수 없습니다.')) return;
-      fetch('/api/clip-delete', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ folder: folder, files: [name] }),
-      }).then(function (r) {
-        if (r.status === 401) { alert('관리 암호가 필요합니다. (봇 설정의 WEB_TOKEN)'); return; }
-        if (!r.ok) { alert('지우지 못했습니다.'); return; }
-        card.remove();
-      }).catch(function () { alert('연결에 실패했습니다.'); });
+      button.disabled = true;
+      try {
+        if (await removeClip(name, false)) card.remove();
+      } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
+      finally { button.disabled = false; }
     });
   });
 })();

@@ -1825,6 +1825,45 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('클립 페이지에 받기 링크', cpHtml.includes(`/cdl/${fakeFolder}/`));
   ok('클립 페이지에 반쪽 파일이 안 보임', !cpHtml.includes('.part'));
 
+  // 실제 페이지 스크립트를 실행해서 401 이후 입력·재시도까지 확인합니다.
+  const { runInNewContext } = await import('node:vm');
+  const clipScript = [...cpHtml.matchAll(/<script>([\s\S]*?)<\/script>/g)]
+    .map((m) => m[1]).find((s) => s.includes('async function removeClip'));
+  async function clickClipDelete(statuses, password = '한글암호', deleted = 1) {
+    let listener, removed = 0, prompts = 0;
+    const requests = [], alerts = [];
+    const button = { disabled: false, addEventListener: (_, fn) => { listener = fn; } };
+    const card = { dataset: { name: fakeName }, querySelector: () => button, remove: () => removed++ };
+    runInNewContext(clipScript, {
+      document: { querySelectorAll: () => [card] }, TextEncoder,
+      btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
+      window: { prompt: () => { prompts++; return password; } },
+      confirm: () => true, alert: (s) => alerts.push(s),
+      fetch: async (_, options) => {
+        requests.push(options);
+        const status = statuses.shift();
+        if (status === 'network') throw new Error('offline');
+        return { status, ok: status === 200, json: async () => ({ deleted }) };
+      },
+    });
+    await listener();
+    return { removed, prompts, requests, alerts, button };
+  }
+  const loginDelete = await clickClipDelete([401, 200]);
+  ok('클립 삭제: 401 뒤 암호 입력 후 재시도', loginDelete.prompts === 1 && loginDelete.removed === 1);
+  ok('클립 삭제: 한글 암호도 UTF-8 Basic 인증',
+    loginDelete.requests[1].headers.Authorization === 'Basic ' + Buffer.from('admin:한글암호').toString('base64'));
+  const canceledDelete = await clickClipDelete([401], null);
+  ok('클립 삭제: 입력 취소하면 재요청·카드 삭제 없음', canceledDelete.requests.length === 1 && canceledDelete.removed === 0);
+  const wrongDelete = await clickClipDelete([401, 401]);
+  ok('클립 삭제: 틀린 암호는 무한 재시도 없이 안내', wrongDelete.requests.length === 2 && wrongDelete.removed === 0 && wrongDelete.alerts.length === 1);
+  const publicDelete = await clickClipDelete([200]);
+  ok('클립 삭제: 인증이 불필요하면 입력 없이 완료', publicDelete.prompts === 0 && publicDelete.removed === 1);
+  const missingDelete = await clickClipDelete([200], null, 0);
+  ok('클립 삭제: 삭제 건수 0이면 성공으로 숨기지 않음', missingDelete.removed === 0 && missingDelete.alerts.length === 1);
+  const failedDelete = await clickClipDelete(['network']);
+  ok('클립 삭제: 통신 실패 뒤 버튼 복구', failedDelete.removed === 0 && failedDelete.alerts.length === 1 && !failedDelete.button.disabled);
+
   const cf = await fetch(`${base}/clip/${fakeFolder}/${encodeURIComponent(fakeName)}`);
   ok('클립 파일 200', cf.status === 200, String(cf.status));
   ok('mp4 로 내려옴', (cf.headers.get('content-type') ?? '').includes('mp4'), cf.headers.get('content-type') ?? '');
