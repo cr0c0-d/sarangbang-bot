@@ -207,6 +207,10 @@ function runOnce(args, timeoutMs) {
       done = true;
       const e = new Error(message);
       e.transient = transient;
+      // ⚠️ **원문을 버리지 마세요.** 예전에 첫 줄만 남겨서, ffmpeg 이 왜 죽었는지
+      //    알려주는 줄이 그대로 사라졌습니다 (`ffmpeg exited with code 183` 만 남음).
+      //    부르는 쪽이 필요하면 원문에서 진짜 원인을 찾을 수 있어야 합니다.
+      e.stderr = err;
       // 원인을 이미 한국어로 적어둔 오류입니다. 로그에 스택까지 찍을 필요가 없습니다.
       // (index.js 의 logError 참고)
       e.expected = true;

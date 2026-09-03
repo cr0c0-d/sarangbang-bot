@@ -1672,6 +1672,36 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     ok('코드 1 은 죽은 것이 아님', !clips.looksLikeFfmpegCrash('ERROR: ffmpeg exited with code 1'));
     ok('다른 오류도 죽은 것이 아님', !clips.looksLikeFfmpegCrash('ERROR: Video unavailable'));
 
+    // ── 양수 코드: ffmpeg 자신의 오류 (소유자 서버 실측: 183) ──
+    //
+    // ★ ffmpeg 은 AVERROR 값을 반환하고 종료 코드는 & 0xFF 로 잘린다.
+    //   AVERROR_INVALIDDATA = -1094995529 → 183. 계산과 실측으로 확인했다.
+    //   숫자만 보여주면 아무도 원인을 모른다.
+    ok('183 을 AVERROR_INVALIDDATA 로 해석', clips.ffmpegExitMeaning(183)?.what.includes('영상이 아니'));
+    ok('183 은 쿠키/거부 가능성을 짚어줌', clips.ffmpegExitMeaning(183)?.likely.includes('MUSIC_DIRECT_STREAM'));
+    // ⚠️ 모르는 코드는 지어내지 않는다. (3.1-4)
+    ok('모르는 코드는 null (지어내지 않음)', clips.ffmpegExitMeaning(77) === null);
+
+    const msg183 = clips.clipError(
+      'ERROR: ffmpeg exited with code 183',
+      'HTTP error 403 Forbidden\n[download] something\nError opening input: Invalid data found when processing input'
+    );
+    ok('183 안내에 원문이 들어감', msg183.includes('403 Forbidden'));
+    ok('183 안내가 뜻을 설명', msg183.includes('AVERROR_INVALIDDATA'));
+    ok('[download] 진행 줄은 걸러냄', !msg183.includes('[download] something'));
+    ok('원문이 없으면 로그를 보라고 안내',
+      clips.clipError('ERROR: ffmpeg exited with code 183', '').includes('클립 실패 원문'));
+    const unknownMsg = clips.clipError('ERROR: ffmpeg exited with code 77', 'weird http error');
+    ok('모르는 코드는 모른다고 말함', unknownMsg.includes('저도 모릅니다'));
+
+    // 원문을 버리면 진짜 원인이 사라진다. runOnce 가 붙여줘야 한다.
+    const yt5 = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+    ok('yt-dlp 오류에 원문을 붙여둠 (err.stderr)', yt5.includes('e.stderr = err;'));
+    const csrc2 = fs.readFileSync('./src/stream/clips.js', 'utf8');
+    ok('클립 실패는 원문을 통째로 로그에 남김',
+      csrc2.includes('클립 실패 원문') && csrc2.includes('logClipFailure'));
+    ok('원문을 clipError 에 넘김', csrc2.includes('clipError(err.message, err.stderr)'));
+
     const crashMsg = clips.clipError('ERROR: ffmpeg exited with code -11');
     ok('죽었을 때 원문을 그대로 보여줌', crashMsg.includes('code -11'));
     ok('신호 번호라는 것을 설명', crashMsg.includes('-11 = 세그폴트'));

@@ -1789,6 +1789,54 @@ ERROR: [youtube:tab] @Google: The channel is not currently live
 ⚠️ **`--ffmpeg-location` 을 반드시 넘긴다.** `--download-sections` 는 ffmpeg 이 필요하고,
 서버에 ffmpeg 이 깔려 있다는 보장이 없다. 기본은 `ffmpeg-static` 이다.
 
+##### ★★ yt-dlp 는 ffmpeg 에 **쿠키를 넘기지 않는다** — 쿠키가 필요한 서버에서 클립이 실패한다
+
+소유자 서버에서 ffmpeg 을 apt 로 깐 뒤 **`ffmpeg exited with code 183`** 이 났다.
+183 이 무엇인지 계산하고 실측으로 확인했다 (2026-09-03):
+
+```
+AVERROR_INVALIDDATA = -1094995529 → & 0xFF = 183
+$ ffmpeg -i garbage.mp4 …  →  "Invalid data found when processing input" · 종료코드 183
+```
+
+**즉 ffmpeg 이 받아온 것이 영상이 아니었다.** 왜 그런지 yt-dlp 를 `-v` 로 돌려
+ffmpeg 명령줄을 직접 봤다:
+
+```
+[debug] ffmpeg command line: … -headers "User-Agent: Mozilla/5.0 …" -ss 30 -t 3 -i "https://…googlevideo.com/videoplayback?…"
+```
+
+**`Cookie` 헤더가 없다.** `--cookies` 는 yt-dlp 의 *추출*에만 쓰이고
+**ffmpeg 의 미디어 요청에는 전달되지 않는다.** 그런데 이 서버는 IP 가 막혀서
+쿠키가 있어야 유튜브가 응답한다 — 그래서 ffmpeg 이 거부 응답(영상 아님)을 받고 183 이 된다.
+
+⚠️ **이건 3.1 의 `MUSIC_DIRECT_STREAM=false` 와 같은 뿌리다.** 음악도 "ffmpeg 이 직접 URL 을
+받는" 0단계가 이 서버에서 거부돼서 껐다. 클립은 `--download-sections` 가 **구조적으로**
+ffmpeg 에게 받아오게 하므로 그 단계를 피할 수 없다.
+
+고를 수 있는 길 (소유자 결정 필요):
+
+| 방법 | 되는가 | 대가 |
+|---|---|---|
+| `YTDLP_EXTRA_ARGS` 로 다른 유튜브 클라이언트 시도 | **모름** — 쿠키 없이 받아지는 URL 이 나올 수도 | 없음. 가장 먼저 해볼 것 |
+| `--downloader-args` 로 ffmpeg 에 쿠키 넘기기 | 될 것 | ⚠️ **쿠키 값이 명령줄에 실린다.** 이 프로젝트는 "쿠키는 경로만" 을 지켜왔다(3.1-4) |
+| 클립을 포기 | — | 타임라인 텍스트는 그대로 된다 |
+| 전체를 받아서 자르기 | 될 것 | 3시간 방송이면 수 GB. 1코어·작은 디스크에 불가 |
+
+**진단은 서버에서 이 한 줄이면 끝난다.** ffmpeg 이 남긴 진짜 이유가 보인다:
+
+```bash
+~/.venv-ytdlp/bin/yt-dlp -v --no-progress --ignore-config --no-playlist \
+  --ffmpeg-location /usr/bin/ffmpeg --cookies ~/cookies.txt \
+  --download-sections "*30-45" \
+  -f "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720]" \
+  --merge-output-format mp4 -o /tmp/t.%\(ext\)s "<그 방송 주소>" 2>&1 | tail -40
+```
+
+⚠️ 그래서 `clips.js` 는 실패할 때 **원문을 통째로** 로그에 남긴다
+(`[stream] 클립 실패 원문`). 예전에 첫 줄만 남겨서 `code 183` 만 보이고
+진짜 이유가 버려졌다. `runOnce` 가 `err.stderr` 에 원문을 붙여준다.
+
 ##### ★ 묶음 ffmpeg 이 **죽는** 서버가 있다 (소유자 서버 실측)
 
 소유자 서버(1코어 ARM)에서 클립을 뽑을 때 이렇게 났다:

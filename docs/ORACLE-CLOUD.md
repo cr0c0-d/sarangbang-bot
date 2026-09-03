@@ -21,6 +21,8 @@
 ④ ★ 음악 쓸 거면 pip 로 yt-dlp 한 번 더            (5절 "pip 로 한 번 더")
      sudo apt install -y python3-venv
      python3 -m venv ~/.venv-ytdlp && ~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"
+④-b ★ 방송 기록(클립) 쓸 거면 ffmpeg 도            (5절 "ffmpeg 도 깔아주세요")
+     sudo apt install -y ffmpeg
 ⑤ .env / .env.music 채우기                         (6절)
 ⑥ npm run verify → npm run deploy → 한 번 띄워보기 (7절)
 ⑦ 갤러리 접속 방법 정하기 (SSH 터널 권장)          (8절)
@@ -40,6 +42,8 @@
 | `.env.music` | `MUSIC_DIRECT_STREAM=false` | 쿠키 서버는 0단계가 거의 항상 거부됨 |
 | `.env.music` | `YTDLP_JS_RUNTIME` 은 **건드리지 말 것** | 끄면 **재생이 아예 안 됩니다** |
 | `.env` | `GEMINI_API_KEY` (`/망고야` 쓸 때) | 구독과 **별개**. AI Studio 에서 카드 없이 발급 |
+| `.env` | `YTDLP_PATH` · `YTDLP_COOKIES_FILE` **도** | 방송 기록이 yt-dlp 를 쓰는데 **망고는 `.env` 만 읽습니다** |
+| apt | `sudo apt install -y ffmpeg` | 묶음 ffmpeg 이 **죽는** 서버가 있습니다 (`code -11`) |
 
 ### 켤 때 로그에서 확인할 것
 
@@ -49,6 +53,15 @@ journalctl -u music-sarangbang-bot -n 30 --no-pager | grep -E "기동|캐시|예
 
 `yt-dlp 기동 0.5초` 처럼 **1초 미만**이면 ④가 제대로 된 것입니다.
 3초가 넘으면 봇이 경고와 함께 설치 명령까지 찍어줍니다.
+
+방송 기록을 쓴다면 망고 쪽도 봐주세요.
+
+```bash
+journalctl -u sarangbang-bot -n 40 --no-pager | grep -E "클립용 ffmpeg|클립 자동 정리|옛 방식 마킹"
+```
+
+`클립용 ffmpeg: /usr/bin/ffmpeg` 이면 ④-b 가 된 것입니다.
+`ffmpeg-static` 이 나와도 일단은 동작하고, 죽으면 봇이 알아서 넘어갑니다.
 
 ---
 
@@ -559,6 +572,86 @@ time ~/.venv-ytdlp/bin/yt-dlp --version
 ⚠️ pip 로 깐 뒤에는 `npm run update-ytdlp` 가 **봇이 쓰지도 않는 `bin/`** 을 갱신합니다.
    봇이 알아채고 pip 갱신 명령을 알려주지만, 갱신은 이렇게 하세요:
    `~/.venv-ytdlp/bin/pip install -U "yt-dlp[default]"`
+
+#### ★ 방송 기록(클립)을 쓸 거면 — **ffmpeg 도 깔아주세요**
+
+```bash
+sudo apt install -y ffmpeg
+ffmpeg -version
+```
+
+`npm install` 로 들어오는 묶음 ffmpeg(`ffmpeg-static`)이 있는데도 이걸 왜 깔까요.
+**그 묶음 ffmpeg 이 죽는 서버가 있습니다.** 소유자 서버(1코어 ARM) 실측:
+
+```
+ffmpeg exited with code -11
+```
+
+**음수 코드는 신호 번호입니다.** -11 은 SIGSEGV(세그폴트) — 정상 실패가 아니라 **죽은 것**입니다.
+같은 바이너리로 음악(오디오 변환)은 잘 돌기 때문에 그 코드 경로만의 문제로 보이지만,
+**원인은 확정하지 못했습니다.**
+
+봇은 죽으면 **서버에 깔린 ffmpeg 으로 알아서 넘어갑니다.** 그래서 미리 깔아두면 됩니다.
+명시하고 싶으면 `.env` 에 이렇게 적습니다.
+
+```
+FFMPEG_PATH=/usr/bin/ffmpeg
+```
+
+켤 때 로그의 **`클립용 ffmpeg:`** 줄이 어느 것을 쓰는지 알려줍니다.
+
+⚠️ **`-9` 는 얘기가 다릅니다.** 그건 SIGKILL — 대개 **메모리 부족**입니다.
+`free -h` 로 swap 을 확인하고(4절), 화질을 낮춰보세요: `STREAM_CLIP_MAX_HEIGHT=480`
+
+##### 그런데 **양수** 코드가 나오면 (예: `code 183`) 쿠키 문제일 수 있습니다
+
+음수는 신호, **양수는 ffmpeg 자신의 오류 코드**입니다. `183` 은 계산·실측으로 확인한 결과
+`AVERROR_INVALIDDATA` — **"받아온 것이 영상이 아니다"** 입니다.
+
+`-v` 로 확인해보니 yt-dlp 는 ffmpeg 에 `User-Agent` 만 넘기고 **쿠키는 넘기지 않습니다.**
+이 서버는 IP 가 막혀 쿠키가 있어야 유튜브가 응답하는데, ffmpeg 은 쿠키 없이 요청하니
+거부 응답을 받고 그걸 영상으로 열려다 실패하는 것입니다.
+(음악의 `MUSIC_DIRECT_STREAM=false` 와 **같은 뿌리**입니다 — 10절)
+
+**서버에서 이 한 줄이면 진짜 이유가 보입니다.** `<주소>` 만 바꿔 넣으세요.
+
+```bash
+~/.venv-ytdlp/bin/yt-dlp -v --no-progress --ignore-config --no-playlist \
+  --ffmpeg-location /usr/bin/ffmpeg --cookies ~/cookies.txt \
+  --download-sections "*30-45" \
+  -f "bv*[height<=720][vcodec^=avc1]+ba[ext=m4a]/b[height<=720]" \
+  --merge-output-format mp4 -o /tmp/t.%\(ext\)s "<그 방송 주소>" 2>&1 | tail -40
+```
+
+`403` 이나 `Forbidden` 이 보이면 쿠키 문제로 확정입니다. 그때 해볼 것:
+
+1. **쿠키 없이 한 번** (위 명령에서 `--cookies` 줄만 빼고). 되면 `.env` 의
+   `YTDLP_COOKIES_FILE` 을 클립에만 안 쓰게 하는 쪽으로 갈 수 있습니다.
+2. **다른 유튜브 클라이언트**를 시도 — 코드를 안 고치고 됩니다.
+   ```
+   YTDLP_EXTRA_ARGS=--extractor-args youtube:player_client=web_safari
+   ```
+   `tv` · `android` · `ios` 도 후보입니다. 되는 것이 있으면 그걸 쓰면 됩니다.
+3. 둘 다 안 되면 **클립은 이 서버에서 어렵습니다.** 타임라인 텍스트는 그대로 됩니다.
+
+봇은 실패할 때 **원문을 통째로** 로그에 남깁니다:
+
+```bash
+journalctl -u sarangbang-bot -n 60 --no-pager | grep -A 25 "클립 실패 원문"
+```
+
+#### ★ 방송 기록을 쓸 거면 — `.env` 에도 yt-dlp 설정이 필요합니다
+
+`/방송` 이 방송 시작 시각을 yt-dlp 로 읽고, 클립도 yt-dlp 로 자릅니다.
+그런데 **망고는 `.env` 만 읽습니다** (음악 봇만 `--env-file=.env.music` 로 둘 다 읽습니다).
+
+`.env.music` 에 넣어둔 아래 둘을 **`.env` 에도** 넣어주세요. 안 넣으면 등록할 때마다
+기동 비용 3초가 붙거나, 유튜브가 서버 IP 를 막아 실패합니다.
+
+```
+YTDLP_PATH=/home/ubuntu/.venv-ytdlp/bin/yt-dlp
+YTDLP_COOKIES_FILE=/home/ubuntu/cookies.txt
+```
 
 ---
 

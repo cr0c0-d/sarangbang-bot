@@ -208,9 +208,70 @@ export function looksLikeFfmpegCrash(message) {
   return /ffmpeg[\s\S]{0,40}(sigsegv|segmentation fault|core dumped)/i.test(s);
 }
 
-export function clipError(message) {
+/**
+ * ffmpeg 의 **양수** 종료 코드를 사람 말로 바꿉니다.
+ *
+ * ffmpeg 은 실패하면 `AVERROR` 값을 그대로 반환하고, 종료 코드는 `& 0xFF` 로 잘립니다.
+ * 그래서 183 같은 낯선 숫자가 나옵니다. 계산과 실측으로 확인한 것만 적습니다 (2026-09-03):
+ *
+ * ```
+ * AVERROR_INVALIDDATA = -1094995529  →  183
+ * $ ffmpeg -i garbage.mp4 …  →  "Invalid data found when processing input" · 종료코드 183
+ * ```
+ *
+ * ⚠️ **모르는 코드는 지어내지 않습니다.** 목록에 없으면 null 을 주고 원문만 보여줍니다.
+ */
+export function ffmpegExitMeaning(code) {
+  const n = Number(code);
+  if (n === 183) {
+    return {
+      what: '입력 데이터가 영상이 아니었습니다 (AVERROR_INVALIDDATA).',
+      likely:
+        'ffmpeg 이 유튜브에서 받아온 것이 **영상이 아니었다**는 뜻입니다.\n' +
+        '유튜브가 거부 페이지를 준 경우가 여기 해당합니다 — 이 서버에서 실제로 있는 일입니다\n' +
+        '(음악 기능도 같은 이유로 `MUSIC_DIRECT_STREAM=false` 를 씁니다. ARCHITECTURE 3.1)',
+    };
+  }
+  if (n === 187) return { what: '입력이 예상보다 먼저 끝났습니다 (AVERROR_EOF).', likely: '' };
+  if (n === 204) return { what: '유튜브가 요청을 거부했습니다 (HTTP 오류 계열).', likely: '' };
+  return null;
+}
+
+/** 오류 원문에서 ffmpeg 이 남긴 줄만 골라 옵니다. 진짜 원인이 거기 있습니다. */
+export function ffmpegLines(raw, limit = 6) {
+  return String(raw ?? '')
+    .split('\n')
+    .map((l) => l.trim())
+    .filter((l) => l && !/^\[download\]/.test(l))
+    .filter((l) => /error|invalid|forbidden|http|403|refus|denied|ffmpeg|failed/i.test(l))
+    .slice(-limit);
+}
+
+export function clipError(message, raw = '') {
   const s = String(message ?? '');
   const low = s.toLowerCase();
+
+  // ffmpeg 이 양수 코드로 실패한 경우. 숫자만 보여주면 아무도 원인을 모릅니다.
+  const exit = s.match(/ffmpeg[\s\S]{0,40}exited with code (\d+)/i);
+  if (exit) {
+    const meaning = ffmpegExitMeaning(exit[1]);
+    const lines = ffmpegLines(raw);
+    const parts = [s.trim()];
+    if (meaning) {
+      parts.push(`\n**코드 ${exit[1]}** — ${meaning.what}`);
+      if (meaning.likely) parts.push(meaning.likely);
+    } else {
+      // ⚠️ 모르는 코드입니다. 지어내지 않고 원문을 보여줍니다. (3.1-4)
+      parts.push(`\n**코드 ${exit[1]}** 이 무슨 뜻인지는 저도 모릅니다. 아래 원문이 답입니다.`);
+    }
+    if (lines.length > 0) parts.push(`\nffmpeg 이 남긴 말:\n\`\`\`\n${lines.join('\n')}\n\`\`\``);
+    else parts.push('\n서버 로그에 `[stream] 클립 실패 원문` 으로 자세한 내용이 남았습니다.');
+    parts.push(
+      '· 쿠키를 쓰고 있다면 `.env` 의 `YTDLP_COOKIES_FILE` 이 **망고 쪽에도** 있는지 확인해주세요.\n' +
+        '· 구간을 짧게(30초 이내) 해서 다시 해보세요.'
+    );
+    return parts.join('\n');
+  }
 
   // ⚠️ 원인을 짐작해서 적지 않습니다. **무엇을 해보면 되는지**만 적습니다.
   //    (묶음 ffmpeg 이 왜 죽는지는 확정하지 못했습니다 — ARCHITECTURE 3.6-9)
@@ -256,6 +317,21 @@ export function clipError(message) {
 }
 
 /**
+ * 클립 실패의 **원문을 통째로** 로그에 남깁니다.
+ *
+ * ★ 왜 통째로인가: `ffmpeg exited with code 183` 만 남기면 아무도 원인을 못 찾습니다.
+ *   실제로 그래서 한 번 헤맸습니다. yt-dlp·ffmpeg 이 그 위에 진짜 이유를 적어두는데,
+ *   첫 줄만 남기면 그게 버려집니다. (CLAUDE.md · ARCHITECTURE 3.1-4)
+ */
+function logClipFailure(err) {
+  const raw = String(err?.stderr ?? '').trim();
+  console.error(
+    `[stream] 클립 실패: ${String(err?.message ?? '').split('\n')[0]}\n` +
+      (raw ? `[stream] 클립 실패 원문 ↓\n${raw.split('\n').slice(-25).join('\n')}` : '[stream] (원문이 비어 있습니다)')
+  );
+}
+
+/**
  * 한 구간을 잘라 파일로 만듭니다.
  *
  * @returns {Promise<{file: string, bytes: number, pruned: number, seconds: number}>}
@@ -298,11 +374,13 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
         await cut();
       } catch (again) {
         await cleanLeftovers(folder, stem);
-        throw userError(clipError(again.message));
+        logClipFailure(again);
+        throw userError(clipError(again.message, again.stderr));
       }
       // 성공했으면 그대로 진행합니다. 아래에서 파일을 확인합니다.
     } else {
-      throw userError(clipError(err.message));
+      logClipFailure(err);
+      throw userError(clipError(err.message, err.stderr));
     }
   }
 
