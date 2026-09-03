@@ -66,6 +66,14 @@ export const KEYS = {
     envValue: () => config.plan.categoryId,
     envName: 'PLAN_CATEGORY_ID',
   },
+  streamChannelId: {
+    label: '방송 채널',
+    feature: 'stream',
+    hint: '방송 제어판이 상주할 채팅방 (일반 사용자 채팅을 막아두는 것이 좋습니다)',
+    kind: 'text',
+    envValue: () => config.stream.channelId,
+    envName: 'STREAM_CHANNEL_ID',
+  },
   imageChannelIds: {
     label: '이미지 채널',
     feature: 'images',
@@ -118,6 +126,7 @@ export const FEATURES = {
   movie: { label: '영화 고르기', emoji: '🎬', hint: '/영화 로 한 편 뽑기 · 투표 만들기 (TMDB)' },
   plan: { label: '일정', emoji: '📅', hint: '/일정 · /일정새로 · /정산' },
   ai: { label: '망고야', emoji: '🥭', hint: '/망고야 로 물어보기 (제미나이)' },
+  stream: { label: '방송 기록', emoji: '🎥', hint: '/방송 으로 라이브 하이라이트 시간 찍기' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */

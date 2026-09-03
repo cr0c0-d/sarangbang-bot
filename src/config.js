@@ -121,7 +121,7 @@ const dataDirRaw = str('DATA_DIR', './data');
  * 자세한 건 docs/ARCHITECTURE.md 2.1절.
  */
 const BOTS = {
-  mango: { name: '망고', features: ['tts', 'timer', 'images', 'poll', 'movie', 'plan', 'ai'] },
+  mango: { name: '망고', features: ['tts', 'timer', 'images', 'poll', 'movie', 'plan', 'ai', 'stream'] },
   music: { name: '노래하는 망고', features: ['music'] },
 };
 
@@ -174,6 +174,15 @@ export const config = {
   // 일정 채널을 만들 카테고리. /채널설정 으로 바꿀 수 있습니다.
   plan: {
     categoryId: str('PLAN_CATEGORY_ID'),
+  },
+
+  // 방송 기록(타임머신). 제어판이 상주할 채널. /채널설정 으로 바꿀 수 있습니다.
+  // docs/게임방송-기획.md
+  stream: {
+    channelId: str('STREAM_CHANNEL_ID'),
+    // 클립을 만들 때 기본으로 잡을 구간 (마킹 앞 / 뒤). Phase 2 에서 씁니다.
+    clipBeforeSec: Math.max(0, num('STREAM_CLIP_BEFORE_SEC', 15)),
+    clipAfterSec: Math.max(1, num('STREAM_CLIP_AFTER_SEC', 25)),
   },
 
   // 영화 정보 (TMDB). 없으면 /영화 만 안내하고 기능은 꺼둡니다 — 봇 전체가 죽으면 안 됩니다.

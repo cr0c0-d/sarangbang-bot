@@ -18,6 +18,15 @@ const FILE = path.join(config.dataDir, 'panels.json');
 
 export const MUSIC = 'music';
 export const GALLERY = 'gallery';
+/**
+ * 방송 제어판. **지우지 않고 되찾습니다.**
+ *
+ * 음악 제어판과 다릅니다. 음악은 재시작하면 곡이 끊기므로 "재생 중" 이 거짓말이 되어
+ * 지워야 하지만, 방송 기록은 **디스크에 남아 재시작을 넘어 이어집니다.**
+ * 그러니 제어판도 그 자리에 그대로 두고 내용만 새로 고치면 됩니다.
+ * (stream/panel.js 의 ensureStreamPanels)
+ */
+export const STREAM = 'stream';
 
 /** @type {{ [kind: string]: { [channelId: string]: string } }} 종류 → 채널ID → 메시지ID */
 let store = {};
@@ -94,6 +103,17 @@ function isMusicPanel(msg, botId) {
   return JSON.stringify(msg.components ?? []).includes('"m:');
 }
 
+/**
+ * 메시지가 **방송 제어판**인지 봅니다.
+ *
+ * ⚠️ `tm:` 으로 넓게 보면 안 됩니다. 요약판에도 `tm:` 버튼이 붙어 있어서,
+ *    그러면 훑기가 **요약판을 제어판으로 오인해 지웁니다.** 제어판 전용 접두사로 좁힙니다.
+ */
+function isStreamPanel(msg, botId) {
+  if (msg.author?.id !== botId) return false;
+  return JSON.stringify(msg.components ?? []).includes('"tm:panel:');
+}
+
 /** 메시지가 갤러리 버튼인지 봅니다. 우리 갤러리 주소를 가리키는 링크 버튼입니다. */
 function isGalleryPanel(msg, botId) {
   if (msg.author?.id !== botId) return false;
@@ -145,9 +165,12 @@ export async function sweepOrphanPanels(client, { perChannel = 50 } = {}) {
       //    이 훑기는 cleanupPanelsOnStart 의 되찾기 **뒤에** 돕니다. 그래서 이 시점에
       //    기억에 남아 있는 음악 제어판은 "남기기로 한 그것" 하나뿐입니다.
       const keepMusic = rememberedId(MUSIC, channel.id);
+      // 방송 제어판도 남겨야 할 것이 하나 있습니다. 기억해둔 그것만 남기고 중복만 지웁니다.
+      const keepStream = rememberedId(STREAM, channel.id);
       for (const msg of messages.values()) {
         const stale =
           (isMusicPanel(msg, client.user.id) && msg.id !== keepMusic) ||
+          (isStreamPanel(msg, client.user.id) && msg.id !== keepStream) ||
           (isGalleryPanel(msg, client.user.id) && msg.id !== keepGallery);
         if (!stale) continue;
         if (await msg.delete().then(() => true).catch(() => false)) deleted++;

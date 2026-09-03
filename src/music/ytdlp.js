@@ -650,6 +650,48 @@ export async function warmUpCache(url = 'https://www.youtube.com/watch?v=dQw4w9W
   }
 }
 
+/**
+ * 라이브 방송이 **실제로 시작된 시각**을 알아냅니다. (방송 기록 기능이 씁니다)
+ *
+ * ★ 왜 필요한가: 마킹 시각을 유튜브 다시보기의 타임스탬프로 바꾸려면 t=0 이 필요합니다.
+ *   `/방송` 을 친 시각을 쓰면 **라이브를 켜고 등록하기까지의 시간만큼 전부 밀립니다.**
+ *   유튜브 설명란에 붙이는 것이 목적인데 전부 어긋난 타임라인이 나옵니다.
+ *
+ * ⚠️ `timestamp` 를 쓰지 마세요. 그건 **게시 시각**이라 다릅니다.
+ *    실측한 라이브에서 `release_timestamp` 와 66분 차이가 났습니다.
+ *    (docs/게임방송-기획.md 2.2절)
+ *
+ * ⚠️ 제한시간을 `timeoutLadder()` 에 맡기지 않습니다. 그 사다리는 **음악 추출 실적**으로
+ *    자기를 조정하는데, 망고 프로세스에는 그 실적이 없어서 기본 20초/40초가 됩니다.
+ *    메타데이터 한 번 읽는 일에 1분을 기다리면 사람은 고장으로 봅니다.
+ *
+ * @returns {Promise<{startedAt: number|null, liveStatus: string, title: string}>}
+ *   `startedAt` 은 유닉스 초. 유튜브가 안 알려주면 `null` (부르는 쪽이 대체값을 씁니다)
+ */
+export async function liveInfo(url) {
+  const out = await run(
+    [
+      '--print',
+      '%(release_timestamp)s\t%(live_status)s\t%(title)s',
+      '--no-warnings',
+      '--ignore-config',
+      '--no-playlist',
+      ...extraArgs(),
+      url,
+    ],
+    { timeouts: [10_000, 20_000] }
+  );
+
+  const [ts, status, ...rest] = String(out).trim().split('\n')[0].split('\t');
+  const n = Number(ts);
+  return {
+    // yt-dlp 는 값이 없으면 문자열 'NA' 를 찍습니다. Number('NA') 는 NaN 입니다.
+    startedAt: Number.isFinite(n) && n > 0 ? n : null,
+    liveStatus: status === 'NA' ? '' : (status ?? ''),
+    title: rest.join('\t').trim(),
+  };
+}
+
 /** 캐시가 실제로 쌓였는지. 안 쌓이면 곡마다 플레이어 JS 를 다시 받습니다. */
 export function cacheDir() {
   return CACHE_DIR;

@@ -15,6 +15,7 @@ import { commands as movieCommands } from './movie/index.js';
 import { commands as planCommands } from './plan/index.js';
 import { commands as settleCommands } from './plan/settle.js';
 import { commands as aiCommands } from './ai/index.js';
+import { commands as streamCommands } from './stream/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
@@ -114,6 +115,18 @@ const basicCommands = [
             ].join('\n'),
           },
           {
+            feature: 'stream',
+            name: '🎥 방송 기록',
+            value: [
+              '**`/방송 링크:<내 라이브 주소>`** — 라이브를 켠 **뒤에** 등록하세요.',
+              '등록하면 방송 채널에 제어판이 뜹니다. 재미있을 때 **✂️ 지금!** 만 누르면 됩니다.',
+              '설명은 안 받습니다 — 게임 중이니까요. **방송이 끝난 뒤** 요약판에서 붙입니다.',
+              '**⏹️ 방송 종료** 를 누르면 사람마다 유튜브 설명란에 붙일 타임라인이 나옵니다.',
+              '잘못 눌러도 **▶️ 이어서 기록** 으로 되돌아갑니다. 기록은 지워지지 않습니다.',
+              '`/방송` — 인자 없이 실행하면 지금 상태와 지난 방송을 봅니다.',
+            ].join('\n'),
+          },
+          {
             feature: 'images',
             name: '🖼️ 이미지 정리',
             value:
@@ -169,6 +182,7 @@ const taggedCommands = [
   ...tag('movie', movieCommands),
   ...tag('plan', [...planCommands, ...settleCommands]),
   ...tag('ai', aiCommands),
+  ...tag('stream', streamCommands),
 ];
 
 /**

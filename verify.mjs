@@ -24,7 +24,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 21개 로드 (우클릭 1개 포함)', allCommands.length === 21, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 22개 로드 (우클릭 1개 포함)', allCommands.length === 22, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -980,7 +980,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 8개', Object.keys(st.FEATURES).length === 8, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 9개', Object.keys(st.FEATURES).length === 9, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -1909,6 +1909,164 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   fs.rmSync('./data/verify-data/settlements.json', { force: true });
 }
 
+// 6y) 방송 기록 (타임머신)
+//
+// 가장 위험한 것은 **시각 계산**이다. 틀려도 조용히 틀려서, 유튜브 설명란에
+// 붙여볼 때까지 아무도 모른다. 그래서 부호까지 숫자로 못 박아 검사한다.
+{
+  const store = await import('./src/stream/store.js');
+  const panel = await import('./src/stream/panel.js');
+  const stream = await import('./src/stream/index.js');
+  await store.initStreams();
+
+  // ── 링크 형태: /live/ 를 반드시 받아야 한다 (라이브가 주는 형태다) ──
+  const forms = {
+    'youtube.com/live/': 'https://www.youtube.com/live/AbCdEfGhIjK',
+    'youtu.be/': 'https://youtu.be/AbCdEfGhIjK?si=zz',
+    'watch?v= (재생목록 붙은 것)': 'https://www.youtube.com/watch?v=AbCdEfGhIjK&list=RDxyz',
+    'music.youtube.com': 'https://music.youtube.com/watch?v=AbCdEfGhIjK',
+    'ID 만': 'AbCdEfGhIjK',
+  };
+  for (const [name, url] of Object.entries(forms)) {
+    ok(`링크 형태 ${name}`, stream.parseVideoId(url) === 'AbCdEfGhIjK', String(stream.parseVideoId(url)));
+  }
+  ok('유튜브가 아니면 null', stream.parseVideoId('https://example.com/x') === null);
+
+  // ── 경과 시간 적기: 사람이 쓰는 여러 형태 ──
+  ok('경과 "1시간 20분"', stream.parseElapsed('1시간 20분') === 4800);
+  ok('경과 "80분"', stream.parseElapsed('80분') === 4800);
+  ok('경과 "1:20:00"', stream.parseElapsed('1:20:00') === 4800);
+  ok('경과 "20:00" 은 20분', stream.parseElapsed('20:00') === 1200);
+  ok('숫자만 적으면 분', stream.parseElapsed('45') === 2700);
+  ok('알아볼 수 없으면 null', stream.parseElapsed('헛소리') === null);
+
+  // ── 마킹 시각 계산 + 오프셋 부호 ──
+  const now = store.nowSec();
+  const s = store.openSession('gv', 'chv', '발헤임');
+  store.putStream(s, { userId: 'u1', url: 'https://www.youtube.com/watch?v=A'.padEnd(43, 'A'), videoId: 'A'.repeat(11), startedAt: now - 480, startSource: 'release_timestamp' });
+  store.putStream(s, { userId: 'u2', url: 'https://www.youtube.com/watch?v=B'.padEnd(43, 'B'), videoId: 'B'.repeat(11), startedAt: now - 200, startSource: 'command' });
+  const mk1 = store.addMark(s, 'u1'); mk1.at = now - 300;
+  const mk2 = store.addMark(s, 'u1'); mk2.at = now - 100;
+  const u1 = store.streamOf(s, 'u1');
+  const u2 = store.streamOf(s, 'u2');
+
+  ok('마킹은 세션에 한 줄씩만 (사람별 복사 없음)', s.marks.length === 2 && !('marks' in u1));
+  ok('마킹 시각은 사람마다 따로 계산', store.markSecondsFor(u1, mk2) === 380 && store.markSecondsFor(u2, mk2) === 100);
+  ok('늦게 켠 사람의 요약판에서는 음수 마킹이 빠짐',
+    store.timelineFor(s, u2).length === 1, `${store.timelineFor(s, u2).length}개`);
+  ok('타임라인은 시간순', store.timelineFor(s, u1).map((x) => x.sec).join() === '180,380');
+
+  // ★ 부호를 헷갈리면 조용히 반대로 어긋난다. 실제 상황으로 검사한다.
+  //   봇은 8분 진행으로 알지만 실제로는 68분 켜져 있었다 → 마킹이 60분씩 **늘어야** 한다.
+  const trueStart = now - 68 * 60;
+  store.setOffset(s, 'u1', trueStart - u1.startedAt);
+  ok('오프셋을 맞추면 경과도 맞음', now - u1.startedAt - u1.offsetSec === 68 * 60, `${(now - u1.startedAt - u1.offsetSec) / 60}분`);
+  ok('오프셋이 마킹을 뒤로 밀지 않고 앞으로 당김 (부호)',
+    store.markSecondsFor(u1, mk2) === 380 + 3600, String(store.markSecondsFor(u1, mk2)));
+  ok('이미 찍어둔 마킹에도 적용됨', store.timelineFor(s, u1).map((x) => store.hhmmss(x.sec)).join() === '01:03:00,01:06:20');
+  store.setOffset(s, 'u1', 0);
+
+  ok('hhmmss 는 시간까지 채움 (유튜브 설명란용)', store.hhmmss(3725) === '01:02:05' && store.hhmmss(5) === '00:00:05');
+  ok('마지막 마킹 취소', store.removeLastMark(s)?.id === mk2.id && s.marks.length === 1);
+  store.addMark(s, 'u1');
+
+  // ── 종료는 비파괴여야 한다 ──
+  store.closeSession(s);
+  ok('종료해도 마킹이 남음', store.sessionById(s.id)?.marks.length === 2);
+  ok('종료하면 기록 중이 아님', store.activeSession('gv') === null);
+  store.reopenSession(s);
+  ok('이어서 기록하면 다시 열림', store.activeSession('gv')?.id === s.id);
+  store.closeSession(s);
+
+  // ── 제어판 ──
+  const idsOf = (payload) =>
+    payload.components.flatMap((r) => JSON.parse(JSON.stringify(r.toJSON())).components.map((c) => c.custom_id));
+  store.reopenSession(s);
+  const live = panel.buildStreamPanel('gv');
+  ok('제어판 버튼 4개 (마킹·취소·오프셋·종료)',
+    idsOf(live).join() === 'tm:panel:mark,tm:panel:undo,tm:panel:offset,tm:panel:end', idsOf(live).join());
+  ok('제어판이 경과 시간을 보여줌 (어긋남을 잡는 1차 방어선)',
+    JSON.stringify(live.embeds[0].toJSON()).includes('진행 중'));
+  ok('시작 시각을 추정했으면 표시',
+    JSON.stringify(live.embeds[0].toJSON()).includes('시작 시각 추정'));
+  store.closeSession(s);
+  const idle = panel.buildStreamPanel('gv');
+  ok('기록 중이 아니어도 제어판이 남음', idle.embeds.length === 1);
+  ok('닫힌 제어판에 [이어서 기록] 이 있음 (종료를 되돌리는 유일한 길)',
+    idsOf(idle).some((x) => x.startsWith('tm:panel:reopen:')), idsOf(idle).join());
+  ok('제어판 버튼은 전부 tm:panel: 로 시작', [...idsOf(live), ...idsOf(idle)].every((x) => x.startsWith('tm:panel:')));
+
+  // ── 요약판 ──
+  store.setMarkText(s, s.marks[0].id, '차에 치임');
+  const summary = panel.buildSummary(s, u1);
+  const joined = summary.map((m) => m.content).join('\n');
+  ok('요약판이 코드블록 (유튜브 설명란에 그대로 복사)', joined.includes('```'));
+  ok('요약판에 설명이 들어감', joined.includes('차에 치임'));
+  ok('설명 없는 마킹도 줄은 남김', joined.includes('(설명 없음)'));
+  ok('요약판 버튼은 tm:desc: (tm:panel: 이 아님 — 훑기가 지우면 안 됨)',
+    idsOf(summary[summary.length - 1]).every((x) => x.startsWith('tm:desc:')), idsOf(summary[summary.length - 1]).join());
+  ok('요약판이 2000자를 넘지 않음', summary.every((m) => m.content.length <= 2000));
+
+  // 마킹이 많아도 나뉘어야 한다. 6명 × 여러 개가 한 장에 안 들어간다.
+  for (let i = 0; i < 120; i++) {
+    const m = store.addMark(s, 'u1');
+    m.at = now - 400 + i;
+    store.setMarkText(s, m.id, `아주 긴 설명을 넣어서 한 메시지를 넘기게 만듭니다 ${i}`);
+  }
+  const big = panel.buildSummary(s, u1);
+  ok('마킹이 많으면 여러 장으로 나뉨', big.length > 1, `${big.length}장`);
+  ok('나뉘어도 전부 2000자 이하', big.every((m) => m.content.length <= 2000));
+  ok('버튼은 마지막 장에만',
+    big.slice(0, -1).every((m) => !m.components) && Boolean(big[big.length - 1].components));
+  ok('코드블록이 장마다 닫힘', big.every((m) => (m.content.match(/```/g) ?? []).length === 2));
+
+  // ── 입력 창 (빌더 검사는 6x 에서도 돈다) ──
+  const noText = store.addMark(s, 'u1');
+  noText.at = now - 50;
+  const built = panel.buildDescModal(s, u1, 0);
+  const modalJson = JSON.parse(JSON.stringify(built.modal.toJSON()));
+  const inputs = JSON.stringify(modalJson);
+  ok('설명 창은 한 번에 5개', built.marks.length === 5, `${built.marks.length}개`);
+  ok('설명 창의 칸은 전부 선택 입력 (required:false)', !/"required":true/.test(inputs));
+  ok('설명이 없는 칸에는 value 를 넣지 않음 (빈 문자열은 창을 죽인다)', !/"value":""/.test(inputs));
+  ok('설명 창에 다음 페이지가 있음', built.next === 5 && built.total > 5);
+  ok('더 채울 것이 없으면 null', panel.buildDescModal(s, u1, 9999) === null);
+
+  // ── 배선 ──
+  const idx = fs.readFileSync('./src/index.js', 'utf8');
+  ok('재시작 직전 마킹이 사라지지 않게 flushStreams 를 종료 처리에', idx.includes('await flushStreams()'));
+  ok('켤 때 방송 제어판을 준비', idx.includes('ensureStreamPanels(c)'));
+  ok('방송 기록 저장소를 로그인 전에 초기화', idx.indexOf('await initStreams()') < idx.indexOf('client.login'));
+  ok('tm: 버튼이 진입점에 연결', idx.includes("startsWith('tm:')") && idx.includes('handleStreamComponent'));
+  ok('tm: 입력 창도 연결', idx.includes('handleStreamModal'));
+
+  const reg = fs.readFileSync('./src/panel-registry.js', 'utf8');
+  ok('훑기가 방송 제어판만 남김 (요약판은 건드리지 않음)',
+    reg.includes(`'"tm:panel:'`) && reg.includes('rememberedId(STREAM, channel.id)'));
+  ok('방송 제어판은 재시작 때 지우지 않음 (기록이 이어지므로)',
+    !/deleteMusicPanels[\s\S]{0,600}STREAM/.test(reg));
+
+  const si = fs.readFileSync('./src/stream/index.js', 'utf8');
+  // 제어판 수정이 답보다 앞에 오면 가장 많이 눌리는 버튼에서 "Unknown interaction" 이 난다.
+  ok('마킹은 답을 먼저 하고 제어판을 나중에 고침',
+    si.indexOf('await interaction.reply(\n    eph(`✂️') < si.indexOf('scheduleStreamPanelRefresh(client, interaction.guildId'));
+  ok('제어판 수정을 몰아서 함 (6명이 연달아 눌러도 한도에 안 걸리게)',
+    fs.readFileSync('./src/stream/panel.js', 'utf8').includes('pendingRefresh'));
+  ok('요약판은 하나씩 순서대로 보냄 (한꺼번에 던지면 전송 한도)',
+    /for \(const stream of session\.streams\)[\s\S]{0,400}?await channel\s*\n?\s*\.send/.test(si));
+  ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
+
+  const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+  ok('시작 시각은 release_timestamp 로 읽음', yt.includes('%(release_timestamp)s'));
+  ok('게시 시각(timestamp)을 시작 시각으로 쓰지 않음', !/'%\(timestamp\)s'/.test(yt));
+  ok('메타데이터 한 번 읽는 데는 제한시간을 따로 줌', /liveInfo[\s\S]{0,900}timeouts: \[10_000, 20_000\]/.test(yt));
+
+  const env = fs.readFileSync('./.env.example', 'utf8');
+  ok('.env.example 에 STREAM_CHANNEL_ID', env.includes('STREAM_CHANNEL_ID='));
+  ok('.env.example 이 망고에도 YTDLP_PATH 가 필요함을 알려줌',
+    /방송 기록[\s\S]{0,600}YTDLP_PATH/.test(env));
+}
+
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
 //
 // 디스코드 빌더는 `toJSON()` 안에서 값을 검사한다. 부르지 않으면 아무것도 확인하지 못한다.
@@ -1942,7 +2100,28 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const sampleItem = { id: 'movie-1', kind: 'movie', title: '영화', year: '2026', overview: null, rating: 7.5, votes: 100, poster: 'https://image.tmdb.org/t/p/w500/a.jpg' };
 
   const ai = await import('./src/ai/index.js');
+
+  // 방송 기록 화면. 위 6y) 에서 만든 세션을 그대로 재사용하지 않고 새로 만든다 —
+  // 이 블록만 따로 돌려도 통과해야 한다.
+  const ss = await import('./src/stream/store.js');
+  const sp = await import('./src/stream/panel.js');
+  await ss.initStreams();
+  const scr = ss.openSession('gs', 'chs', '발헤임');
+  ss.putStream(scr, { userId: 'u1', url: 'https://www.youtube.com/watch?v=' + 'A'.repeat(11), videoId: 'A'.repeat(11), startedAt: ss.nowSec() - 600, startSource: 'release_timestamp' });
+  const scrMark = ss.addMark(scr, 'u1');
+  scrMark.at = ss.nowSec() - 300;
+  const scrStream = ss.streamOf(scr, 'u1');
+  // 설명이 **없는** 마킹이 가장 위험하다 — 그때 setValue('') 가 빌더로 흘러간다.
+  const scrEmptySession = { ...scr, game: '', marks: [{ ...scrMark, text: '' }] };
+
   const screens = {
+    '방송 제어판 (기록 중)': () => sp.buildStreamPanel('gs'),
+    '방송 제어판 (기록 중 아님)': () => sp.buildStreamPanel('없는서버'),
+    '방송 시간 어긋남 창': () => sp.buildOffsetModal(scrStream),
+    '방송 설명 채우기 창': () => sp.buildDescModal(scr, scrStream, 0).modal,
+    '방송 설명 채우기 창 (설명 없음)': () => sp.buildDescModal(scrEmptySession, scrStream, 0).modal,
+    '방송 요약판': () => sp.buildSummary(scr, scrStream)[0],
+    '방송 요약판 (마킹 없음)': () => sp.buildSummary({ ...scr, marks: [] }, scrStream)[0],
     '일정 판': () => plan.buildPanel(samplePlan),
     '일정 판 (빈 값)': () => plan.buildPanel(emptyPlan),
     '일정 등록 창': () => plan.buildRegisterModal({ name: '251003-오사카' }),
@@ -2002,7 +2181,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 25개', union.length === 25, `${union.length}개`);
+  ok('둘을 합쳐 26개', union.length === 26, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

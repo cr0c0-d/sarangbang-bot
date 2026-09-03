@@ -32,6 +32,9 @@ import { handleMovieComponent } from './movie/index.js';
 import { handlePlanComponent, handlePlanModal, makeReminderFire } from './plan/index.js';
 import { initPlans, restoreReminders, flushPlans } from './plan/store.js';
 import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlements } from './plan/settle.js';
+import { handleStreamComponent, handleStreamModal } from './stream/index.js';
+import { initStreams, flushStreams } from './stream/store.js';
+import { ensureStreamPanels } from './stream/panel.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
@@ -89,6 +92,9 @@ client.once(Events.ClientReady, (c) => {
   cleanupPanelsOnStart(c, adoptGalleryPanel, adoptMusicPanel)
     // 지정해뒀는데 제어판이 아예 없으면(처음이거나 누가 지웠으면) 새로 띄웁니다.
     .then(() => (inRole('music') ? ensureHomePanels(c) : null))
+    // 방송 제어판은 **지우지 않고 내용만 새로 고칩니다.** 방송 기록은 재시작을 넘어
+    // 디스크에 남아 이어지므로 "기록 중" 이 거짓말이 되지 않습니다.
+    .then(() => (inRole('stream') ? ensureStreamPanels(c) : null))
     .catch((err) => console.error('[panel] 제어판 준비 실패:', err.message));
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
@@ -180,7 +186,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       ? 'poll'
       : /^(pl|st):/.test(interaction.customId)
         ? 'plan'
-        : null;
+        : interaction.customId.startsWith('tm:')
+          ? 'stream'
+          : null;
     if (!modalFeature || !inRole(modalFeature)) return;
     if (!featureEnabled(interaction.guildId, modalFeature)) {
       return interaction
@@ -189,6 +197,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
     try {
       if (modalFeature === 'poll') await handlePollModal(interaction);
+      else if (modalFeature === 'stream') await handleStreamModal(interaction, client);
       else if (interaction.customId.startsWith('st:')) await handleSettleModal(interaction);
       else await handlePlanModal(interaction, client);
     } catch (err) {
@@ -217,7 +226,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isPoll = interaction.customId.startsWith('v:');
     const isMovie = interaction.customId.startsWith('mv:');
     const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
-    if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan) return;
+    const isStream = interaction.customId.startsWith('tm:');
+    if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan && !isStream) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (
@@ -227,13 +237,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (isImage && !inRole('images')) ||
       (isPoll && !inRole('poll')) ||
       (isMovie && !inRole('movie')) ||
-      (isPlan && !inRole('plan'))
+      (isPlan && !inRole('plan')) ||
+      (isStream && !inRole('stream'))
     ) {
       return;
     }
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : isTts ? 'tts' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isTts ? 'tts' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : isStream ? 'stream' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -248,6 +259,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (isImage) await handleImageComponent(interaction);
       else if (isTimer) await handleTimerComponent(interaction);
       else if (isMovie) await handleMovieComponent(interaction);
+      else if (isStream) await handleStreamComponent(interaction, client);
       else if (interaction.customId.startsWith('st:')) await handleSettleComponent(interaction);
       else if (isPlan) await handlePlanComponent(interaction, client);
       else if (isPoll) await handlePollComponent(interaction);
@@ -351,6 +363,8 @@ if (inRole('plan')) {
   await initSettlements();
 }
 if (inRole('music')) await initHistory();
+// 방송 기록은 **몇 시간에 걸친 세션**입니다. 재시작을 견뎌야 의미가 있습니다.
+if (inRole('stream')) await initStreams();
 // 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
 if (inRole('ai')) await initAiUsage();
 
@@ -413,6 +427,8 @@ async function shutdown(signal) {
   await flushPolls().catch(() => {});
   await flushPlans().catch(() => {});
   await flushSettlements().catch(() => {});
+  // 재시작 직전 몇 초의 마킹이 사라지면 안 됩니다. 그게 안 사라지는 것이 이 기능의 존재 이유입니다.
+  await flushStreams().catch(() => {});
 
   webServer?.close();
   client.destroy();
