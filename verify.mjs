@@ -1613,6 +1613,108 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('지난 방송 요약판 다시 올리기 드롭다운', Boolean(sp) && JSON.stringify(sp.toJSON()).includes('tm:resum'));
   ok('지난 방송이 없으면 드롭다운도 없음', pn2.buildSessionPicker('없는서버') === null);
 
+  // ── 구글 드라이브 업로드 (선택 기능) ──
+  //
+  // ⚠️ **이 검사는 "우리 코드가 의도한 요청을 만드는가" 만 봅니다.**
+  //    구글이 그 요청을 받아주는지는 **확인되지 않았습니다** — 자격증명이 필요합니다.
+  //    다른 기능들(yt-dlp 구간 추출, 고정 주소 해석)은 실제로 돌려보고 만들었지만
+  //    이건 그러지 못했습니다. docs/게임방송-기획.md 7절.
+  //
+  // ⚠️ **실제 구글 API 를 부르지 않습니다.** fetch 를 가로챕니다.
+  //    (제미나이 검사에서 실제 API 를 불러 소유자의 무료 한도를 쓴 적이 있습니다)
+  {
+    const drive = await import('./src/stream/drive.js');
+    const realFetch = globalThis.fetch;
+    const calls = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      calls.push({ url: String(url), opts });
+      const u = String(url);
+      if (u.includes('oauth2.googleapis.com/token')) {
+        return new Response(JSON.stringify({ access_token: 'tok', expires_in: 3600 }), { status: 200 });
+      }
+      if (u.includes('/upload/drive/v3/files')) {
+        return new Response(JSON.stringify({ id: 'FILEID' }), { status: 200 });
+      }
+      if (u.includes('/permissions')) return new Response('{}', { status: 200 });
+      return new Response('{}', { status: 404 });
+    };
+
+    try {
+      // 키가 없으면 조용히 꺼지고, 무엇이 빠졌는지 알려줘야 한다.
+      ok('키가 없으면 기능이 꺼짐', drive.enabled() === false);
+      const miss = drive.missingConfigMessage();
+      ok('무엇이 빠졌는지 알려줌', miss.includes('GDRIVE_CLIENT_ID') && miss.includes('GDRIVE_REFRESH_TOKEN'));
+      ok('안 해도 된다고 알려줌', miss.includes('설정하지 않아도 됩니다'));
+      ok('키가 없으면 올리려 해도 막힘',
+        await drive.uploadClip('x', 'y').then(() => false, (e) => e.expected === true));
+      ok('키가 없을 때는 구글을 부르지 않음', calls.length === 0, `${calls.length}회 호출`);
+
+      // 키가 있는 것처럼 만들어 요청 모양을 본다.
+      const { config: dcfg } = await import('./src/config.js');
+      Object.assign(dcfg.drive, {
+        clientId: 'cid', clientSecret: 'sec', refreshToken: 'rt', folderId: 'FOLDER', shareAnyone: true,
+      });
+      drive.resetTokenCache();
+      ok('키가 있으면 켜짐', drive.enabled() === true);
+
+      const tmp = `${clips.baseDir()}/dtest.mp4`;
+      fs.mkdirSync(clips.baseDir(), { recursive: true });
+      fs.writeFileSync(tmp, Buffer.alloc(1024, 7));
+      const up = await drive.uploadClip(tmp, '테스트.mp4');
+
+      const token = calls.find((c) => c.url.includes('oauth2'));
+      const upload = calls.find((c) => c.url.includes('/upload/'));
+      const perm = calls.find((c) => c.url.includes('/permissions'));
+
+      ok('refresh_token 으로 access_token 을 받음',
+        String(token.opts.body).includes('grant_type=refresh_token'));
+      ok('multipart 업로드', upload.url.includes('uploadType=multipart'));
+      ok('공유 드라이브도 지원', upload.url.includes('supportsAllDrives=true'));
+      ok('Bearer 토큰을 붙임', upload.opts.headers.Authorization === 'Bearer tok');
+      const boundary = upload.opts.headers['Content-Type'].match(/boundary=(\S+)/)[1];
+      const body = Buffer.from(upload.opts.body).toString('latin1');
+      ok('본문이 헤더의 경계를 씀', body.startsWith(`--${boundary}\r\n`) && body.endsWith(`--${boundary}--\r\n`));
+      ok('메타데이터에 폴더를 넣음', body.includes('"parents":["FOLDER"]'));
+      ok('파일 바이트가 본문에 들어감', Buffer.from(upload.opts.body).length > 1024);
+      ok('링크 공개를 따로 요청', Boolean(perm) && String(perm.opts.body).includes('"type":"anyone"'));
+      ok('드라이브 링크를 돌려줌', up.link === 'https://drive.google.com/file/d/FILEID/view', up.link);
+
+      // 토큰은 캐시해야 한다. 업로드마다 왕복이 하나 늘어나면 안 된다.
+      const before = calls.filter((c) => c.url.includes('oauth2')).length;
+      await drive.uploadClip(tmp, '두번째.mp4');
+      ok('토큰을 캐시함 (업로드마다 다시 받지 않음)',
+        calls.filter((c) => c.url.includes('oauth2')).length === before);
+
+      // 실패하면 **구글이 한 말을 그대로** 보여줘야 한다. 원인을 지어내면 안 된다. (3.1-4)
+      globalThis.fetch = async (url) =>
+        String(url).includes('oauth2')
+          ? new Response(JSON.stringify({ error: 'invalid_grant' }), { status: 400 })
+          : new Response('{}', { status: 200 });
+      drive.resetTokenCache();
+      const err = await drive.uploadClip(tmp, 'x.mp4').then(() => null, (e) => e.message);
+      ok('인증 실패 시 구글 원문을 보여줌', err.includes('invalid_grant'));
+      ok('만료된 토큰이면 다시 받으라고 안내', err.includes('GDRIVE_REFRESH_TOKEN'));
+
+      fs.unlinkSync(tmp);
+      Object.assign(dcfg.drive, { clientId: '', clientSecret: '', refreshToken: '' });
+      drive.resetTokenCache();
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+
+    // ★ 가장 중요한 안전장치: **로컬 파일을 지우지 않는다.**
+    //   올렸다고 해놓고 반쪽만 갔을 때 원본까지 지우면 되돌릴 방법이 없다.
+    const dsrc = fs.readFileSync('./src/stream/drive.js', 'utf8');
+    ok('드라이브가 로컬 파일을 지우지 않음 (사본만 올림)',
+      !/unlink|\brm\b|GDRIVE_DELETE_LOCAL/.test(dsrc));
+    ok('검증하지 못했다는 사실을 파일 머리에 적어둠', dsrc.includes('실제 구글 API 로 검증하지 못했습니다'));
+    ok('googleapis 의존성을 늘리지 않음',
+      !JSON.parse(fs.readFileSync('./package.json', 'utf8')).dependencies.googleapis);
+    const si4 = fs.readFileSync('./src/stream/index.js', 'utf8');
+    ok('업로드가 실패해도 클립은 남는다고 알려줌', si4.includes('클립은 서버에 그대로 있습니다'));
+    ok('설정이 없으면 업로드를 시도하지 않음', si4.includes('if (driveEnabled())'));
+  }
+
   fs.rmSync(clips.baseDir(), { recursive: true, force: true });
 }
 

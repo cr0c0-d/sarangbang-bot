@@ -55,7 +55,8 @@ import {
   scheduleStreamPanelRefresh,
   DESC_PER_PAGE,
 } from './panel.js';
-import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget } from './clips.js';
+import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
+import { enabled as driveEnabled, uploadClip } from './drive.js';
 import { config } from '../config.js';
 
 /** 오프셋을 이 범위 밖으로 두면 실수입니다. 6시간이면 어떤 방송이든 덮습니다. */
@@ -716,6 +717,21 @@ async function submitClip(interaction, client) {
     `보기: ${clipPageUrl(session.id)}`,
     `이 방송의 클립 ${clipsOf(session).length}개`,
   ];
+
+  // 구글 드라이브는 **더하기만** 합니다. 설정이 없으면 아무 일도 없고,
+  // 실패해도 여기 한 줄이 붙을 뿐 로컬 파일과 웹페이지는 그대로입니다.
+  // (⚠️ 로컬 파일을 지우지 않습니다 — 반쪽만 올라갔을 때 되돌릴 방법이 없어집니다)
+  if (driveEnabled()) {
+    await interaction.editReply(lines.join('\n') + '\n\n☁️ 구글 드라이브에 올리는 중…').catch(() => {});
+    try {
+      const up = await uploadClip(clipFilePath(session.id, made.file), made.file);
+      lines.push(`\n☁️ 드라이브: ${up.link}`);
+      if (!up.shared) lines.push('(링크 공개 설정에 실패했습니다. 드라이브에서 직접 공유해주세요)');
+    } catch (err) {
+      // 원인을 지어내지 않습니다. drive.js 가 구글이 한 말을 담아 옵니다.
+      lines.push(`\n⚠️ 드라이브 업로드 실패 — 클립은 서버에 그대로 있습니다.\n${err.message}`);
+    }
+  }
   if (made.pruned > 0) {
     lines.push(
       `\n🧹 상한(세션당 ${config.stream.clipPerSession}개 · 전체 ${config.stream.clipTotal}개)을 넘어 오래된 클립 ${made.pruned}개를 지웠습니다.`

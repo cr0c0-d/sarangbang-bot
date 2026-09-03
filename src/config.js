@@ -202,6 +202,19 @@ export const config = {
     clipCleanupTargetPercent: Math.min(95, Math.max(10, num('STREAM_CLIP_CLEANUP_TARGET_PERCENT', 80))),
   },
 
+  // 구글 드라이브에 클립 사본 올리기. **선택 기능**이고, 없으면 조용히 꺼집니다.
+  // ⚠️ 이 기능은 실제 구글 API 로 검증하지 못했습니다. docs/게임방송-기획.md 7절.
+  drive: {
+    clientId: str('GDRIVE_CLIENT_ID'),
+    clientSecret: str('GDRIVE_CLIENT_SECRET'),
+    refreshToken: str('GDRIVE_REFRESH_TOKEN'),
+    // 비워두면 내 드라이브 최상위에 올라갑니다.
+    folderId: str('GDRIVE_FOLDER_ID'),
+    // 링크를 아는 사람이 볼 수 있게 할지. 클립 웹페이지와 같은 수준입니다.
+    shareAnyone: bool('GDRIVE_SHARE_ANYONE', true),
+    timeoutMs: num('GDRIVE_TIMEOUT_MS', 120_000),
+  },
+
   // 영화 정보 (TMDB). 없으면 /영화 만 안내하고 기능은 꺼둡니다 — 봇 전체가 죽으면 안 됩니다.
   tmdb: {
     // 개발자 포털이 두 가지를 줍니다. 새 방식(v4 읽기 토큰)을 먼저 씁니다.

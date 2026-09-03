@@ -627,6 +627,43 @@ npm run start:music
 > 사진 용량과는 **따로 계산**합니다 (`STREAM_CLIP_MAX_GB`) — 클립이 늘어도 사진이 지워지지 않습니다.
 > 클립 페이지의 🗑️ 는 갤러리와 같이 **`WEB_TOKEN`** 이 필요합니다. 보기·받기는 주소만 알면 됩니다.
 
+#### ☁️ 클립을 구글 드라이브에 올리기 (선택 · **안 해도 됩니다**)
+
+> ⚠️ **이 기능은 실제로 확인하지 못했습니다.** 다른 기능은 전부 돌려보고 만들었지만,
+> 이건 구글 계정 자격증명이 필요해서 확인할 수 없었습니다. 처음 쓸 때 오류가 나면
+> **구글이 한 말이 그대로 보입니다** — 그게 원인입니다.
+>
+> 설정을 안 하면 조용히 꺼집니다. 클립은 웹페이지에서 그대로 보고 받을 수 있습니다.
+> **로컬 파일은 지우지 않습니다** — 사본만 올립니다.
+
+설정하시려면 순서는 이렇습니다. (구글 계정에서 한 번만)
+
+1. [Google Cloud Console](https://console.cloud.google.com) → 프로젝트 만들기
+2. **API 및 서비스 → 라이브러리 → "Google Drive API" 검색 → 사용**
+3. **API 및 서비스 → OAuth 동의 화면** → 외부 → 앱 이름·이메일만 채우고 저장
+   → **대상(테스트 사용자)에 내 구글 계정을 추가**
+4. **API 및 서비스 → 사용자 인증 정보 → OAuth 클라이언트 ID 만들기**
+   → 애플리케이션 유형 **웹 애플리케이션**
+   → 승인된 리디렉션 URI 에 `https://developers.google.com/oauthplayground` 추가
+   → **클라이언트 ID·보안 비밀**을 받습니다
+5. [OAuth Playground](https://developers.google.com/oauthplayground) 에서
+   오른쪽 위 ⚙️ → **Use your own OAuth credentials** 체크 → 위 ID·비밀 입력
+   → 왼쪽 칸에 `https://www.googleapis.com/auth/drive.file` 입력 → Authorize
+   → **Exchange authorization code for tokens** → **Refresh token** 을 복사
+6. `.env` 에 넣고 재시작
+
+```
+GDRIVE_CLIENT_ID=...apps.googleusercontent.com
+GDRIVE_CLIENT_SECRET=...
+GDRIVE_REFRESH_TOKEN=1//...
+GDRIVE_FOLDER_ID=        # 특정 폴더에 넣고 싶으면. 폴더 주소의 마지막 부분
+```
+
+> 💡 3번의 **테스트 사용자**에 내 계정을 안 넣으면 5번에서 막힙니다.
+> 그리고 앱을 "테스트" 상태로 두면 **리프레시 토큰이 7일마다 만료됩니다.**
+> 만료되면 `invalid_grant` 가 나오고, 5번을 다시 하면 됩니다.
+> 계속 쓰시려면 OAuth 동의 화면을 **프로덕션으로 게시**하세요 (심사 없이 됩니다 — 내 데이터만 쓰므로).
+
 ### ⏰ 타이머 (읽어주기 기능의 곁가지)
 
 시간이 되면 **음성채널에서 소리로** 알려주고, 채팅으로도 멘션해줍니다.
