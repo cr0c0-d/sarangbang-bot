@@ -62,17 +62,36 @@ export function filePath(folder, file) {
 }
 
 /**
- * 폴더 안의 클립 목록. **`.mp4` 만 봅니다** — 실패해서 남은 반쪽 파일(`.part` 등)이
- * 클립처럼 보이면 안 됩니다.
+ * 클립이 될 수 있는 확장자.
+ *
+ * ⚠️ **`.mp4` 만 보면 안 됩니다.** 음성만 녹화된 방송은 `.m4a` 로 나옵니다.
+ *    그런데 아무 파일이나 받아도 안 됩니다 — 실패해서 남은 반쪽 파일(`.part`·`.ytdl`)이
+ *    클립처럼 보이면 안 됩니다. 그래서 **아는 확장자만** 받습니다.
  */
+export const VIDEO_EXT = ['mp4', 'mkv', 'webm', 'mov'];
+export const AUDIO_EXT = ['m4a', 'mp3', 'opus', 'aac', 'ogg'];
+const MEDIA_EXT = [...VIDEO_EXT, ...AUDIO_EXT];
+
+const extOf = (name) => String(name).toLowerCase().split('.').pop();
+
+/** 이 파일이 **소리만** 인가. 웹페이지가 `<audio>` 로 보여줄지 정하는 데 씁니다. */
+export function isAudioClip(name) {
+  return AUDIO_EXT.includes(extOf(name));
+}
+
+export function isMediaClip(name) {
+  return MEDIA_EXT.includes(extOf(name));
+}
+
+/** 폴더 안의 클립 목록. 아는 확장자만, 새것부터. */
 export async function listClips(folder) {
   const dir = folderPath(folder);
   const names = await fs.readdir(dir).catch(() => []);
   const out = [];
   for (const name of names) {
-    if (!name.toLowerCase().endsWith('.mp4')) continue;
+    if (!isMediaClip(name)) continue;
     const st = await fs.stat(path.join(dir, name)).catch(() => null);
-    if (st?.isFile()) out.push({ name, bytes: st.size, mtime: st.mtimeMs });
+    if (st?.isFile()) out.push({ name, bytes: st.size, mtime: st.mtimeMs, audio: isAudioClip(name) });
   }
   return out.sort((a, b) => b.mtime - a.mtime);
 }
@@ -97,15 +116,31 @@ export async function deleteClip(folder, file) {
     .catch(() => false);
 }
 
-/** 실패한 뒤에 남은 반쪽 파일들을 치웁니다. yt-dlp 는 `.part`·`.ytdl`·`.temp` 를 남깁니다. */
+/**
+ * 실패한 뒤에 남은 반쪽 파일들을 치웁니다. yt-dlp 는 `.part`·`.ytdl`·`.temp` 를 남깁니다.
+ *
+ * ⚠️ **확장자를 가정하지 않습니다.** 영상이면 `.mp4`, 소리만이면 `.m4a` 로 나오므로
+ *    "`.mp4` 만 남기기" 로 짜면 **성공한 음성 클립을 지웁니다.**
+ */
 async function cleanLeftovers(folder, stem) {
   const dir = folderPath(folder);
   const names = await fs.readdir(dir).catch(() => []);
   for (const name of names) {
-    if (!name.startsWith(stem)) continue;
-    if (name === `${stem}.mp4`) continue;
+    if (!name.startsWith(`${stem}.`)) continue;
+    if (isMediaClip(name)) continue; // 제대로 만들어진 것은 남깁니다
     await fs.unlink(path.join(dir, name)).catch(() => {});
   }
+}
+
+/** 방금 만들어진 결과 파일을 찾습니다. 확장자는 yt-dlp 가 정합니다. */
+async function findProduced(folder, stem) {
+  const dir = folderPath(folder);
+  const names = await fs.readdir(dir).catch(() => []);
+  const hit = names.find((n) => n.startsWith(`${stem}.`) && isMediaClip(n));
+  if (!hit) return null;
+  const st = await fs.stat(path.join(dir, hit)).catch(() => null);
+  if (!st?.isFile() || st.size === 0) return null;
+  return { file: hit, bytes: st.size, audio: isAudioClip(hit) };
 }
 
 /**
@@ -250,21 +285,29 @@ export function ffmpegLines(raw, limit = 6) {
     .slice(-limit);
 }
 
+/**
+ * **영상 포맷이 없다**는 답인가.
+ *
+ * 포맷 선택식이 영상을 반드시 요구하므로, 화면 없이 음성만 녹화된 방송은
+ * 이 답을 받습니다 (실측). 그걸 알아채고 **소리만으로 다시** 시도합니다.
+ */
+export function looksLikeNoVideo(message) {
+  return /requested format is not available/i.test(String(message ?? ''));
+}
+
 export function clipError(message, raw = '') {
   const s = String(message ?? '');
   const low = s.toLowerCase();
 
-  // ★ **화면 없이 음성만 녹화된 방송.** 소유자 서버에서 실제로 겪은 원인입니다 —
-  //   같은 방송을 화면까지 녹화해서 다시 하니 잘 됐습니다 (2026-09-03).
-  //   그래서 포맷 선택식이 영상을 반드시 요구하고, 없으면 여기로 옵니다.
-  if (low.includes('requested format is not available')) {
+  // ★ 영상도 소리도 못 찾은 경우입니다. (소리만 받기까지 실패한 뒤에 여기 옵니다)
+  //   화면 없는 방송 자체는 이제 **소리만으로 만들어줍니다** — makeClip 참고.
+  if (looksLikeNoVideo(s)) {
     return (
-      '이 방송에서 **화면(영상)을 찾지 못했습니다.**\n\n' +
-      '음성만 녹화된 방송일 가능성이 큽니다. 클립은 영상을 잘라내는 것이라\n' +
-      '**화면까지 녹화한 방송**이어야 만들 수 있습니다.\n\n' +
-      '· OBS 에서 화면 소스가 들어가 있는지 확인해주세요.\n' +
-      '· 타임라인 텍스트는 화면이 없어도 그대로 남아 있습니다.\n' +
-      `· 화질 상한(현재 ${config.stream.clipMaxHeight}p)이 너무 낮아도 이 오류가 날 수 있습니다.`
+      '이 방송에서 **쓸 수 있는 화면도 소리도 찾지 못했습니다.**\n\n' +
+      '· 방송이 아직 다시보기로 만들어지지 않았을 수 있습니다. 몇 분 뒤에 다시 눌러주세요.\n' +
+      '· OBS 에 화면·소리 소스가 들어가 있는지 확인해주세요.\n' +
+      `· 화질 상한(현재 ${config.stream.clipMaxHeight}p)이 너무 낮아도 이 답이 옵니다.\n` +
+      '· 타임라인 텍스트는 이것과 무관하게 그대로 남아 있습니다.'
     );
   }
 
@@ -372,38 +415,65 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
   const out = path.join(folderPath(folder), stem);
 
   const t0 = Date.now();
-  const cut = () =>
-    downloadSection(url, { startSec, endSec, outPath: out, maxHeight: config.stream.clipMaxHeight });
+  const cut = (audioOnly) =>
+    downloadSection(url, {
+      startSec,
+      endSec,
+      outPath: out,
+      maxHeight: config.stream.clipMaxHeight,
+      audioOnly,
+    });
 
-  try {
-    await cut();
-  } catch (err) {
-    // ⚠️ 실패하면 **반쪽 파일을 치웁니다.** `--force-overwrites` 는 다음 실행 이야기라
-    //    지금 남은 `.part` 를 지워주지 않습니다.
-    await cleanLeftovers(folder, stem);
+  /** 소리만으로 만들었는가. 사람에게 **반드시 말해줘야** 합니다. */
+  let audioOnly = false;
 
-    // ffmpeg 이 **죽었으면**(-11 = SIGSEGV 등) 다른 ffmpeg 으로 한 번 더 해봅니다.
-    // 소유자 서버에서 묶음 ffmpeg 이 실제로 이렇게 죽었습니다. 원인은 확정하지 못했지만
-    // 서버에 깔린 ffmpeg 으로 바꾸면 되는 경우가 있으니, 사람이 손대기 전에 봇이 해봅니다.
-    if (looksLikeFfmpegCrash(err.message) && nextFfmpeg()) {
-      console.warn(`[stream] ffmpeg 이 죽어서(${err.message.trim()}) 다른 ffmpeg 으로 다시 시도합니다.`);
-      try {
-        await cut();
-      } catch (again) {
-        await cleanLeftovers(folder, stem);
-        logClipFailure(again);
-        throw userError(clipError(again.message, again.stderr));
-      }
-      // 성공했으면 그대로 진행합니다. 아래에서 파일을 확인합니다.
-    } else {
-      logClipFailure(err);
-      throw userError(clipError(err.message, err.stderr));
+  const attempt = async (isAudio) => {
+    try {
+      await cut(isAudio);
+      return null;
+    } catch (err) {
+      // ⚠️ 실패하면 **반쪽 파일을 치웁니다.** `--force-overwrites` 는 다음 실행 이야기라
+      //    지금 남은 `.part` 를 지워주지 않습니다.
+      await cleanLeftovers(folder, stem);
+      return err;
     }
+  };
+
+  let err = await attempt(false);
+
+  // ffmpeg 이 **죽었으면**(-11 = SIGSEGV 등) 다른 ffmpeg 으로 한 번 더 해봅니다.
+  // 소유자 서버에서 묶음 ffmpeg 이 실제로 이렇게 죽었습니다. 원인은 확정하지 못했지만
+  // 서버에 깔린 ffmpeg 으로 바꾸면 되는 경우가 있으니, 사람이 손대기 전에 봇이 해봅니다.
+  if (err && looksLikeFfmpegCrash(err.message) && nextFfmpeg()) {
+    console.warn(`[stream] ffmpeg 이 죽어서(${err.message.trim()}) 다른 ffmpeg 으로 다시 시도합니다.`);
+    err = await attempt(false);
   }
 
-  const file = `${stem}.mp4`;
-  const st = await fs.stat(path.join(folderPath(folder), file)).catch(() => null);
-  if (!st?.isFile()) {
+  // ★ **화면이 없는 방송이면 소리만이라도 잘라냅니다.**
+  //   웃긴 순간은 소리만으로도 남길 값이 있습니다 (소유자 요청).
+  //   ⚠️ 다만 **처음부터 소리만 받으면 안 됩니다.** 그러면 영상이 있는 방송에서도
+  //      조용히 소리만 내주게 됩니다 — 사람은 뭘 받았는지 모릅니다.
+  //      영상을 먼저 요구하고, **없다는 답을 받은 뒤에만** 소리로 내려갑니다.
+  //   실측: 15초 구간이 3.7초 · 244KB (영상은 14초 · 2.4MB). 훨씬 싸고 빠릅니다.
+  if (err && looksLikeNoVideo(err.message) && config.stream.clipAudioFallback) {
+    console.log('[stream] 화면이 없는 방송입니다. 소리만으로 잘라냅니다.');
+    const audioErr = await attempt(true);
+    if (audioErr) {
+      logClipFailure(audioErr);
+      throw userError(clipError(audioErr.message, audioErr.stderr));
+    }
+    audioOnly = true;
+    err = null;
+  }
+
+  if (err) {
+    logClipFailure(err);
+    throw userError(clipError(err.message, err.stderr));
+  }
+
+  // ⚠️ **확장자를 가정하지 않습니다.** 영상은 `.mp4`, 소리만은 `.m4a` 로 나옵니다.
+  const made = await findProduced(folder, stem);
+  if (!made) {
     await cleanLeftovers(folder, stem);
     throw userError(
       'yt-dlp 가 끝났다고 했는데 파일이 없습니다.\n' +
@@ -415,7 +485,15 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
   // 다음 것을 위해 자리를 만들어둡니다. 방금 만든 것은 가장 새것이라 안 지워집니다.
   const pruned = await pruneClips(folder).catch(() => 0);
 
-  return { file, bytes: st.size, pruned, seconds: (Date.now() - t0) / 1000 };
+  return {
+    file: made.file,
+    bytes: made.bytes,
+    // 확장자로 다시 판단합니다 — 요청과 결과가 어긋났을 때 **결과가 맞습니다.**
+    audioOnly: made.audio,
+    requestedAudioOnly: audioOnly,
+    pruned,
+    seconds: (Date.now() - t0) / 1000,
+  };
 }
 
 /** 웹에서 이 세션 클립을 볼 주소. */

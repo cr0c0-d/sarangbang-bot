@@ -52,7 +52,15 @@ Object.assign(process.env, VERIFY_ENV);
 //    죽었을 때 남은 상태가 **다음 실행을 거짓으로 실패시킵니다.**
 //    실제로 그랬습니다 — 등록해둔 축약어가 남아 "등록 전에는 그대로" 가 실패했습니다.
 for (const dir of ['./data/verify-data', './data/verify-images']) {
-  fs.rmSync(dir, { recursive: true, force: true });
+  // ⚠️ `force: true` 는 "없음"만 무시합니다. 파일이 잠겨 있으면(윈도우에서 다른
+  //    프로세스가 잡고 있을 때) 그대로 던져서 **검증이 시작도 못 하고 죽습니다.**
+  //    지우지 못한 것보다 죽는 것이 나쁩니다. 못 지우면 알리고 계속합니다.
+  try {
+    fs.rmSync(dir, { recursive: true, force: true });
+  } catch (e) {
+    console.warn(`[verify] ${dir} 를 지우지 못했습니다 (${e.code ?? e.message}).`);
+    console.warn('         남은 상태 때문에 거짓 실패가 날 수 있습니다. 손으로 지우고 다시 돌려주세요.');
+  }
 }
 // ── 검사 결과 모으기 ─────────────────────────────────────────
 //
@@ -1691,15 +1699,43 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     ok('183 은 실제로 겪은 원인(화면 없음)을 먼저 짚어줌',
       clips.ffmpegExitMeaning(183)?.likely.includes('음성만 녹화된 방송'));
 
-    // 화면이 없으면 183 대신 알아들을 수 있는 오류가 나야 한다.
-    const noVideo = clips.clipError('ERROR: Requested format is not available. Use --list-formats …');
-    ok('화면 없는 방송을 알아보고 설명', noVideo.includes('화면(영상)을 찾지 못했습니다'));
-    ok('음성만 녹화된 경우를 짚어줌', noVideo.includes('음성만 녹화된 방송'));
-    ok('타임라인은 남아 있다고 알려줌', noVideo.includes('타임라인 텍스트는'));
-    // ★ 맨 뒤 /b 를 붙이면 오디오 포맷에 걸려 소리만 든 mp4 를 클립이라고 내준다.
+    // ── 화면 없는 방송은 **소리만** 잘라준다 (소유자 요청) ──
+    //
+    // ⚠️ 처음부터 소리만 받으면 안 된다. 그러면 영상이 있는 방송에서도 조용히
+    //   소리만 내주게 되고, 사람은 뭘 받았는지 모른다.
+    //   영상을 먼저 요구하고 "없다" 는 답을 받은 뒤에만 내려간다.
+    ok('영상 포맷이 없다는 답을 알아봄',
+      clips.looksLikeNoVideo('ERROR: Requested format is not available. Use --list-formats …'));
+    ok('다른 오류는 영상 없음으로 안 봄', !clips.looksLikeNoVideo('ERROR: Video unavailable'));
+
     const ytFmt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
-    ok('포맷 선택식이 영상을 반드시 요구',
+    // ★ 맨 뒤 /b 를 붙이면 오디오 포맷에 걸려 소리만 든 파일을 "영상 클립" 이라고 내준다.
+    ok('영상을 받을 때는 영상을 반드시 요구',
       ytFmt.includes('b[vcodec!=none]') && !/\/b`;/.test(ytFmt));
+    ok('소리만 받는 선택식이 따로 있음', ytFmt.includes("'ba[ext=m4a]/ba/b[acodec!=none]'"));
+    // 소리를 mp4 로 감싸면 브라우저가 영상처럼 열려다 검은 화면을 보여준다.
+    ok('소리만일 때는 mp4 로 감싸지 않음',
+      /if \(!audioOnly\) args\.push\('--merge-output-format', 'mp4'\)/.test(ytFmt));
+
+    const csrc3 = fs.readFileSync('./src/stream/clips.js', 'utf8');
+    ok('영상을 먼저 시도한 뒤에만 소리로 내려감',
+      csrc3.indexOf('let err = await attempt(false)') < csrc3.indexOf('looksLikeNoVideo(err.message)'));
+    ok('소리 내려가기를 끌 수 있음', csrc3.includes('config.stream.clipAudioFallback'));
+    ok('확장자를 가정하지 않고 결과를 찾음',
+      csrc3.includes('findProduced') && !csrc3.includes('`${stem}.mp4`'));
+
+    // 목록·페이지가 소리 클립을 구분해야 한다.
+    ok('mp4 만이 아니라 m4a 도 클립으로 봄', clips.isMediaClip('a.m4a') && clips.isMediaClip('a.mp4'));
+    ok('소리 클립을 알아봄', clips.isAudioClip('a.m4a') && !clips.isAudioClip('a.mp4'));
+    ok('반쪽 파일은 여전히 클립이 아님',
+      !clips.isMediaClip('a.mp4.part') && !clips.isMediaClip('a.ytdl'));
+    const wsrc = fs.readFileSync('./src/web/server.js', 'utf8');
+    // 소리만인 클립을 <video> 로 보여주면 검은 화면이 나온다. "재생이 안 된다" 로 보인다.
+    ok('소리 클립은 <audio> 로 보여줌', wsrc.includes('<audio src=') && wsrc.includes('f.audio'));
+    ok('소리 클립임을 화면에 표시', wsrc.includes('🎧 소리만'));
+    const si5 = fs.readFileSync('./src/stream/index.js', 'utf8');
+    ok('소리만 만들어졌으면 반드시 말해줌',
+      si5.includes('made.audioOnly') && si5.includes('소리만 잘라냈습니다'));
     // ⚠️ 모르는 코드는 지어내지 않는다. (3.1-4)
     ok('모르는 코드는 null (지어내지 않음)', clips.ffmpegExitMeaning(77) === null);
 

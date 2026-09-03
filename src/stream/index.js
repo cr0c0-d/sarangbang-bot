@@ -736,13 +736,24 @@ async function submitClip(interaction, client) {
     title: title || hhmmss(from),
   });
 
-  const lines = [
-    `🎥 **클립을 만들었습니다** — ${hhmmss(from)} ~ ${hhmmss(to)} (${length}초)`,
-    `${made.file} · ${fmtBytes(made.bytes)} · ${made.seconds.toFixed(0)}초 걸림`,
-    '',
-    `보기: ${clipPageUrl(session.id)}`,
-    `이 방송의 클립 ${clipsOf(session).length}개`,
-  ];
+  // ⚠️ 소리만 만들어졌으면 **반드시 말해줍니다.** 조용히 소리만 주면
+  //    사람은 영상을 받았다고 생각하고 나중에 열어보고 당황합니다.
+  const lines = made.audioOnly
+    ? [
+        `🎧 **소리만 잘라냈습니다** — ${hhmmss(from)} ~ ${hhmmss(to)} (${length}초)`,
+        '이 방송에는 **화면이 없습니다** (음성만 녹화된 방송입니다).',
+        `${made.file} · ${fmtBytes(made.bytes)} · ${made.seconds.toFixed(0)}초 걸림`,
+        '',
+        `듣기: ${clipPageUrl(session.id)}`,
+        `이 방송의 클립 ${clipsOf(session).length}개`,
+      ]
+    : [
+        `🎥 **클립을 만들었습니다** — ${hhmmss(from)} ~ ${hhmmss(to)} (${length}초)`,
+        `${made.file} · ${fmtBytes(made.bytes)} · ${made.seconds.toFixed(0)}초 걸림`,
+        '',
+        `보기: ${clipPageUrl(session.id)}`,
+        `이 방송의 클립 ${clipsOf(session).length}개`,
+      ];
 
   // 구글 드라이브는 **더하기만** 합니다. 설정이 없으면 아무 일도 없고,
   // 실패해도 여기 한 줄이 붙을 뿐 로컬 파일과 웹페이지는 그대로입니다.

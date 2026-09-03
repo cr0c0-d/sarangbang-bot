@@ -789,49 +789,51 @@ export async function liveInfo(url) {
  *    제한시간을 직접 넘기므로 문제가 없습니다. 망고에서 yt-dlp 를 새로 부를 때는
  *    **반드시 `timeouts` 를 함께 넘기세요.**
  *
+ * ⚠️ 음성만 녹화된 방송도 있습니다. 그때는 `audioOnly` 로 다시 부르면 **소리만** 잘라옵니다
+ *    (실측: 15초 구간 → 3.7초 · 244KB · `.m4a` · copy). 영상보다 훨씬 싸고 빠릅니다.
+ *
  * @param {string} url 영상 주소
- * @param {{startSec:number, endSec:number, outPath:string, maxHeight?:number}} opts
- *   `outPath` 는 확장자 없는 경로입니다. yt-dlp 가 `.mp4` 를 붙입니다.
+ * @param {{startSec:number, endSec:number, outPath:string, maxHeight?:number, audioOnly?:boolean}} opts
+ *   `outPath` 는 **확장자 없는** 경로입니다. yt-dlp 가 알맞은 확장자를 붙입니다
+ *   (영상이면 `.mp4`, 소리만이면 `.m4a`). 그래서 부르는 쪽은 **결과 파일을 찾아야** 합니다.
  * @returns {Promise<string>} yt-dlp 가 남긴 출력 (진단용)
  */
-export function downloadSection(url, { startSec, endSec, outPath, maxHeight = 720 }) {
+export function downloadSection(url, { startSec, endSec, outPath, maxHeight = 720, audioOnly = false }) {
   const h = Math.max(240, Math.round(maxHeight));
-  // ⚠️ **맨 뒤에 `/b`(무엇이든) 를 붙이지 마세요.**
-  //    화면 없이 음성만 녹화된 방송에서 `b` 는 **오디오 포맷에 걸립니다.**
-  //    그러면 소리만 든 mp4 를 "클립" 이라고 내주거나, 알아들을 수 없는 오류가 납니다
-  //    (소유자 서버에서 실제로 `ffmpeg exited with code 183` 이 났습니다).
-  //    영상을 반드시 요구하면 yt-dlp 가 `Requested format is not available` 로 답하고,
-  //    그건 "화면이 없는 방송" 이라고 사람에게 설명할 수 있습니다. (clips.js 의 clipError)
-  const format =
-    `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]/` +
-    `b[height<=${h}][vcodec^=avc1]/` +
-    `bv*[height<=${h}]+ba/` +
-    `b[height<=${h}]/` +
-    // 화질 상한을 못 맞추더라도 **영상은 있어야** 합니다.
-    `bv*+ba/b[vcodec!=none]`;
 
-  return run(
-    [
-      '--no-warnings',
-      '--no-progress',
-      '--ignore-config',
-      '--no-playlist',
-      '--ffmpeg-location',
-      ffmpegInUse(),
-      '--download-sections',
-      `*${Math.max(0, Math.floor(startSec))}-${Math.floor(endSec)}`,
-      '-f',
-      format,
-      '--merge-output-format',
-      'mp4',
-      '--force-overwrites',
-      '-o',
-      `${outPath}.%(ext)s`,
-      ...extraArgs(),
-      url,
-    ],
-    { timeouts: [180_000, 300_000] }
-  );
+  // ⚠️ **영상을 받을 때 맨 뒤에 `/b`(무엇이든) 를 붙이지 마세요.**
+  //    화면 없이 음성만 녹화된 방송에서 `b` 는 **오디오 포맷에 걸립니다.**
+  //    그러면 소리만 든 파일을 "영상 클립" 이라고 조용히 내줍니다 — 사람은 뭘 받았는지 모릅니다.
+  //    영상을 반드시 요구하면 yt-dlp 가 `Requested format is not available` 로 답하고,
+  //    그때 부르는 쪽이 **소리만으로 다시** 시도합니다 (clips.js 의 makeClip).
+  const format = audioOnly
+    ? 'ba[ext=m4a]/ba/b[acodec!=none]'
+    : `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]/` +
+      `b[height<=${h}][vcodec^=avc1]/` +
+      `bv*[height<=${h}]+ba/` +
+      `b[height<=${h}]/` +
+      // 화질 상한을 못 맞추더라도 **영상은 있어야** 합니다.
+      `bv*+ba/b[vcodec!=none]`;
+
+  const args = [
+    '--no-warnings',
+    '--no-progress',
+    '--ignore-config',
+    '--no-playlist',
+    '--ffmpeg-location',
+    ffmpegInUse(),
+    '--download-sections',
+    `*${Math.max(0, Math.floor(startSec))}-${Math.floor(endSec)}`,
+    '-f',
+    format,
+  ];
+  // ⚠️ 소리만 받을 때 `--merge-output-format mp4` 를 주면 **소리를 mp4 로 감싸** 버립니다.
+  //    브라우저가 영상처럼 열려다 검은 화면을 보여줍니다. `.m4a` 로 두는 것이 맞습니다.
+  if (!audioOnly) args.push('--merge-output-format', 'mp4');
+
+  args.push('--force-overwrites', '-o', `${outPath}.%(ext)s`, ...extraArgs(), url);
+
+  return run(args, { timeouts: [180_000, 300_000] });
 }
 
 /** 캐시가 실제로 쌓였는지. 안 쌓이면 곡마다 플레이어 JS 를 다시 받습니다. */

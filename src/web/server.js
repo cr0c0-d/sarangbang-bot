@@ -383,11 +383,17 @@ function clipPage(folder, files) {
       const src = `/clip/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
       const dl = `/cdl/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
       const when = new Date(f.mtime).toLocaleString('ko-KR');
+      // ⚠️ 소리만인 클립을 `<video>` 로 보여주면 **검은 화면**이 나옵니다.
+      //    사람은 "재생이 안 된다" 고 생각합니다. 종류에 맞는 태그를 씁니다.
+      const player = f.audio
+        ? `<div class="audio-wrap"><span class="audio-badge">🎧 소리만</span>
+             <audio src="${esc(src)}" controls preload="metadata"></audio></div>`
+        : `<video src="${esc(src)}" controls preload="metadata" playsinline></video>`;
       return `<div class="clip" data-name="${esc(f.name)}">
-        <video src="${esc(src)}" controls preload="metadata" playsinline></video>
+        ${player}
         <div class="clip-info">
-          <b>${esc(f.name.replace(/\.mp4$/i, ''))}</b>
-          <span class="muted">${fmtBytes(f.bytes)} · ${esc(when)}</span>
+          <b>${esc(f.name.replace(/\.[a-z0-9]+$/i, ''))}</b>
+          <span class="muted">${fmtBytes(f.bytes)} · ${esc(when)}${f.audio ? ' · 화면 없음' : ''}</span>
         </div>
         <div class="clip-actions">
           <a class="btn primary" href="${esc(dl)}">⬇️ 받기</a>
@@ -412,6 +418,12 @@ function clipPage(folder, files) {
   .clips { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); }
   .clip { border: 1px solid var(--line); border-radius: 12px; background: var(--card); overflow: hidden; }
   .clip video { width: 100%; display: block; background: #000; aspect-ratio: 16/9; }
+  .audio-wrap {
+    aspect-ratio: 16/9; background: var(--bg); display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 12px; border-bottom: 1px solid var(--line);
+  }
+  .audio-badge { font-size: 13px; color: var(--muted); }
+  .audio-wrap audio { width: 92%; }
   .clip-info { padding: 10px 12px 4px; display: flex; flex-direction: column; gap: 2px; }
   .clip-info b { font-size: 14px; word-break: break-all; }
   .clip-actions { padding: 8px 12px 12px; display: flex; gap: 8px; }

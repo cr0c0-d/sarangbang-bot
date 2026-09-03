@@ -189,6 +189,10 @@ export const config = {
     //    **원인은 그대로 둔 채 사진을 지웁니다** (images/cleanup.js 머리말).
     clipMaxSec: Math.max(5, num('STREAM_CLIP_MAX_SEC', 180)),
     clipMaxHeight: Math.max(240, num('STREAM_CLIP_MAX_HEIGHT', 720)),
+    // 화면 없이 음성만 녹화된 방송이면 **소리만** 잘라냅니다.
+    // ⚠️ 영상을 먼저 요구하고 "없다" 는 답을 받은 뒤에만 내려갑니다 —
+    //    처음부터 소리만 받으면 영상이 있는 방송에서도 조용히 소리만 내주게 됩니다.
+    clipAudioFallback: bool('STREAM_CLIP_AUDIO_FALLBACK', true),
     clipPerSession: Math.max(1, num('STREAM_CLIP_PER_SESSION', 20)),
     clipTotal: Math.max(1, num('STREAM_CLIP_TOTAL', 200)),
     // 클립 폴더가 쓸 수 있는 예산(GB). 넘으면 오래된 것부터 지웁니다.
