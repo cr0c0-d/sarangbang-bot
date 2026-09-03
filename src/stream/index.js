@@ -34,6 +34,8 @@ import {
   setMarkText,
   addClip,
   clipsOf,
+  setSummaryMessages,
+  summaryMessages,
   timelineFor,
   hhmmss,
   humanDuration,
@@ -269,13 +271,7 @@ async function resendPastSummary(interaction, client) {
     return interaction.editReply('방송 채널을 찾지 못했습니다. `/채널설정` 에서 확인해주세요.');
   }
 
-  for (const stream of session.streams) {
-    for (const payload of buildSummary(session, stream)) {
-      await channel
-        .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
-        .catch(() => {});
-    }
-  }
+  for (const stream of session.streams) await postSummary(channel, session, stream);
   await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
   await interaction.editReply(`📝 요약판을 <#${session.channelId}> 에 다시 올렸습니다.`);
 }
@@ -347,16 +343,9 @@ async function endSession(interaction, client) {
   closeSession(session);
 
   // ⚠️ **하나씩 순서대로** 보냅니다. 6명분을 한꺼번에 던지면 채널 전송 한도에 걸립니다.
+  //    보낸 메시지 ID 를 기억해둡니다 — 나중에 설명·클립이 바뀌면 **그 자리에서 고쳐 씁니다.**
   let sent = 0;
-  for (const stream of session.streams) {
-    for (const payload of buildSummary(session, stream)) {
-      const ok = await channel
-        .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
-        .then(() => true)
-        .catch(() => false);
-      if (ok) sent++;
-    }
-  }
+  for (const stream of session.streams) sent += await postSummary(channel, session, stream);
 
   // 제어판을 **맨 마지막에** 다시 올립니다. 그래야 채널 맨 아래에 남습니다.
   await repostStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
@@ -504,7 +493,7 @@ async function submitClip(interaction, client) {
   await interaction.editReply(lines.join('\n'));
 
   // 요약판의 ✅ 표시와 [클립 보기] 링크가 따라오게 다시 올립니다.
-  await resendSummary(client, session, stream).catch(() => {});
+  await updateSummary(client, session, stream).catch(() => {});
 }
 
 /**
@@ -618,20 +607,55 @@ async function submitDesc(interaction, client) {
   await interaction.reply(payload);
 
   // 요약판의 타임라인이 바뀌었으니 다시 올려줍니다.
-  await resendSummary(client, session, stream).catch(() => {});
+  await updateSummary(client, session, stream).catch(() => {});
 }
 
-/** 설명이 바뀐 뒤 요약판을 새로 올립니다. 옛 요약판은 그대로 두고 최신본을 아래에 붙입니다. */
-async function resendSummary(client, session, stream) {
+/**
+ * 요약판을 **그 자리에서 고쳐 씁니다.**
+ *
+ * ★ 새로 올리면 안 됩니다. 클립을 5개 만들면 채널에 같은 타임라인이 6장 쌓입니다.
+ *   (제어판을 메시지 하나로 고쳐 쓰는 것과 같은 이유 — 3.6-1)
+ *
+ * @returns {Promise<boolean>} 고쳐 쓰지 못했으면 false (부르는 쪽이 새로 올립니다)
+ */
+async function refreshSummary(client, session, stream) {
+  const ids = summaryMessages(session, stream.userId);
+  const pages = buildSummary(session, stream);
+  // 설명을 채우면 글자가 늘어 장수가 바뀔 수 있습니다. 그때는 고쳐 쓸 수 없습니다.
+  if (ids.length === 0 || ids.length !== pages.length) return false;
+
+  const channel = await client.channels.fetch(session.channelId).catch(() => null);
+  if (!channel?.isTextBased?.()) return false;
+
+  for (let i = 0; i < ids.length; i++) {
+    const msg = await channel.messages.fetch(ids[i]).catch(() => null);
+    if (!msg) return false; // 누가 지웠습니다. 새로 올려야 합니다.
+    await msg.edit({ content: pages[i].content, components: pages[i].components ?? [] }).catch(() => {});
+  }
+  return true;
+}
+
+/** 요약판을 새로 올리고 메시지 ID 를 기억합니다. **하나씩 순서대로** 보냅니다. */
+async function postSummary(channel, session, stream) {
+  const ids = [];
+  for (const payload of buildSummary(session, stream)) {
+    const sent = await channel
+      .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
+      .catch(() => null);
+    if (sent) ids.push(sent.id);
+  }
+  if (ids.length > 0) setSummaryMessages(session, stream.userId, ids);
+  return ids.length;
+}
+
+/** 고쳐 쓰기를 먼저 시도하고, 안 되면 새로 올립니다. */
+async function updateSummary(client, session, stream) {
+  if (await refreshSummary(client, session, stream)) return;
+
   const channel = await client.channels.fetch(session.channelId).catch(() => null);
   if (!channel?.isTextBased?.()) return;
-  for (const payload of buildSummary(session, stream)) {
-    await channel
-      .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
-      .catch(() => {});
-  }
-  // ⚠️ **기록 중인지 따지지 말고 항상 다시 올립니다.** [▶️ 이어서 기록] 으로 세션을 다시 연
-  //    뒤에 설명을 채우면, 새 요약판이 제어판 **아래**에 쌓여 제어판이 파묻힙니다.
-  //    그때 아무도 제어판을 맨 아래로 되돌려주지 않습니다.
+  await postSummary(channel, session, stream);
+  // 새로 올렸으니 제어판이 파묻혔습니다. 맨 아래로 되돌립니다.
+  // (고쳐 쓴 경우에는 채널에 아무것도 안 늘어나므로 건드리지 않습니다)
   await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
 }

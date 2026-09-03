@@ -2208,7 +2208,15 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('제어판 수정을 몰아서 함 (6명이 연달아 눌러도 한도에 안 걸리게)',
     fs.readFileSync('./src/stream/panel.js', 'utf8').includes('pendingRefresh'));
   ok('요약판은 하나씩 순서대로 보냄 (한꺼번에 던지면 전송 한도)',
-    /for \(const stream of session\.streams\)[\s\S]{0,400}?await channel\s*\n?\s*\.send/.test(si));
+    /for \(const payload of buildSummary\(session, stream\)\)[\s\S]{0,300}?await channel\s*\n?\s*\.send/.test(si));
+  // ★ 클립·설명이 바뀔 때 요약판을 **새로 올리면** 같은 타임라인이 채널에 쌓인다.
+  //   클립 5개 = 요약판 6장. 제어판처럼 그 자리에서 고쳐 써야 한다.
+  ok('요약판은 그 자리에서 고쳐 씀 (새로 올려 쌓지 않음)',
+    si.includes('async function refreshSummary') && si.includes('msg.edit({ content:'));
+  ok('요약판 메시지 ID 를 기억해둠 (고쳐 쓰려면 필요)',
+    si.includes('setSummaryMessages(session, stream.userId, ids)'));
+  ok('고쳐 쓰지 못하면 새로 올림 (장수가 바뀌었을 때)',
+    /if \(await refreshSummary\([\s\S]{0,200}?postSummary\(channel, session, stream\)/.test(si));
   ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
   // 채널을 못 찾으면 **닫지 않는다.** 닫아버리면 [이어서 기록] 버튼도 못 그려서 되돌릴 길이 없다.
   ok('방송 채널을 못 찾으면 종료하지 않음',

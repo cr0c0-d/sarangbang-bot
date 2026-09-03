@@ -169,6 +169,22 @@ export function removeLastMark(session) {
   return gone;
 }
 
+// ── 요약판 메시지 기억 ────────────────────────────────────────
+//
+// ★ 왜 기억하는가: 설명을 채우거나 클립을 만들 때마다 요약판을 **새로 올리면**
+//   채널에 같은 타임라인이 5장, 6장 쌓입니다. 제어판을 메시지 하나로 고쳐 쓰는 것과
+//   같은 이유로(3.6-1) 요약판도 **그 자리에서 고쳐 씁니다.**
+
+export function setSummaryMessages(session, userId, messageIds) {
+  session.summaryMsgs ??= {};
+  session.summaryMsgs[userId] = messageIds;
+  save();
+}
+
+export function summaryMessages(session, userId) {
+  return session.summaryMsgs?.[userId] ?? [];
+}
+
 // ── 클립 ──────────────────────────────────────────────────────
 
 /** 만든 클립을 기록해둡니다. 파일 자체는 `clips.js` 가 다룹니다. */
