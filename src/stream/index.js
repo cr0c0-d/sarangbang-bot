@@ -938,11 +938,14 @@ async function submitDesc(interaction, client) {
   const page = rows.slice(from, from + DESC_PER_PAGE);
 
   let changed = 0;
+  // 같은 내용으로 재제출해도 앞선 동기화 실패를 복구할 수 있게 페이지 전체를 대상으로 둡니다.
+  const changedMarkIds = new Set(page.map(({ mark }) => mark.id));
   for (const { mark } of page) {
     // 칸을 안 채웠으면 빈 문자열이 옵니다. 원래 있던 설명을 지우는 것도 뜻으로 받습니다.
     const value = interaction.fields.getTextInputValue(mark.id) ?? '';
     if (value.trim() !== (mark.text ?? '')) {
       setMarkText(session, mark.id, value);
+      changedMarkIds.add(mark.id);
       changed++;
     }
   }
@@ -968,8 +971,18 @@ async function submitDesc(interaction, client) {
   }
   await interaction.reply(payload);
 
-  // 요약판의 타임라인이 바뀌었으니 다시 올려줍니다.
-  await updateSummary(client, session, stream).catch(() => {});
+  // 공유 마킹 설명은 다른 방송자의 타임라인에도 들어갑니다. 해당 요약판·포럼도 함께 갱신합니다.
+  let syncFailed = false;
+  for (const target of session.streams) {
+    if (target !== stream && !timelineFor(session, target).some(({ mark }) => changedMarkIds.has(mark.id))) continue;
+    try {
+      const result = await updateSummary(client, session, target);
+      if (result && !['posted', 'updated'].includes(result.status)) syncFailed = true;
+    } catch { syncFailed = true; }
+  }
+  if (syncFailed) {
+    await interaction.editReply({ content: `${payload.content}\n⚠️ 일부 게시물 동기화에 실패했습니다. 설명은 저장됐습니다. 권한을 확인한 뒤 설명 채우기를 다시 제출해주세요.` });
+  }
 }
 
 /**
@@ -1012,18 +1025,21 @@ async function postSummary(channel, session, stream) {
 
 /** 고쳐 쓰기를 먼저 시도하고, 안 되면 새로 올립니다. */
 async function updateSummary(client, session, stream) {
+  let forumResult = null;
   if (session.closedAt && stream.forumPosted?.messageIds?.length) {
     const result = await publishStreamRecord(client, session, stream);
+    forumResult = result;
     if (result.status === 'failed' || result.status === 'missing') {
       console.warn('[stream] 녹화 포스트 갱신 실패:', session.id, stream.userId);
     }
   }
-  if (await refreshSummary(client, session, stream)) return;
+  if (await refreshSummary(client, session, stream)) return forumResult;
 
   const channel = await client.channels.fetch(session.channelId).catch(() => null);
-  if (!channel?.isTextBased?.()) return;
+  if (!channel?.isTextBased?.()) return forumResult;
   await postSummary(channel, session, stream);
   // 새로 올렸으니 제어판이 파묻혔습니다. 맨 아래로 되돌립니다.
   // (고쳐 쓴 경우에는 채널에 아무것도 안 늘어나므로 건드리지 않습니다)
   await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
+  return forumResult;
 }

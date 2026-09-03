@@ -203,10 +203,10 @@ export function setStreamGame(session, userId, game) {
   return stream;
 }
 
-export function markStreamForumPosted(session, userId, threadId, messageIds) {
+export function markStreamForumPosted(session, userId, threadId, messageIds, complete = true) {
   const stream = streamOf(session, userId);
   if (!stream) return null;
-  stream.forumPosted = { threadId, messageIds, at: nowSec() };
+  stream.forumPosted = { threadId, messageIds, complete, at: nowSec() };
   save();
   return stream.forumPosted;
 }

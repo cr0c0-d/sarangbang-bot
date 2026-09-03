@@ -2946,6 +2946,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const sentContents = [];
   const editedContents = [];
   const removedMessages = [];
+  let failAtSend = null;
   const fakeClient = { channels: { fetch: async () => ({
     isThread: () => true,
     isTextBased: () => true,
@@ -2954,21 +2955,64 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
       delete: async (id) => removedMessages.push(id),
     },
     send: async (payload) => {
+      if (sentContents.length + 1 === failAtSend) { failAtSend = null; throw new Error('검증용 전송 실패'); }
       sentContents.push(payload.content);
       return { id: `msg-${sentContents.length}` };
     },
   }) } };
   const posted = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
-  ok('녹화 포스트 기록에 방송자·시작 날짜·링크만',
+  ok('녹화 포스트 기록에 방송자·시작 날짜·링크·타임라인',
     sentContents.join('\n').includes('<@broadcaster>') && sentContents.join('\n').includes('방송 시작') &&
       sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
-      !sentContents.join('\n').includes(':F>') && !sentContents.join('\n').includes('```'));
+      !sentContents.join('\n').includes(':F>') && sentContents.join('\n').includes('```'));
   ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
   stream.forumPosted.messageIds.push('old-timeline-page');
   const again = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('같은 방송 기록은 새 메시지 없이 갱신', again.status === 'updated' && sentContents.length === 1 && editedContents.length === 1);
   ok('옛 타임라인 추가 페이지 정리', removedMessages.includes('old-timeline-page') && stream.forumPosted.messageIds.length === 1);
+  streams.setMarkText(session, session.marks[0].id, '새로운 설명');
+  await forum.publishStreamRecord(fakeClient, session, stream);
+  ok('수정한 설명이 기존 녹화방 메시지에 반영', editedContents.at(-1).includes('새로운 설명') && sentContents.length === 1);
+  for (let i = 0; i < 30; i++) {
+    const mark = streams.addMark(session, 'broadcaster');
+    streams.setMarkText(session, mark.id, '긴 설명'.repeat(50));
+  }
+  const expanded = forum.recordPages(session, stream);
+  ok('헤더·타임라인·코드블록 포함 2000자 안에서 분할', expanded.length > 1 && expanded.every((x) => x.length <= 2000));
+  failAtSend = 3;
+  const partial = await forum.publishStreamRecord(fakeClient, session, stream);
+  ok('부분 실패해도 성공한 페이지 ID 보존', partial.status === 'failed' && stream.forumPosted.messageIds.length === 2 && stream.forumPosted.complete === false);
+  const retried = await forum.publishPendingForGame(fakeClient, session.guildId, stream.gameKey);
+  ok('다시 연결 시 부분 전송 복구·중복 없음', retried === 1 && stream.forumPosted.complete && sentContents.length === expanded.length);
+  for (const mark of session.marks) streams.setMarkText(session, mark.id, '짧게');
+  const firstId = stream.forumPosted.messageIds[0];
+  await forum.publishStreamRecord(fakeClient, session, stream);
+  ok('설명이 짧아지면 추가 페이지만 삭제하고 첫 메시지 유지', stream.forumPosted.messageIds.length === 1 && stream.forumPosted.messageIds[0] === firstId);
+  const countBefore = sentContents.length;
+  await Promise.all([forum.publishStreamRecord(fakeClient, session, stream), forum.publishStreamRecord(fakeClient, session, stream)]);
+  ok('동시 갱신도 메시지를 중복 생성하지 않음', sentContents.length === countBefore);
+  const shared = streams.openSession('shared-sync-guild', 'shared-summary', '공유게임');
+  for (const userId of ['shared-a', 'shared-b']) {
+    streams.putStream(shared, { userId, url: 'https://youtu.be/abcdefghijk', startedAt: streams.nowSec() - 60, game: '공유게임', gameKey: 'name:공유게임' });
+    streams.markStreamForumPosted(shared, userId, `forum-${userId}`, [`record-${userId}`]);
+    streams.setSummaryMessages(shared, userId, [`summary-${userId}`]);
+  }
+  const sharedMark = streams.addMark(shared, 'shared-a', null);
+  streams.closeSession(shared);
+  const syncEdits = [];
+  const syncClient = { channels: { fetch: async () => ({
+    isThread: () => true, isTextBased: () => true,
+    messages: { fetch: async (id) => ({ id, edit: async (payload) => syncEdits.push({ id, content: payload.content }) }) },
+  }) } };
+  const streamFeature = await import('./src/stream/index.js');
+  await streamFeature.handleStreamModal({
+    customId: `tm:descm:${shared.id}:shared-a:0`, fields: { getTextInputValue: () => '공유 장면 설명 수정' },
+    reply: async () => {}, editReply: async () => {},
+  }, syncClient);
+  ok('설명 모달 제출이 공유 방송자 두 명의 녹화방까지 동기화',
+    ['record-shared-a', 'record-shared-b', 'summary-shared-a', 'summary-shared-b'].every((id) =>
+      syncEdits.some((edit) => edit.id === id && edit.content.includes('공유 장면 설명 수정'))) && sharedMark.text === '공유 장면 설명 수정');
 
   const gameSrc = fs.readFileSync('./src/game/index.js', 'utf8');
   ok('포스트는 자동 생성하지 않고 현재 포스트를 수동 연결',

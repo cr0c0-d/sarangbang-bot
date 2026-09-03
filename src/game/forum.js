@@ -1,7 +1,7 @@
 import { MessageFlags } from 'discord.js';
 import { get as getSetting } from '../settings.js';
 import { postIdFor } from './store.js';
-import { markStreamForumPosted } from '../stream/store.js';
+import { markStreamForumPosted, timelineFor, hhmmss } from '../stream/store.js';
 
 export function recordContent(session, stream) {
   const game = stream.game || session.game || '게임 이름 없음';
@@ -9,8 +9,27 @@ export function recordContent(session, stream) {
     `📺 **${game}** · <@${stream.userId}>\n` +
     `방송 시작일 <t:${stream.startedAt}:d>\n` +
     `<${stream.url}>`;
-  // 수정 가능한 타임라인은 방송 요약판 한 곳에서만 관리합니다.
   return header;
+}
+
+/** 헤더와 코드블록까지 포함해 Discord 2,000자 안에서 나눕니다. */
+export function recordPages(session, stream) {
+  const header = recordContent(session, stream);
+  const rows = timelineFor(session, stream).map(({ mark, sec }) =>
+    `${hhmmss(sec)} ${(mark.text || '(설명 없음)').replace(/`/g, 'ˋ').replace(/[\r\n]+/g, ' ')}`
+  );
+  if (!rows.length) return [`${header}\n\n이 방송에 남긴 마킹이 없습니다.`];
+  const pages = [];
+  let current = `${header}\n\n\`\`\`\n`;
+  for (const row of rows) {
+    if (current.length + row.length + 5 > 2000) {
+      pages.push(`${current}\`\`\``);
+      current = '```\n';
+    }
+    current += `${row}\n`;
+  }
+  pages.push(`${current}\`\`\``);
+  return pages;
 }
 
 const publishing = new Map();
@@ -18,8 +37,11 @@ const publishing = new Map();
 /** 연결된 녹화 포스트에 방송 기록을 올립니다. 연결이 없으면 기록은 보류 상태로 남습니다. */
 export async function publishStreamRecord(client, session, stream) {
   const key = `${session.id}:${stream.userId}`;
-  if (publishing.has(key)) return publishing.get(key);
-  const job = publish(client, session, stream).finally(() => publishing.delete(key));
+  // 갱신 중 들어온 설명 수정도 버리지 않고 순서대로 최신 상태를 반영합니다.
+  const previous = publishing.get(key) ?? Promise.resolve();
+  const job = previous.catch(() => {}).then(() => publish(client, session, stream)).finally(() => {
+    if (publishing.get(key) === job) publishing.delete(key);
+  });
   publishing.set(key, job);
   return job;
 }
@@ -32,26 +54,36 @@ async function publish(client, session, stream) {
   const thread = await client.channels.fetch(threadId).catch(() => null);
   if (!thread?.isThread?.() || !thread.isTextBased?.()) return { status: 'missing', threadId };
 
-  const content = recordContent(session, stream);
-  if (previous?.messageIds?.length) {
-    // 이전 버전의 여러 장짜리 타임라인도 다음 설명 수정/종료 때 간단한 링크로 바꿉니다.
-    try {
-      const first = await thread.messages.fetch(previous.messageIds[0]);
-      await first.edit({ content, allowedMentions: { parse: [] } });
-      for (const id of previous.messageIds.slice(1)) {
-        try { await thread.messages.delete(id); }
-        catch (err) { if (err.code !== 10008) throw err; }
+  const pages = recordPages(session, stream);
+  const ids = [...(previous?.messageIds ?? [])];
+  const existed = ids.length > 0;
+  const remember = (complete = false) => markStreamForumPosted(session, stream.userId, threadId, [...ids], complete);
+  try {
+    for (let i = 0; i < pages.length; i++) {
+      const payload = { content: pages[i], allowedMentions: { parse: [] } };
+      if (ids[i]) {
+        const message = await thread.messages.fetch(ids[i]);
+        await message.edit(payload);
+      } else {
+        const message = await thread.send({ ...payload, flags: MessageFlags.SuppressNotifications });
+        ids.push(message.id);
+        // 중간에 실패해도 재시도에서 같은 페이지를 늘리지 않도록 성공분을 바로 저장합니다.
+        remember();
       }
-      markStreamForumPosted(session, stream.userId, threadId, [first.id]);
-      return { status: 'updated', threadId };
-    } catch { return { status: 'failed', threadId }; }
+    }
+    while (ids.length > pages.length) {
+      try { await thread.messages.delete(ids[ids.length - 1]); }
+      catch (err) { if (err.code !== 10008) throw err; }
+      ids.pop();
+      remember();
+    }
+    remember(true);
+    return { status: existed ? 'updated' : 'posted', threadId };
+  } catch (err) {
+    if (ids.length) remember();
+    console.warn('[game] 녹화 포스트 동기화 실패:', threadId, err.message);
+    return { status: 'failed', threadId };
   }
-  const message = await thread
-    .send({ content, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
-    .catch(() => null);
-  if (!message) return { status: 'failed', threadId };
-  markStreamForumPosted(session, stream.userId, threadId, [message.id]);
-  return { status: 'posted', threadId };
 }
 
 /** 새 녹화 포스트를 연결했을 때, 끝났지만 보류 중인 같은 게임 기록을 밀어 넣습니다. */
@@ -61,9 +93,9 @@ export async function publishPendingForGame(client, guildId, gameKey) {
   for (const session of sessionsForGuild(guildId)) {
     if (!session.closedAt) continue;
     for (const stream of session.streams) {
-      if (stream.gameKey !== gameKey || stream.forumPosted?.messageIds?.length) continue;
+      if (stream.gameKey !== gameKey || (stream.forumPosted?.messageIds?.length && stream.forumPosted.complete !== false)) continue;
       const result = await publishStreamRecord(client, session, stream);
-      if (result.status === 'posted') posted += 1;
+      if (result.status === 'posted' || result.status === 'updated') posted += 1;
     }
   }
   return posted;
