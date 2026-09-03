@@ -226,10 +226,13 @@ export function ffmpegExitMeaning(code) {
   if (n === 183) {
     return {
       what: '입력 데이터가 영상이 아니었습니다 (AVERROR_INVALIDDATA).',
+      // ⚠️ **실제로 겪은 원인을 첫 번째로 적습니다.** 처음에는 "쿠키가 없어서 유튜브가
+      //    거부한 것" 이라고 짚었는데 **틀렸습니다** — 같은 쿠키 설정으로 잘 됩니다.
+      //    진짜 원인은 그 방송에 **화면이 없었던** 것이었습니다.
       likely:
-        'ffmpeg 이 유튜브에서 받아온 것이 **영상이 아니었다**는 뜻입니다.\n' +
-        '유튜브가 거부 페이지를 준 경우가 여기 해당합니다 — 이 서버에서 실제로 있는 일입니다\n' +
-        '(음악 기능도 같은 이유로 `MUSIC_DIRECT_STREAM=false` 를 씁니다. ARCHITECTURE 3.1)',
+        '이 프로젝트에서 실제로 있었던 원인은 **화면 없이 음성만 녹화된 방송**이었습니다.\n' +
+        '화면까지 녹화한 방송으로 다시 하니 잘 됐습니다. 먼저 그것부터 확인해주세요.\n' +
+        '(그 밖의 가능성은 서버 로그의 `[stream] 클립 실패 원문` 을 봐야 압니다)',
     };
   }
   if (n === 187) return { what: '입력이 예상보다 먼저 끝났습니다 (AVERROR_EOF).', likely: '' };
@@ -250,6 +253,20 @@ export function ffmpegLines(raw, limit = 6) {
 export function clipError(message, raw = '') {
   const s = String(message ?? '');
   const low = s.toLowerCase();
+
+  // ★ **화면 없이 음성만 녹화된 방송.** 소유자 서버에서 실제로 겪은 원인입니다 —
+  //   같은 방송을 화면까지 녹화해서 다시 하니 잘 됐습니다 (2026-09-03).
+  //   그래서 포맷 선택식이 영상을 반드시 요구하고, 없으면 여기로 옵니다.
+  if (low.includes('requested format is not available')) {
+    return (
+      '이 방송에서 **화면(영상)을 찾지 못했습니다.**\n\n' +
+      '음성만 녹화된 방송일 가능성이 큽니다. 클립은 영상을 잘라내는 것이라\n' +
+      '**화면까지 녹화한 방송**이어야 만들 수 있습니다.\n\n' +
+      '· OBS 에서 화면 소스가 들어가 있는지 확인해주세요.\n' +
+      '· 타임라인 텍스트는 화면이 없어도 그대로 남아 있습니다.\n' +
+      `· 화질 상한(현재 ${config.stream.clipMaxHeight}p)이 너무 낮아도 이 오류가 날 수 있습니다.`
+    );
+  }
 
   // ffmpeg 이 양수 코드로 실패한 경우. 숫자만 보여주면 아무도 원인을 모릅니다.
   const exit = s.match(/ffmpeg[\s\S]{0,40}exited with code (\d+)/i);

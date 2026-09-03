@@ -796,10 +796,19 @@ export async function liveInfo(url) {
  */
 export function downloadSection(url, { startSec, endSec, outPath, maxHeight = 720 }) {
   const h = Math.max(240, Math.round(maxHeight));
+  // ⚠️ **맨 뒤에 `/b`(무엇이든) 를 붙이지 마세요.**
+  //    화면 없이 음성만 녹화된 방송에서 `b` 는 **오디오 포맷에 걸립니다.**
+  //    그러면 소리만 든 mp4 를 "클립" 이라고 내주거나, 알아들을 수 없는 오류가 납니다
+  //    (소유자 서버에서 실제로 `ffmpeg exited with code 183` 이 났습니다).
+  //    영상을 반드시 요구하면 yt-dlp 가 `Requested format is not available` 로 답하고,
+  //    그건 "화면이 없는 방송" 이라고 사람에게 설명할 수 있습니다. (clips.js 의 clipError)
   const format =
     `bv*[height<=${h}][vcodec^=avc1]+ba[ext=m4a]/` +
     `b[height<=${h}][vcodec^=avc1]/` +
-    `bv*[height<=${h}]+ba/b[height<=${h}]/b`;
+    `bv*[height<=${h}]+ba/` +
+    `b[height<=${h}]/` +
+    // 화질 상한을 못 맞추더라도 **영상은 있어야** 합니다.
+    `bv*+ba/b[vcodec!=none]`;
 
   return run(
     [

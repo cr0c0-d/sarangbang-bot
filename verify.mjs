@@ -47,6 +47,13 @@ const KNOWN_ENV_KEYS = [
 //    환경변수를 바꾸지 말고 이 파일의 검사를 고치세요.
 for (const key of KNOWN_ENV_KEYS) process.env[key] = '';
 Object.assign(process.env, VERIFY_ENV);
+
+// ⚠️ **시작할 때도 검사용 폴더를 지웁니다.** 끝에서만 지우면, 검사가 중간에
+//    죽었을 때 남은 상태가 **다음 실행을 거짓으로 실패시킵니다.**
+//    실제로 그랬습니다 — 등록해둔 축약어가 남아 "등록 전에는 그대로" 가 실패했습니다.
+for (const dir of ['./data/verify-data', './data/verify-images']) {
+  fs.rmSync(dir, { recursive: true, force: true });
+}
 // ── 검사 결과 모으기 ─────────────────────────────────────────
 //
 // ★ 왜 모아두는가: 검사가 1000개를 넘어서, 실패가 나도 **스크롤을 한참 올려야**
@@ -1678,7 +1685,21 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     //   AVERROR_INVALIDDATA = -1094995529 → 183. 계산과 실측으로 확인했다.
     //   숫자만 보여주면 아무도 원인을 모른다.
     ok('183 을 AVERROR_INVALIDDATA 로 해석', clips.ffmpegExitMeaning(183)?.what.includes('영상이 아니'));
-    ok('183 은 쿠키/거부 가능성을 짚어줌', clips.ffmpegExitMeaning(183)?.likely.includes('MUSIC_DIRECT_STREAM'));
+    // ⚠️ 처음엔 "쿠키가 없어서 유튜브가 거부" 라고 짚었는데 **틀렸다.**
+    //    같은 쿠키 설정으로 잘 된다. 진짜 원인은 방송에 **화면이 없었던** 것이었다.
+    //    실제로 겪은 원인을 첫 번째로 적어야 한다.
+    ok('183 은 실제로 겪은 원인(화면 없음)을 먼저 짚어줌',
+      clips.ffmpegExitMeaning(183)?.likely.includes('음성만 녹화된 방송'));
+
+    // 화면이 없으면 183 대신 알아들을 수 있는 오류가 나야 한다.
+    const noVideo = clips.clipError('ERROR: Requested format is not available. Use --list-formats …');
+    ok('화면 없는 방송을 알아보고 설명', noVideo.includes('화면(영상)을 찾지 못했습니다'));
+    ok('음성만 녹화된 경우를 짚어줌', noVideo.includes('음성만 녹화된 방송'));
+    ok('타임라인은 남아 있다고 알려줌', noVideo.includes('타임라인 텍스트는'));
+    // ★ 맨 뒤 /b 를 붙이면 오디오 포맷에 걸려 소리만 든 mp4 를 클립이라고 내준다.
+    const ytFmt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
+    ok('포맷 선택식이 영상을 반드시 요구',
+      ytFmt.includes('b[vcodec!=none]') && !/\/b`;/.test(ytFmt));
     // ⚠️ 모르는 코드는 지어내지 않는다. (3.1-4)
     ok('모르는 코드는 null (지어내지 않음)', clips.ffmpegExitMeaning(77) === null);
 
