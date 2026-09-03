@@ -22,10 +22,12 @@ import {
   activeSession,
   sessionById,
   recentSessions,
+  lastGameForUser,
   openSession,
   closeSession,
   reopenSession,
   setGame,
+  setStreamGame,
   putStream,
   streamOf,
   setOffset,
@@ -44,6 +46,8 @@ import {
   nowSec,
   MARK_MAX,
 } from './store.js';
+import { resolveGame, autocompleteGames } from '../game/steam.js';
+import { publishStreamRecord } from '../game/forum.js';
 import {
   buildSummary,
   buildOffsetModal,
@@ -150,7 +154,7 @@ function buildStatus(guildId, userId) {
     );
     for (const s of session.streams) {
       lines.push(
-        `· <@${s.userId}> — 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중`
+        `· <@${s.userId}> — **${s.game || '게임 미지정'}** · 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중`
       );
     }
     if (session.streams.length === 0) lines.push('· 아직 등록한 사람이 없습니다.');
@@ -164,9 +168,9 @@ function buildStatus(guildId, userId) {
   lines.push('');
   lines.push(
     home
-      ? `📌 내 고정 주소: ${home}\n(제어판의 **🎬 나도 등록** 이 이 주소를 씁니다. 바꾸려면 \`/방송 링크:…\` 로 다시 등록하세요)`
+      ? `📌 내 고정 주소: ${home}\n(제어판의 **🎬 지난 게임으로 등록** 이 이 주소와 마지막 게임을 씁니다. 바꾸려면 \`/방송 링크:… 게임명:…\` 으로 다시 등록하세요)`
       : '📌 등록은 `/방송 링크:<이번 방송 주소>` 로 합니다.\n' +
-          '**공개**로 방송하신다면 `…/@내계정/live` 를 한 번 등록해두면 그다음부터 **🎬 나도 등록** 만 누르면 됩니다.\n' +
+          '**공개**로 방송하신다면 `…/@내계정/live` 를 한 번 등록해두면 같은 게임은 **🎬 지난 게임으로 등록** 만 누르면 됩니다.\n' +
           '**일부공개는 그 방법이 안 됩니다** — 채널 목록에 안 떠서 유튜브가 못 찾아줍니다. 방송마다 주소를 넣어주세요.'
   );
 
@@ -193,7 +197,13 @@ export const commands = [
       .addStringOption((o) =>
         o.setName('링크').setDescription('내 유튜브 라이브 주소 (라이브를 켠 뒤에 등록하세요)')
       )
-      .addStringOption((o) => o.setName('게임명').setDescription('무슨 게임인지 (처음 등록할 때만)')),
+      .addStringOption((o) =>
+        o
+          .setName('게임명')
+          .setDescription('영문으로 검색해 고르거나, 목록에 없으면 직접 입력하세요')
+          .setAutocomplete(true)
+      ),
+    autocomplete: autocompleteGames,
 
     async execute(interaction) {
       const guildId = interaction.guildId;
@@ -203,9 +213,20 @@ export const commands = [
       // 인자가 없으면 상태만 보여줍니다.
       if (!link) {
         if (game && activeSession(guildId)) {
-          setGame(activeSession(guildId), game);
+          await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+          const resolved = await resolveGame(game);
+          if (!resolved) {
+            return interaction.editReply(
+              'Steam에서 게임 이름을 가져오지 못했습니다. 목록을 다시 고르거나 게임 이름을 직접 입력해주세요.'
+            );
+          }
+          const changed = setStreamGame(activeSession(guildId), interaction.user.id, resolved);
+          if (!changed) {
+            return interaction.editReply('먼저 `/방송 링크:<내 라이브 주소> 게임명:<게임>` 으로 내 방송을 등록해주세요.');
+          }
           const channelId = getSetting(guildId, 'streamChannelId');
           if (channelId) await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
+          return interaction.editReply(`🎮 내 방송 게임을 **${resolved.name}**(으)로 바꿨습니다.`);
         }
         // 요약판은 종료 뒤 **클립 뽑기로 가는 유일한 입구**입니다. 밀려 올라갔을 때
         // 여기서 다시 부를 수 있어야 합니다.
@@ -223,7 +244,7 @@ export const commands = [
 ];
 
 /**
- * 방송을 등록합니다. `/방송 링크:…` 와 제어판의 **[🎬 나도 등록]** 이 함께 씁니다.
+ * 방송을 등록합니다. `/방송 링크:…` 와 제어판의 **[🎬 지난 게임으로 등록]** 이 함께 씁니다.
  *
  * @param {object} interaction
  * @param {{link?: string|null, game?: string|null}} opts
@@ -254,7 +275,7 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
             '· **이번 방송 주소** — `https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`\n' +
             '  **일부공개(링크 있는 사람만)로 켜셨다면 이쪽입니다.**\n' +
             '· 채널 고정 주소 — `https://www.youtube.com/@내계정/live`\n' +
-            '  **공개 방송에서만 됩니다.** 되면 저장돼서 다음부터 **🎬 나도 등록** 만 누르면 됩니다.'
+            '  **공개 방송에서만 됩니다.** 되면 저장돼서 같은 게임은 다음부터 **🎬 지난 게임으로 등록** 만 누르면 됩니다.'
         );
       }
       target = homeToSave;
@@ -268,7 +289,7 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
         '저장해둔 주소가 없습니다. `/방송 링크:<이번 방송 주소>` 로 등록해주세요.\n' +
           '`https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`\n\n' +
           '💡 **공개**로 방송하신다면 `https://www.youtube.com/@내계정/live` 를 한 번 등록해두면\n' +
-          '   그다음부터 이 버튼만 누르면 됩니다.\n' +
+          '   같은 게임이면 그다음부터 이 버튼만 누르면 됩니다.\n' +
           '   **일부공개는 이 방법이 안 됩니다** — 채널 목록에 안 떠서 유튜브가 못 찾아줍니다.'
       );
     }
@@ -278,6 +299,28 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
   // yt-dlp 를 부르므로 3초를 넘길 수 있습니다. 먼저 답해둡니다.
   if (!interaction.deferred && !interaction.replied) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  }
+
+  const currentSession = activeSession(guildId);
+  const currentStream = currentSession ? streamOf(currentSession, userId) : null;
+  let resolvedGame = null;
+  if (game) {
+    resolvedGame = await resolveGame(game);
+    if (!resolvedGame) {
+      throw userError(
+        'Steam에서 게임 이름을 가져오지 못했습니다. 검색 목록을 다시 고르거나 게임 이름을 직접 입력해주세요.'
+      );
+    }
+  }
+  // 버튼에는 자동완성을 붙일 수 없습니다. 저장 주소 버튼은 마지막에 고른 게임을 재사용하고,
+  // 다른 게임이라면 `/방송 ... 게임명:...` 으로 검색해서 고르게 합니다.
+  if (!resolvedGame && !currentStream?.gameKey) resolvedGame = lastGameForUser(guildId, userId);
+  // 세션이 같아도 사람마다 다른 게임일 수 있으므로, 새로 참가하는 사람은 자기 게임을 고릅니다.
+  if ((!currentStream || !currentStream.gameKey) && !resolvedGame) {
+    throw userError(
+      '처음 등록할 때는 **게임을 먼저 골라야 합니다.**\n' +
+        '`/방송 링크:<내 라이브 주소> 게임명:<게임>` 으로 다시 등록해주세요.'
+    );
   }
 
   let info;
@@ -322,14 +365,30 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
   const videoId = info.videoId || parseVideoId(target);
   const url = watchUrl(videoId);
 
-  const session = activeSession(guildId) ?? openSession(guildId, channelId, game);
-  if (game) setGame(session, game);
+  const session = activeSession(guildId) ?? openSession(guildId, channelId, resolvedGame?.name);
+  if (resolvedGame && !session.game) setGame(session, resolvedGame.name);
 
   // 유튜브가 시작 시각을 안 알려주면 지금 시각으로 대체합니다.
   // ⚠️ 그때는 **반드시 사람에게 말해줘야** 합니다. 조용히 넘기면 전부 어긋난 채로 갑니다.
   const startedAt = info.startedAt ?? nowSec();
   const startSource = info.startedAt ? 'release_timestamp' : 'command';
-  putStream(session, { userId, url, videoId, startedAt, startSource });
+  const effectiveGame = resolvedGame ?? (currentStream?.gameKey ? {
+    name: currentStream.game,
+    key: currentStream.gameKey,
+    appid: currentStream.appid ?? null,
+    cooperative: currentStream.cooperative ?? null,
+  } : null);
+  putStream(session, {
+    userId,
+    url,
+    videoId,
+    startedAt,
+    startSource,
+    game: effectiveGame?.name,
+    gameKey: effectiveGame?.key,
+    appid: effectiveGame?.appid,
+    cooperative: effectiveGame?.cooperative,
+  });
 
   // 고정 주소는 등록이 **성공한 뒤에** 저장합니다. 틀린 주소를 저장하면 안 됩니다.
   if (homeToSave) setStreamHome(guildId, userId, homeToSave);
@@ -351,9 +410,10 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
     );
   }
   if (homeToSave) {
-    lines.push(`📌 이 주소를 저장했습니다. 다음부터는 제어판의 **🎬 나도 등록** 만 누르면 됩니다.`);
+    lines.push(`📌 이 주소를 저장했습니다. 같은 게임은 다음부터 제어판의 **🎬 지난 게임으로 등록** 만 누르면 됩니다.`);
   }
   if (info.title) lines.push(`제목: ${info.title.slice(0, 150)}`);
+  if (effectiveGame) lines.push(`게임: **${effectiveGame.name}**`);
 
   await interaction.editReply(lines.join('\n'));
   await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
@@ -527,7 +587,7 @@ async function markNow(interaction, client) {
       }
     : eph(
         `✂️ 찍었습니다 (${count}번째) · **모두의 타임라인**에 넣었습니다.\n` +
-          '(내 방송이 등록되어 있지 않아서입니다. `🎬 나도 등록` 을 누르면 그다음부터는 내 방송에만 찍힙니다)'
+          '(내 방송이 등록되어 있지 않아서입니다. `🎬 지난 게임으로 등록` 또는 `/방송`으로 등록하면 그다음부터는 내 방송에만 찍힙니다)'
       );
 
   // ⚠️ **답을 먼저 합니다.** 제어판 수정이 앞에 오면 전송 한도에 걸릴 때
@@ -603,17 +663,35 @@ async function endSession(interaction, client) {
   // ⚠️ **하나씩 순서대로** 보냅니다. 6명분을 한꺼번에 던지면 채널 전송 한도에 걸립니다.
   //    보낸 메시지 ID 를 기억해둡니다 — 나중에 설명·클립이 바뀌면 **그 자리에서 고쳐 씁니다.**
   let sent = 0;
-  for (const stream of session.streams) sent += await postSummary(channel, session, stream);
+  let forumPosted = 0;
+  let forumPending = 0;
+  let forumFailed = 0;
+  for (const stream of session.streams) {
+    sent += await postSummary(channel, session, stream);
+    const result = await publishStreamRecord(client, session, stream);
+    if (result.status === 'posted' || result.status === 'already') forumPosted += 1;
+    else if (result.status === 'unlinked') forumPending += 1;
+    else forumFailed += 1;
+  }
 
   // 제어판을 **맨 마지막에** 다시 올립니다. 그래야 채널 맨 아래에 남습니다.
   await repostStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
 
-  await interaction.editReply(
-    sent > 0
-      ? `⏹️ 방송을 종료하고 요약판을 <#${session.channelId}> 에 올렸습니다.\n` +
-          '잘못 눌렀다면 제어판의 **▶️ 이어서 기록** 으로 되돌릴 수 있습니다.'
-      : '⏹️ 방송을 종료했습니다. 등록된 방송이 없어 요약판은 없습니다.'
-  );
+  const resultLines = sent > 0
+    ? [
+        `⏹️ 방송을 종료하고 요약판을 <#${session.channelId}> 에 올렸습니다.`,
+        '잘못 눌렀다면 제어판의 **▶️ 이어서 기록** 으로 되돌릴 수 있습니다.',
+      ]
+    : ['⏹️ 방송을 종료했습니다. 등록된 방송이 없어 요약판은 없습니다.'];
+  if (forumPosted) resultLines.push(`📺 녹화 포스트에 방송 기록 **${forumPosted}개**를 올렸습니다.`);
+  if (forumPending) {
+    resultLines.push(
+      `⏸️ 게임과 연결된 녹화 포스트가 없어 **${forumPending}개 기록을 보류했습니다.** ` +
+        '기존 녹화 포스트 안에서 `/게임 검색:<게임>` 으로 연결하면 자동으로 올라갑니다.'
+    );
+  }
+  if (forumFailed) resultLines.push(`⚠️ 녹화 포스트 전송에 실패한 기록이 ${forumFailed}개 있습니다. 연결과 권한을 확인해주세요.`);
+  await interaction.editReply(resultLines.join('\n'));
 }
 
 async function reopen(interaction, client, sessionId) {

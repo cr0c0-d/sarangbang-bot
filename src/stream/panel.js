@@ -60,7 +60,7 @@ export function isStreamHome(guildId, channelId) {
  */
 function streamLine(s, now) {
   const elapsed = humanDuration(now - s.startedAt - (s.offsetSec ?? 0));
-  const bits = [`<@${s.userId}>`, `[라이브](${s.url})`, `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
+  const bits = [`<@${s.userId}>`, s.game || '게임 미지정', `[라이브](${s.url})`, `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
   if (s.offsetSec) bits.push(`오프셋 ${s.offsetSec > 0 ? '+' : ''}${s.offsetSec}초`);
   // 시작 시각을 유튜브에서 못 읽었으면 **반드시 말해줘야** 합니다. 그때는 전부 어긋납니다.
   if (s.startSource !== 'release_timestamp') bits.push('⚠️ 시작 시각 추정');
@@ -175,7 +175,7 @@ export function buildStreamPanel(guildId) {
 }
 
 /**
- * **[🎬 나도 등록]** — 저장해둔 고정 주소로 한 번에 등록합니다.
+ * **[🎬 지난 게임으로 등록]** — 저장해둔 고정 주소와 마지막 게임으로 한 번에 등록합니다.
  *
  * ★ 이게 "매번 링크 붙이기" 를 없애는 자리입니다. 명령어를 새로 만들지 않고
  *   버튼으로 둡니다 — `/방송` 을 인자 없이 치면 상태 보기라서 겹치고,
@@ -184,7 +184,7 @@ export function buildStreamPanel(guildId) {
 function joinButton() {
   return new ButtonBuilder()
     .setCustomId('tm:panel:join')
-    .setLabel('나도 등록')
+    .setLabel('지난 게임으로 등록')
     .setEmoji('🎬')
     .setStyle(ButtonStyle.Primary);
 }
@@ -402,7 +402,7 @@ export function buildSummary(session, stream, clipPage = 0) {
   const rows = timelineFor(session, stream);
   const header =
     `📝 <@${stream.userId}> 의 타임라인` +
-    (session.game ? ` · ${session.game}` : '') +
+    (stream.game || session.game ? ` · ${stream.game || session.game}` : '') +
     ` · 마킹 ${rows.length}개\n` +
     `<${stream.url}>`;
 

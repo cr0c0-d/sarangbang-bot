@@ -31,6 +31,7 @@ const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const VOICE_TYPES = [ChannelType.GuildVoice, ChannelType.GuildStageVoice];
 // 일정 채널을 만들 때 어느 카테고리 밑에 넣을지 지정하는 데 씁니다.
 const CATEGORY_TYPES = [ChannelType.GuildCategory];
+const FORUM_TYPES = [ChannelType.GuildForum, ChannelType.GuildMedia];
 
 /**
  * 고른 종류에 맞는 채널인지 검사합니다.
@@ -47,6 +48,9 @@ function checkKind(key, channel) {
   }
   if (spec.kind === 'category' && channel.type !== ChannelType.GuildCategory) {
     return '카테고리를 골라주세요. (채널을 담는 상위 묶음입니다)';
+  }
+  if (spec.kind === 'forum' && !FORUM_TYPES.includes(channel.type)) {
+    return `**${spec.label}** 에는 포럼 채널을 골라주세요. (${channel.name} 은 포럼이 아닙니다)`;
   }
   if (spec.kind === 'voice' && !channel.isVoiceBased?.()) {
     return `**${spec.label}** 에는 음성채널을 골라주세요. (${channel.name} 은 채팅 전용 채널입니다)`;
@@ -80,6 +84,11 @@ export function permissionWarnings(interaction, key, channel) {
     if (!perms.has(PermissionFlagsBits.SendMessages)) missing.push('메시지 보내기');
     if (!perms.has(PermissionFlagsBits.ReadMessageHistory)) missing.push('메시지 기록 보기');
     if (!perms.has(PermissionFlagsBits.EmbedLinks)) missing.push('링크 첨부');
+  }
+  if (spec.kind === 'forum') {
+    if (!perms.has(PermissionFlagsBits.SendMessagesInThreads)) missing.push('스레드에서 메시지 보내기');
+    if (!perms.has(PermissionFlagsBits.ReadMessageHistory)) missing.push('메시지 기록 보기');
+    if (!perms.has(PermissionFlagsBits.ManageThreads)) missing.push('스레드 관리');
   }
   if (spec.kind === 'voice') {
     if (!perms.has(PermissionFlagsBits.Connect)) missing.push('연결');
@@ -161,7 +170,7 @@ export const commands = [
           // 비우면 지금 이 채널로 지정합니다. 비공개 채널이 목록에 안 뜰 때 쓰는 길입니다.
           .setDescription('지정할 채널 (비우면 지금 이 채널)')
           .setRequired(false)
-          .addChannelTypes(...TEXT_TYPES, ...VOICE_TYPES, ...CATEGORY_TYPES)
+          .addChannelTypes(...TEXT_TYPES, ...VOICE_TYPES, ...CATEGORY_TYPES, ...FORUM_TYPES)
       ),
     async execute(interaction) {
       const key = interaction.options.getString('종류');

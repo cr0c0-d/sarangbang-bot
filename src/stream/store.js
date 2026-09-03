@@ -99,6 +99,28 @@ export function recentSessions(guildId, limit = 5) {
     .slice(0, limit);
 }
 
+/** 포럼 연결 뒤 보류 기록을 찾을 때 씁니다. */
+export function sessionsForGuild(guildId) {
+  return store.sessions.filter((s) => s.guildId === guildId);
+}
+
+/** 저장 주소 버튼에서 쓸 마지막 게임. 없으면 추측하지 않고 null을 돌립니다. */
+export function lastGameForUser(guildId, userId) {
+  const sessions = recentSessions(guildId, store.sessions.length);
+  for (const session of sessions) {
+    const stream = streamOf(session, userId);
+    if (stream?.gameKey && stream?.game) {
+      return {
+        name: stream.game,
+        key: stream.gameKey,
+        appid: stream.appid ?? null,
+        cooperative: stream.cooperative ?? null,
+      };
+    }
+  }
+  return null;
+}
+
 export function openSession(guildId, channelId, game) {
   const s = {
     id: newId(),
@@ -147,13 +169,46 @@ export function streamOf(session, userId) {
  * 방송을 등록하거나 링크를 바꿔 끼웁니다.
  * 같은 사람이 다시 실행하면 **새로 만들지 않고 갈아끼웁니다** (오프셋은 초기화).
  */
-export function putStream(session, { userId, url, videoId, startedAt, startSource }) {
+export function putStream(session, { userId, url, videoId, startedAt, startSource, game, gameKey, appid, cooperative }) {
   const found = streamOf(session, userId);
-  const entry = { userId, url, videoId, startedAt, startSource, offsetSec: 0 };
+  const entry = {
+    userId,
+    url,
+    videoId,
+    startedAt,
+    startSource,
+    offsetSec: 0,
+    game: game || found?.game || session.game || '',
+    gameKey: gameKey || found?.gameKey || null,
+    appid: appid || found?.appid || null,
+    cooperative: cooperative ?? found?.cooperative ?? null,
+  };
   if (found) Object.assign(found, entry);
   else session.streams.push(entry);
   save();
   return found ?? session.streams[session.streams.length - 1];
+}
+
+export function setStreamGame(session, userId, game) {
+  const stream = streamOf(session, userId);
+  if (!stream || !game?.name || !game?.key) return null;
+  Object.assign(stream, {
+    game: game.name,
+    gameKey: game.key,
+    appid: game.appid ?? null,
+    cooperative: game.cooperative ?? null,
+  });
+  if (!session.game) session.game = game.name;
+  save();
+  return stream;
+}
+
+export function markStreamForumPosted(session, userId, threadId, messageIds) {
+  const stream = streamOf(session, userId);
+  if (!stream) return null;
+  stream.forumPosted = { threadId, messageIds, at: nowSec() };
+  save();
+  return stream.forumPosted;
 }
 
 export function setOffset(session, userId, offsetSec) {

@@ -34,6 +34,7 @@ import { initPlans, restoreReminders, flushPlans } from './plan/store.js';
 import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlements } from './plan/settle.js';
 import { handleStreamComponent, handleStreamModal, startClipCleanup, stopClipCleanup } from './stream/index.js';
 import { initStreams, flushStreams } from './stream/store.js';
+import { initForumPosts, flushForumPosts } from './game/store.js';
 import { initClips } from './stream/clips.js';
 import { ensureStreamPanels } from './stream/panel.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
@@ -386,6 +387,7 @@ if (inRole('music')) await initHistory();
 if (inRole('stream')) {
   await initStreams();
   await initClips();
+  await initForumPosts();
 }
 // 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
 if (inRole('ai')) await initAiUsage();
@@ -451,6 +453,7 @@ async function shutdown(signal) {
   await flushSettlements().catch(() => {});
   // 재시작 직전 몇 초의 마킹이 사라지면 안 됩니다. 그게 안 사라지는 것이 이 기능의 존재 이유입니다.
   await flushStreams().catch(() => {});
+  await flushForumPosts().catch(() => {});
 
   // 정리 타이머를 멈춥니다. `unref()` 를 걸어둬서 종료를 막지는 않지만,
   // 종료하는 중에 파일을 지우기 시작하면 반쯤 지운 상태로 끝날 수 있습니다.

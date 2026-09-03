@@ -123,11 +123,11 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 22개 로드 (우클릭 1개 포함)', allCommands.length === 22, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 23개 로드 (우클릭 1개 포함)', allCommands.length === 23, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산']) {
+for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산', '게임']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
@@ -143,7 +143,7 @@ ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중�
     ok(`/${name} 은 관리자만`, perms.get(name) === MANAGE, String(perms.get(name)));
   }
   // 친구들이 늘 쓰는 것은 막으면 안 됩니다.
-  for (const name of ['도움말', '일정', '일정새로', '정산', '투표', '영화', '타이머', '목소리', '갤러리']) {
+  for (const name of ['도움말', '일정', '일정새로', '정산', '투표', '영화', '게임', '타이머', '목소리', '갤러리']) {
     ok(`/${name} 은 누구나`, !perms.get(name), String(perms.get(name)));
   }
 }
@@ -460,6 +460,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('타입 목록 하드코딩 대신 isVoiceBased 사용', src.includes('isVoiceBased?.()'));
   const types = cmd.data.toJSON().options[1]['channel_types'];
   ok('채널 선택지에 음성채널 포함', Array.isArray(types) && types.includes(2), JSON.stringify(types));
+  ok('채널 선택지에 포럼·미디어 채널 포함', types.includes(15) && types.includes(16), JSON.stringify(types));
 }
 
 // 6e) TTS 가 음성채널 자체 채팅에서 그 채널로 읽어주는가
@@ -1128,6 +1129,13 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 
   // 방송 채널을 정하면 그 자리에 제어판이 바로 떠야 한다 ("여기가 그 채널" 임을 알게).
   ok('방송 채널을 정하면 제어판을 바로 띄움', src.includes("key === 'streamChannelId'"));
+
+  const forumAll = [P.ViewChannel, P.SendMessagesInThreads, P.ReadMessageHistory, P.ManageThreads];
+  ok('포럼 권한이 다 있으면 경고 없음',
+    cc.permissionWarnings(fakeInteraction(), 'recordingForumId', chan(forumAll)).length === 0);
+  const forumMissing = cc.permissionWarnings(fakeInteraction(), 'recordingForumId', chan([P.ViewChannel]));
+  ok('포럼에 필요한 권한을 따로 안내',
+    !forumMissing[0].includes('공개 스레드 만들기') && forumMissing[0].includes('스레드에서 메시지 보내기'));
 }
 
 // 6za) 검사 자체가 환경에 기대지 않는가
@@ -1224,7 +1232,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 
 // 6q) 음악 재생 실패 자가복구 + 갤러리 패널
 {
-  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8').replace(/\r\n/g, '\n');
   ok('재생 실패 감지 함수', ga.includes('playedNothing()'));
   ok('실패하면 한 단계 아래로 재시도', ga.includes('srcLevel: nextLevel'));
   ok('세 단계 모두 실패하면 사용자에게 알림', ga.includes('재생에 실패했습니다'));
@@ -1467,7 +1475,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
       /reapplyVolume\(\)[\s\S]{0,400}?this\.dropPrepared\(\);[\s\S]{0,120}?this\.schedulePrepareNext\(\);/.test(ga));
   }
   ok('타임아웃 메시지에 실제 초 표기', yt.includes('초 안에 응답하지 않았습니다'));
-  const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8');
+  const mc2 = fs.readFileSync('./src/music/commands.js', 'utf8').replace(/\r\n/g, '\n');
   ok('추출과 음성접속을 동시에', mc2.includes('Promise.all([gettingTracks, audio.connect(voiceChannel)])'));
   // ★ 지난 곡은 제목·길이를 이미 압니다. 담기만 하는데 yt-dlp 를 부르면 곡당 몇 초씩 걸립니다.
   //   (소유자 지적: "지난 곡에서 선택해서 대기열에 담는것도 오래걸려")
@@ -2227,7 +2235,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 6w) 일정 · 정산
 {
   const pw = await import('./src/plan/parse-when.js');
-  const pl = fs.readFileSync('./src/plan/index.js', 'utf8');
+  const pl = fs.readFileSync('./src/plan/index.js', 'utf8').replace(/\r\n/g, '\n');
   const now = new Date(2026, 8, 1, 12, 0); // 2026-09-01 12:00
   const p2 = (n) => String(n).padStart(2, '0');
   const fmt = (t) => {
@@ -2645,7 +2653,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     s.marks.length === beforeMark + 1 && s.streams.length === 2,
     `${s.streams.length}명 / ${s.marks.length}줄`);
   ok('사람별 방송에는 마킹을 복사해두지 않음',
-    s.streams.every((x) => Object.keys(x).join() === 'userId,url,videoId,startedAt,startSource,offsetSec'),
+    s.streams.every((x) => !('marks' in x)),
     Object.keys(u1).join());
   store.removeLastMark(s, 'u2');
   void extra;
@@ -2736,7 +2744,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     idsOf(live).join() === 'tm:panel:mark,tm:panel:undo,tm:panel:offset,tm:panel:end,tm:panel:join',
     idsOf(live).join());
   // 늦게 켠 사람이 스스로 끼어들 수 있어야 한다. 기록 중이 아닐 때도 있어야 한다.
-  ok('기록 중에도 [나도 등록] 이 있음', idsOf(live).includes('tm:panel:join'));
+  ok('기록 중에도 [지난 게임으로 등록] 이 있음', idsOf(live).includes('tm:panel:join'));
   ok('제어판이 경과 시간을 보여줌 (어긋남을 잡는 1차 방어선)',
     JSON.stringify(live.embeds[0].toJSON()).includes('진행 중'));
   ok('시작 시각을 추정했으면 표시',
@@ -2836,8 +2844,83 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   const env = fs.readFileSync('./.env.example', 'utf8');
   ok('.env.example 에 STREAM_CHANNEL_ID', env.includes('STREAM_CHANNEL_ID='));
+  ok('.env.example 에 두 포럼 채널', env.includes('RECORDING_FORUM_ID=') && env.includes('SCREENSHOT_FORUM_ID='));
   ok('.env.example 이 망고에도 YTDLP_PATH 가 필요함을 알려줌',
     /방송 기록[\s\S]{0,600}YTDLP_PATH/.test(env));
+}
+
+// 6s-1) 게임 검색 · 포럼 연결
+{
+  const steam = await import('./src/game/steam.js');
+  const forumStore = await import('./src/game/store.js');
+  const forum = await import('./src/game/forum.js');
+  const streams = await import('./src/stream/store.js');
+  const settings = await import('./src/settings.js');
+
+  const direct = await steam.resolveGame('  모여봐요   동물의 숲  ');
+  ok('Steam에 없는 게임도 직접 입력', direct.name === '모여봐요 동물의 숲' && direct.key === 'name:모여봐요 동물의 숲');
+  ok('직접 입력 게임은 협동 여부를 추측하지 않음', direct.cooperative === null);
+
+  const gameCmd = allCommands.find((c) => c.data.toJSON().name === '게임');
+  ok('/게임 검색칸은 자동완성',
+    typeof gameCmd.autocomplete === 'function' && gameCmd.data.toJSON().options[0].autocomplete === true);
+  const broadcastCmd = allCommands.find((c) => c.data.toJSON().name === '방송');
+  ok('/방송 게임명도 자동완성',
+    typeof broadcastCmd.autocomplete === 'function' && broadcastCmd.data.toJSON().options[1].autocomplete === true);
+
+  await forumStore.initForumPosts();
+  forumStore.bindForumPost('gameguild', 'rec', direct.key, 'thread-rec');
+  forumStore.bindForumPost('gameguild', 'shot', direct.key, 'thread-shot');
+  ok('게임 하나에 녹화·스샷 포스트를 따로 연결',
+    forumStore.postIdFor('gameguild', 'rec', direct.key) === 'thread-rec' &&
+      forumStore.postIdFor('gameguild', 'shot', direct.key) === 'thread-shot');
+  forumStore.bindForumPost('gameguild', 'rec', 'name:다른게임', 'thread-rec');
+  ok('한 포스트를 다른 게임에 연결하면 옛 연결 해제',
+    forumStore.postIdFor('gameguild', 'rec', direct.key) === null &&
+      forumStore.postIdFor('gameguild', 'rec', 'name:다른게임') === 'thread-rec');
+
+  settings.set('gameguild', 'recordingForumId', 'forum-rec');
+  settings.set('gameguild', 'screenshotForumId', 'forum-shot');
+  ok('스샷 포럼 포스트는 이미지 저장 대상',
+    settings.imageChannelAllowed('gameguild', 'thread-shot', 'forum-shot'));
+
+  const session = streams.openSession('game-post-guild', 'stream-channel', direct.name);
+  const stream = streams.putStream(session, {
+    userId: 'broadcaster', url: 'https://www.youtube.com/watch?v=abcdefghijk', videoId: 'abcdefghijk',
+    startedAt: streams.nowSec() - 100, startSource: 'release_timestamp',
+    game: direct.name, gameKey: direct.key, appid: null, cooperative: null,
+  });
+  ok('버튼용 마지막 게임을 방송자별로 기억',
+    streams.lastGameForUser('game-post-guild', 'broadcaster')?.key === direct.key);
+  streams.addMark(session, 'broadcaster');
+  streams.closeSession(session);
+  forumStore.bindForumPost('game-post-guild', 'rec', direct.key, 'record-thread');
+  const sentContents = [];
+  const fakeClient = { channels: { fetch: async () => ({
+    isThread: () => true,
+    isTextBased: () => true,
+    send: async (payload) => {
+      sentContents.push(payload.content);
+      return { id: `msg-${sentContents.length}` };
+    },
+  }) } };
+  const posted = await forum.publishStreamRecord(fakeClient, session, stream);
+  ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
+  ok('녹화 포스트 기록에 방송자·일시·링크·타임라인',
+    sentContents.join('\n').includes('<@broadcaster>') && sentContents.join('\n').includes('방송 시작') &&
+      sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes('00:'));
+  ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
+  const again = await forum.publishStreamRecord(fakeClient, session, stream);
+  ok('같은 방송 기록을 포럼에 중복 전송하지 않음', again.status === 'already' && sentContents.length === 1);
+
+  const gameSrc = fs.readFileSync('./src/game/index.js', 'utf8');
+  ok('포스트는 자동 생성하지 않고 현재 포스트를 수동 연결',
+    gameSrc.includes('bindForumPost') && !gameSrc.includes('threads.create'));
+  ok('포럼 연결 변경은 스레드 관리자만 가능',
+    gameSrc.includes('PermissionFlagsBits.ManageThreads'));
+  const streamSrc = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('연결 안 된 녹화 기록은 보류한다고 안내', streamSrc.includes('기록을 보류했습니다'));
+  ok('포럼 연결 저장도 종료 전에 flush', fs.readFileSync('./src/index.js', 'utf8').includes('await flushForumPosts()'));
 }
 
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
@@ -2954,7 +3037,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 26개', union.length === 26, `${union.length}개`);
+  ok('둘을 합쳐 27개', union.length === 27, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));
@@ -3092,7 +3175,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
 // 6s) 음량을 두 번 이상 바꿔도 곡이 처음으로 돌아가지 않는가
 {
-  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8').replace(/\r\n/g, '\n');
   ok('재생 위치 = 건너뛴 만큼 + 이번에 재생한 만큼',
     ga.includes('this.currentOffsetSec + (this.currentResource?.playbackDuration ?? 0) / 1000'));
   ok('다시 틀 때 기준점을 남김', ga.includes('this.currentOffsetSec = resumeAt;'));
@@ -3130,7 +3213,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 6q) 제어판이 재시작·곡 종료 후에 남지 않는가
 {
   const reg = fs.readFileSync('./src/panel-registry.js', 'utf8');
-  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
+  const ga = fs.readFileSync('./src/audio/guild-audio.js', 'utf8').replace(/\r\n/g, '\n');
   const pn = fs.readFileSync('./src/music/panel.js', 'utf8');
   const ip = fs.readFileSync('./src/images/panel.js', 'utf8');
   const ix = fs.readFileSync('./src/index.js', 'utf8');

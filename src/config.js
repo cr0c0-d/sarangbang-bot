@@ -180,6 +180,9 @@ export const config = {
   // docs/게임방송-기획.md
   stream: {
     channelId: str('STREAM_CHANNEL_ID'),
+    // 게임별 기존 포스트를 연결해 쓰는 포럼. 봇은 새 포스트를 자동으로 만들지 않습니다.
+    recordingForumId: str('RECORDING_FORUM_ID'),
+    screenshotForumId: str('SCREENSHOT_FORUM_ID'),
     // 클립을 만들 때 기본으로 잡을 구간 (마킹 앞 / 뒤).
     clipBeforeSec: Math.max(0, num('STREAM_CLIP_BEFORE_SEC', 15)),
     clipAfterSec: Math.max(1, num('STREAM_CLIP_AFTER_SEC', 25)),

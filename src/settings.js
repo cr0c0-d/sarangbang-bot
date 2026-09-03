@@ -74,6 +74,22 @@ export const KEYS = {
     envValue: () => config.stream.channelId,
     envName: 'STREAM_CHANNEL_ID',
   },
+  recordingForumId: {
+    label: '녹화 포럼',
+    feature: 'stream',
+    hint: '게임별 방송 링크와 타임라인을 모아둔 포럼',
+    kind: 'forum',
+    envValue: () => config.stream.recordingForumId,
+    envName: 'RECORDING_FORUM_ID',
+  },
+  screenshotForumId: {
+    label: '스샷 포럼',
+    feature: 'stream',
+    hint: '게임별 스크린샷 포스트를 모아둔 포럼',
+    kind: 'forum',
+    envValue: () => config.stream.screenshotForumId,
+    envName: 'SCREENSHOT_FORUM_ID',
+  },
   imageChannelIds: {
     label: '이미지 채널',
     feature: 'images',
@@ -488,6 +504,10 @@ export function imagesEnabled() {
 export function imageChannelAllowed(guildId, channelId, parentId = null) {
   const excluded = get(guildId, 'imageExcludeChannelIds') ?? [];
   if (excluded.includes(channelId) || (parentId && excluded.includes(parentId))) return false;
+
+  // 스샷 포럼으로 지정한 곳의 포스트는 곧 이미지 저장 대상입니다.
+  const screenshotForumId = get(guildId, 'screenshotForumId');
+  if (screenshotForumId && (channelId === screenshotForumId || parentId === screenshotForumId)) return true;
 
   const { value, source } = getWithSource(guildId, 'imageChannelIds');
   if (source === 'none') return true; // 지정 없음 = 전부

@@ -79,7 +79,11 @@ export function toOggOpus(input, opts = {}) {
   }
 
   const kill = () => {
-    if (!child.killed) child.kill('SIGKILL');
+    // Windows에서는 프로세스가 막 끝난 틈에 killed=false인 채 EINVAL을 던질 수 있습니다.
+    // 정리 함수가 그 경쟁 조건 때문에 호출부를 죽이면 안 됩니다.
+    try {
+      if (!child.killed) child.kill('SIGKILL');
+    } catch {}
     if (isStream && typeof input.destroy === 'function') input.destroy();
   };
 
