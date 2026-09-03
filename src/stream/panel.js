@@ -86,16 +86,23 @@ export function buildStreamPanel(guildId) {
     );
 
     // 최근 마킹 3개만. 전부 보여주면 제어판이 길어져 버튼이 화면 밖으로 밀립니다.
+    //
+    // ⚠️ 마킹은 **찍은 사람의 방송에만** 들어갑니다. 그러니 시간도 그 사람 기준으로
+    //    보여줘야 합니다. 첫 사람 기준으로 다 보여주면 다른 사람 것이 엉뚱하게 나옵니다.
     const tail = session.marks.slice(-3).reverse();
-    if (tail.length > 0 && session.streams.length > 0) {
-      const first = session.streams[0];
+    if (tail.length > 0) {
       lines.push('');
       lines.push(
         '최근 마킹 — ' +
           tail
-            .map((m) => `${hhmmss(Math.max(0, m.at - first.startedAt - (first.offsetSec ?? 0)))}`)
-            .join(' · ') +
-          ` (<@${first.userId}> 기준)`
+            .map((m) => {
+              const owner = m.forUserId ? session.streams.find((s) => s.userId === m.forUserId) : null;
+              const at = owner
+                ? hhmmss(Math.max(0, m.at - owner.startedAt - (owner.offsetSec ?? 0)))
+                : `<t:${m.at}:t>`;
+              return m.forUserId ? `${at} <@${m.forUserId}>` : `${at} 👥모두`;
+            })
+            .join(' · ')
       );
     }
 
@@ -112,7 +119,7 @@ export function buildStreamPanel(guildId) {
           .setDisabled(session.streams.length === 0),
         new ButtonBuilder()
           .setCustomId('tm:panel:undo')
-          .setLabel('마지막 취소')
+          .setLabel('내 마지막 취소')
           .setEmoji('↩️')
           .setStyle(ButtonStyle.Secondary)
           .setDisabled(session.marks.length === 0),

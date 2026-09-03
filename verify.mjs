@@ -2202,12 +2202,52 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('사람별 방송에는 마킹을 복사해두지 않음',
     s.streams.every((x) => Object.keys(x).join() === 'userId,url,videoId,startedAt,startSource,offsetSec'),
     Object.keys(u1).join());
-  store.removeLastMark(s);
+  store.removeLastMark(s, 'u2');
   void extra;
   ok('마킹 시각은 사람마다 따로 계산', store.markSecondsFor(u1, mk2) === 380 && store.markSecondsFor(u2, mk2) === 100);
-  ok('늦게 켠 사람의 요약판에서는 음수 마킹이 빠짐',
-    store.timelineFor(s, u2).length === 1, `${store.timelineFor(s, u2).length}개`);
   ok('타임라인은 시간순', store.timelineFor(s, u1).map((x) => x.sec).join() === '180,380');
+
+  // ── ★ 마킹은 **찍은 사람의 방송에만** 들어간다 ──
+  //
+  // 처음에는 모두의 타임라인에 넣었다 (원래 기획이 "협동 게임" 전제였다).
+  // 그런데 **동시에 방송을 켜도 각자 다른 게임을 할 수 있다**(소유자 지적).
+  // 그러면 남의 게임에서 있었던 일이 내 타임라인에 섞이고 되돌릴 방법도 없다.
+  ok('찍은 사람의 방송에만 들어감 (기본)',
+    mk2.forUserId === 'u1' && store.timelineFor(s, u2).length === 0,
+    `u2 타임라인 ${store.timelineFor(s, u2).length}개`);
+  ok('내 방송에는 들어감', store.timelineFor(s, u1).some((x) => x.mark.id === mk2.id));
+
+  // 다 같이 하던 순간은 **찍은 뒤에** 넓힌다. 그 순간은 이미 잡혀 있으니 여유가 있다.
+  store.shareMark(s, mk2.id);
+  ok('[다 같이] 로 넓히면 모두의 타임라인에 들어감',
+    mk2.forUserId === null && store.timelineFor(s, u2).length === 1,
+    `u2 타임라인 ${store.timelineFor(s, u2).length}개`);
+  // 넓혀도 **늦게 켠 사람의 음수 마킹**은 여전히 빠져야 한다 (그 장면이 영상에 없다).
+  const early = store.addMark(s, 'u1', null);
+  early.at = now - 3000;
+  ok('넓힌 마킹도 켜기 전이면 빠짐 (음수)',
+    store.timelineFor(s, u2).every((x) => x.sec >= 0) && !store.timelineFor(s, u2).some((x) => x.mark.id === early.id));
+  store.removeLastMark(s, 'u1');
+  store.shareMark(s, mk2.id) && (mk2.forUserId = 'u1'); // 원래대로
+
+  // 등록 안 한 사람이 누르면 갈 곳이 없다. 그때만 모두의 것으로 둔다.
+  const guest = store.addMark(s, 'u9', null);
+  ok('등록 안 한 사람이 찍으면 모두의 것', guest.forUserId === null);
+  store.removeLastMark(s, 'u9');
+
+  // 취소는 **내가 찍은 것** 중 마지막. 남이 방금 찍은 것을 지우면 안 된다.
+  const mineLast = store.addMark(s, 'u1');
+  const othersLast = store.addMark(s, 'u2');
+  ok('취소는 내가 찍은 마지막 것', store.removeLastMark(s, 'u1')?.id === mineLast.id);
+  ok('남이 찍은 것은 안 지워짐', s.marks.some((m) => m.id === othersLast.id));
+  ok('내가 찍은 게 없으면 아무것도 안 지움', store.removeLastMark(s, 'u77') === null);
+  store.removeLastMark(s, 'u2');
+
+  const si0 = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('마킹 버튼이 내 방송에만 찍음',
+    si0.includes('addMark(session, userId, mine ? userId : null)'));
+  ok('찍은 뒤 [다 같이] 버튼을 함께 줌', si0.includes('tm:share:${mark.id}'));
+  ok('취소는 내가 찍은 것만', si0.includes('removeLastMark(session, interaction.user.id)'));
 
   // ★ 부호를 헷갈리면 조용히 반대로 어긋난다. 실제 상황으로 검사한다.
   //   봇은 8분 진행으로 알지만 실제로는 68분 켜져 있었다 → 마킹이 60분씩 **늘어야** 한다.

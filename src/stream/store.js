@@ -153,18 +153,45 @@ export function setOffset(session, userId, offsetSec) {
 /**
  * 지금을 찍습니다. **입력을 받지 않습니다** — 게임 중에 창을 띄우면 그 순간이 지나갑니다.
  * 설명은 방송이 끝난 뒤 요약판에서 붙입니다.
+ *
+ * ★ **찍은 사람의 방송에만 들어갑니다** (`forUserId`).
+ *   처음에는 모두의 타임라인에 넣었습니다 — 원래 기획이 "협동 게임" 전제였기 때문입니다.
+ *   그런데 **동시에 방송을 켜도 각자 다른 게임을 할 수 있습니다**(소유자 지적).
+ *   그러면 남의 게임에서 있었던 일이 내 타임라인에 섞입니다. 되돌릴 방법도 없습니다.
+ *   그래서 기본을 "내 방송만" 으로 두고, 다 같이 하던 순간은 **찍은 뒤에** 넓힙니다
+ *   (`shareMark`). 그 순간은 이미 잡혀 있으니 한 번 더 누르는 데 여유가 있습니다.
+ *
+ * @param {string|null} forUserId 이 마킹이 들어갈 방송의 주인. `null` 이면 **모두**.
  */
-export function addMark(session, byUserId) {
+export function addMark(session, byUserId, forUserId = byUserId) {
   if (session.marks.length >= MARK_MAX) return null;
-  const mark = { id: newId(4), at: nowSec(), byUserId, text: '' };
+  const mark = { id: newId(4), at: nowSec(), byUserId, forUserId: forUserId ?? null, text: '' };
   session.marks.push(mark);
   save();
   return mark;
 }
 
-/** 실수로 누른 것을 지웁니다. 누가 눌렀든 마지막 하나를 지웁니다. */
-export function removeLastMark(session) {
-  const gone = session.marks.pop() ?? null;
+/** 이 마킹을 **모두의 타임라인**으로 넓힙니다. (다 같이 하던 순간) */
+export function shareMark(session, markId) {
+  const mark = session.marks.find((m) => m.id === markId);
+  if (!mark) return null;
+  mark.forUserId = null;
+  save();
+  return mark;
+}
+
+/**
+ * 실수로 누른 것을 지웁니다.
+ *
+ * ⚠️ **내가 찍은 것 중 마지막**을 지웁니다. 그냥 마지막 하나를 지우면
+ *    남이 방금 찍은 것을 지우게 됩니다 — 마킹이 사람마다 따로인 지금은 더 그렇습니다.
+ */
+export function removeLastMark(session, byUserId = null) {
+  const idx = byUserId
+    ? session.marks.map((m) => m.byUserId).lastIndexOf(byUserId)
+    : session.marks.length - 1;
+  if (idx < 0) return null;
+  const [gone] = session.marks.splice(idx, 1);
   if (gone) save();
   return gone;
 }
@@ -221,9 +248,21 @@ export function markSecondsFor(stream, mark) {
   return mark.at - stream.startedAt - (stream.offsetSec ?? 0);
 }
 
-/** 그 사람 영상에 실제로 담긴 마킹만, 시간순으로. */
+/** 이 마킹이 그 사람 타임라인에 들어가는가. `forUserId` 가 없으면 **모두의 것**입니다. */
+export function markBelongsTo(mark, userId) {
+  return !mark.forUserId || mark.forUserId === userId;
+}
+
+/**
+ * 그 사람 영상에 실제로 담긴 마킹만, 시간순으로.
+ *
+ * 두 가지를 걸러냅니다.
+ *   1. **남의 방송에 찍은 마킹** (`forUserId`). 각자 다른 게임을 할 수 있습니다.
+ *   2. 그 사람이 켜기 전의 마킹 (음수). 늦게 켠 사람에게는 그 장면이 없습니다.
+ */
 export function timelineFor(session, stream) {
   return session.marks
+    .filter((mark) => markBelongsTo(mark, stream.userId))
     .map((mark) => ({ mark, sec: markSecondsFor(stream, mark) }))
     .filter((x) => x.sec >= 0)
     .sort((a, b) => a.sec - b.sec);

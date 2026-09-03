@@ -31,6 +31,8 @@ import {
   setOffset,
   addMark,
   removeLastMark,
+  shareMark,
+  markSecondsFor,
   setMarkText,
   addClip,
   clipsOf,
@@ -434,6 +436,7 @@ export async function handleStreamComponent(interaction, client) {
 
   if (id === 'tm:panel:join') return registerStream(interaction);
   if (id === 'tm:panel:mark') return markNow(interaction, client);
+  if (id.startsWith('tm:share:')) return shareMarkNow(interaction, client, id.split(':')[2]);
   if (id === 'tm:panel:undo') return undoMark(interaction, client);
   if (id === 'tm:panel:offset') return openOffsetModal(interaction);
   if (id === 'tm:panel:end') return endSession(interaction, client);
@@ -468,21 +471,56 @@ async function markNow(interaction, client) {
   const session = activeSession(interaction.guildId);
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
-  const mark = addMark(session, interaction.user.id);
+  const userId = interaction.user.id;
+  const mine = streamOf(session, userId);
+
+  // ★ **내 방송에만** 찍습니다. 동시에 방송을 켜도 각자 다른 게임을 할 수 있습니다.
+  //   단 등록을 안 한 사람이 누르면 갈 곳이 없으므로 그때만 모두의 것으로 둡니다.
+  const mark = addMark(session, userId, mine ? userId : null);
   if (!mark) {
     return interaction.reply(eph(`마킹이 ${MARK_MAX}개를 넘었습니다. 방송을 종료하고 새로 시작해주세요.`));
   }
 
-  // 사람마다 다른 시간이 됩니다. 누른 사람 기준으로 보여주고, 등록 안 했으면 첫 사람 기준.
-  const mine = streamOf(session, interaction.user.id) ?? session.streams[0] ?? null;
-  const at = mine ? hhmmss(Math.max(0, mark.at - mine.startedAt - (mine.offsetSec ?? 0))) : null;
-  const who = mine && mine.userId !== interaction.user.id ? ` (<@${mine.userId}> 기준)` : '';
+  const count = session.marks.filter((m) => m.byUserId === userId).length;
+  const payload = mine
+    ? {
+        content:
+          `✂️ 찍었습니다 · ${hhmmss(Math.max(0, markSecondsFor(mine, mark)))} · **내 방송** (${count}번째)\n` +
+          '다 같이 하던 순간이면 아래 버튼으로 모두의 타임라인에 넣을 수 있습니다.',
+        components: [
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setCustomId(`tm:share:${mark.id}`)
+              .setLabel('다 같이 하던 순간')
+              .setEmoji('👥')
+              .setStyle(ButtonStyle.Secondary)
+          ),
+        ],
+        flags: MessageFlags.Ephemeral,
+      }
+    : eph(
+        `✂️ 찍었습니다 (${count}번째) · **모두의 타임라인**에 넣었습니다.\n` +
+          '(내 방송이 등록되어 있지 않아서입니다. `🎬 나도 등록` 을 누르면 그다음부터는 내 방송에만 찍힙니다)'
+      );
 
   // ⚠️ **답을 먼저 합니다.** 제어판 수정이 앞에 오면 전송 한도에 걸릴 때
   //    가장 많이 눌리는 버튼에서 "Unknown interaction" 이 납니다. (기획 3.10)
-  await interaction.reply(
-    eph(`✂️ 찍었습니다 (${session.marks.length}번째)${at ? ` · ${at}${who}` : ''}`)
-  );
+  await interaction.reply(payload);
+  scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
+}
+
+/** 방금 찍은 것을 모두의 타임라인으로 넓힙니다. (그 순간은 이미 잡혀 있습니다) */
+async function shareMarkNow(interaction, client, markId) {
+  const session = activeSession(interaction.guildId);
+  if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
+
+  const mark = shareMark(session, markId);
+  if (!mark) return interaction.reply(eph('그 마킹을 찾지 못했습니다. 이미 지워졌을 수 있습니다.'));
+
+  await interaction.update({
+    content: '👥 **모두의 타임라인**으로 넓혔습니다. 방송을 켠 사람 전원의 요약판에 들어갑니다.',
+    components: [],
+  });
   scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
 }
 
@@ -490,9 +528,14 @@ async function undoMark(interaction, client) {
   const session = activeSession(interaction.guildId);
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
-  const gone = removeLastMark(session);
+  // ⚠️ **내가 찍은 것** 중 마지막을 지웁니다. 남이 방금 찍은 것을 지우면 안 됩니다.
+  const gone = removeLastMark(session, interaction.user.id);
   await interaction.reply(
-    eph(gone ? `↩️ 마지막 마킹을 지웠습니다. 남은 마킹 ${session.marks.length}개` : '지울 마킹이 없습니다.')
+    eph(
+      gone
+        ? `↩️ 내가 찍은 마지막 마킹을 지웠습니다. 이 방송의 마킹 ${session.marks.length}개`
+        : '내가 찍은 마킹이 없습니다. (남이 찍은 것은 지울 수 없습니다)'
+    )
   );
   scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
 }
