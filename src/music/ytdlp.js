@@ -8,8 +8,69 @@ import ffmpegPath from 'ffmpeg-static';
 import { ROOT, config } from '../config.js';
 import { userError } from '../user-error.js';
 
-/** yt-dlp 에게 알려줄 ffmpeg 경로. `--download-sections` 가 ffmpeg 을 필요로 합니다. */
-const FFMPEG = ffmpegPath;
+/**
+ * yt-dlp 에게 알려줄 ffmpeg 경로. `--download-sections` 가 ffmpeg 을 필요로 합니다.
+ *
+ * ⚠️ **묶음 ffmpeg(ffmpeg-static)이 죽는 서버가 있습니다.** 소유자 서버(1코어 ARM)에서
+ *    클립을 뽑을 때 `ffmpeg exited with code -11` 이 났습니다. -11 은 SIGSEGV —
+ *    정상 종료가 아니라 **죽은 것**입니다. 음악(오디오 변환)은 같은 바이너리로 잘 돌기 때문에
+ *    바이너리 자체가 아니라 그 코드 경로(HTTPS 구간 받기)의 문제로 보이지만,
+ *    **원인은 확정하지 못했습니다.** 그래서 원인을 짐작하는 대신 **다른 ffmpeg 으로 넘어갑니다.**
+ *
+ * 후보 순서: `FFMPEG_PATH` (있으면 이것만) → 묶음 ffmpeg → 서버에 깔린 ffmpeg
+ */
+function ffmpegCandidates() {
+  const custom = (process.env.FFMPEG_PATH ?? '').trim();
+  if (custom) return [custom];
+  return [ffmpegPath, '/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg', 'ffmpeg'].filter(Boolean);
+}
+
+let ffmpegIndex = 0;
+
+/** 지금 쓰는 ffmpeg. */
+export function ffmpegInUse() {
+  return ffmpegCandidates()[ffmpegIndex] ?? ffmpegCandidates()[0];
+}
+
+/**
+ * ffmpeg 이 죽었을 때 **다음 후보로 넘깁니다.**
+ * @returns {string|null} 넘어간 경로. 더 남은 후보가 없으면 null.
+ */
+export function nextFfmpeg() {
+  const list = ffmpegCandidates();
+  if (ffmpegIndex + 1 >= list.length) return null;
+  ffmpegIndex++;
+  console.warn(`[music] ffmpeg 을 바꿉니다 → ${ffmpegInUse()} (앞의 것이 죽었습니다)`);
+  return ffmpegInUse();
+}
+
+/** @internal 검증용. */
+export function resetFfmpegChoice() {
+  ffmpegIndex = 0;
+}
+
+/**
+ * 켤 때 한 번 `-version` 을 돌려 **쓸 수 있는 ffmpeg** 을 고릅니다.
+ *
+ * 이걸 안 하면 "클립을 눌렀는데 안 된다" 로만 알게 됩니다. 켤 때 알면 미리 고칠 수 있습니다.
+ * ⚠️ `-version` 이 통해도 실제 구간 받기에서 죽을 수 있습니다 (실제로 그랬습니다).
+ *    그래서 이 검사만으로 끝이 아니고 `nextFfmpeg()` 로 넘기는 길도 함께 둡니다.
+ */
+export async function pickFfmpeg() {
+  const list = ffmpegCandidates();
+  for (let i = 0; i < list.length; i++) {
+    const okRun = await new Promise((resolve) => {
+      const child = spawn(list[i], ['-version'], { stdio: 'ignore', windowsHide: true });
+      child.once('error', () => resolve(false));
+      child.once('close', (code) => resolve(code === 0));
+    });
+    if (okRun) {
+      ffmpegIndex = i;
+      return list[i];
+    }
+  }
+  return null;
+}
 
 /**
  * yt-dlp 실행 파일.
@@ -743,7 +804,7 @@ export function downloadSection(url, { startSec, endSec, outPath, maxHeight = 72
       '--ignore-config',
       '--no-playlist',
       '--ffmpeg-location',
-      FFMPEG,
+      ffmpegInUse(),
       '--download-sections',
       `*${Math.max(0, Math.floor(startSec))}-${Math.floor(endSec)}`,
       '-f',

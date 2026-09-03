@@ -11,7 +11,8 @@
     "deploy": "node src/deploy-commands.js",
     "deploy:music": "node --env-file=.env.music src/deploy-commands.js",
     "update-ytdlp": "node scripts/update-ytdlp.mjs",
-    "verify": "node verify.mjs"
+    "verify": "node verify.mjs",
+    "verify:q": "node verify.mjs -q"
   },
   "engines": {
     "node": ">=20"

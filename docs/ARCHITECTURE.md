@@ -1787,7 +1787,32 @@ ERROR: [youtube:tab] @Google: The channel is not currently live
 브라우저·기기 호환이 떨어진다. 화질을 낮추는 것도 재인코딩이 아니라 **낮은 포맷을 고르는 것**이라 공짜다.
 
 ⚠️ **`--ffmpeg-location` 을 반드시 넘긴다.** `--download-sections` 는 ffmpeg 이 필요하고,
-서버에 ffmpeg 이 깔려 있다는 보장이 없다. 이 프로젝트는 `ffmpeg-static` 을 쓴다.
+서버에 ffmpeg 이 깔려 있다는 보장이 없다. 기본은 `ffmpeg-static` 이다.
+
+##### ★ 묶음 ffmpeg 이 **죽는** 서버가 있다 (소유자 서버 실측)
+
+소유자 서버(1코어 ARM)에서 클립을 뽑을 때 이렇게 났다:
+
+```
+ffmpeg exited with code -11
+```
+
+**음수 코드는 신호 번호다.** -11 = SIGSEGV(세그폴트) — 정상 실패가 아니라 **죽은 것**이다.
+(-9 = SIGKILL, 대개 메모리 부족. -6 = abort)
+
+같은 `ffmpeg-static` 바이너리로 **음악은 잘 돌아간다**(오디오 변환). 그래서 바이너리 자체가
+아니라 그 코드 경로(HTTPS 구간 받기)의 문제로 보이지만, **원인은 확정하지 못했다.**
+그래서 원인을 짐작해 안내에 적는 대신 **다른 ffmpeg 으로 넘어간다** (3.1-4).
+
+- 후보 순서: `FFMPEG_PATH`(있으면 **이것만**) → 묶음 → `/usr/bin/ffmpeg` → `/usr/local/bin/ffmpeg` → `ffmpeg`
+- 켤 때 `pickFfmpeg()` 이 `-version` 으로 훑어 쓸 수 있는 것을 골라 **로그에 찍는다.**
+  안 그러면 "클립 버튼을 눌렀는데 안 된다" 로만 알게 된다.
+- ⚠️ **`-version` 이 통해도 실제 구간 받기에서 죽을 수 있다** (실제로 그랬다).
+  그래서 `clips.js` 가 `looksLikeFfmpegCrash()` 로 **죽음만 골라** 다음 후보로 한 번 더 시도한다.
+- ⚠️ **정상 실패(코드 1)에 이걸 하면 안 된다.** 아무 오류에나 ffmpeg 을 갈아치우게 된다.
+  그래서 판정을 "음수 코드 / segfault 문구" 로 좁혔다.
+- `FFMPEG_PATH` 를 사람이 정했으면 **넘기지 않는다.** 정해준 것을 봇이 갈아치우면 안 된다.
+- 다시 시도하기 전에 **반쪽 파일을 치운다.**
 
 실측 (집 PC, 2026-09-03):
 

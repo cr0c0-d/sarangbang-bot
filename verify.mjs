@@ -1,21 +1,105 @@
 // 수정 후 재검증. 토큰 없이 확인할 수 있는 것 전부.
-process.env.DISCORD_TOKEN = 'x'.repeat(59);
-process.env.CLIENT_ID = '123456789012345678';
-process.env.GUILD_ID = '123456789012345678, 987654321098765432';
-process.env.TTS_TEXT_CHANNEL_ID = '111111111111111111';
-process.env.IMAGE_CHANNEL_ID = '222222222222222222';
-process.env.IMAGE_DIR = './data/verify-images';
-process.env.WEB_PORT = '38473';
-process.env.WEB_TOKEN = 'testsecret';
-process.env.WEB_BIND = '127.0.0.1';
-process.env.DATA_DIR = './data/verify-data';
-
+//
+// ★★ **검사는 돌리는 사람의 `.env` 에 기대면 안 됩니다.** ★★
+//
+// 세 번 같은 사고가 났습니다. 전부 **소유자 서버에서만** 실패했습니다:
+//   1. `GEMINI_API_KEY` 가 있어서 "키가 없으면 발급 주소를 알려줌" 이 실패
+//      (게다가 실제 API 를 불러 무료 한도를 썼습니다)
+//   2. `.env` 에 `YTDLP_PATH` 를 넣으니 "기본 안내는 npm 스크립트" 가 실패
+//   3. `TTS_VOICE` · `STREAM_CLIP_MAX_SEC` 등도 같은 함정을 안고 있었습니다
+//
+// 집 PC 에서 초록불인데 서버에서 빨간불이면 검증이 오히려 방해가 됩니다.
+// 그래서 **`.env.example` 에 있는 모든 항목을 먼저 빈 값으로 눌러둡니다.**
+// dotenv 는 이미 있는 환경변수를 덮어쓰지 않으므로, 이렇게 하면 `.env` 가
+// 무엇을 담고 있어도 검사 결과가 같습니다.
+//
+// ⚠️ 그래서 **새 설정을 만들면 `.env.example` 에 꼭 추가해야 합니다** (프로젝트 규칙).
+//    안 넣으면 그 항목만 소유자 환경에 따라 결과가 달라집니다.
 import fs from 'node:fs';
-let fail = 0;
-const ok = (label, cond, extra = '') => {
-  console.log((cond ? '  ok   ' : '  FAIL ') + label + (extra ? '  ' + extra : ''));
-  if (!cond) fail++;
+
+/** 검사가 실제로 필요한 값들. 이것만 남기고 나머지는 전부 눌러 없앱니다. */
+const VERIFY_ENV = {
+  DISCORD_TOKEN: 'x'.repeat(59),
+  CLIENT_ID: '123456789012345678',
+  GUILD_ID: '123456789012345678, 987654321098765432',
+  TTS_TEXT_CHANNEL_ID: '111111111111111111',
+  IMAGE_CHANNEL_ID: '222222222222222222',
+  IMAGE_DIR: './data/verify-images',
+  WEB_PORT: '38473',
+  WEB_TOKEN: 'testsecret',
+  WEB_BIND: '127.0.0.1',
+  DATA_DIR: './data/verify-data',
 };
+
+/** `.env.example` 이 아는 모든 항목. 여기 없는 것은 눌러줄 수도 없습니다. */
+const KNOWN_ENV_KEYS = [
+  ...new Set(
+    ['./.env.example', './.env.music.example']
+      .flatMap((p) => fs.readFileSync(p, 'utf8').split('\n'))
+      .map((line) => line.match(/^\s*#?\s*([A-Z][A-Z0-9_]*)\s*=/)?.[1])
+      .filter(Boolean)
+  ),
+];
+
+// ⚠️ **이미 셸에 있는 값도 눌러씁니다.** 채워넣기만 하면 `export YTDLP_PATH=…` 나
+//    systemd 의 EnvironmentFile 로 들어온 값은 그대로 남아 검사가 흔들립니다.
+//    verify 는 **어디서 돌려도 같은 답**이어야 합니다. 변형을 시험하려면
+//    환경변수를 바꾸지 말고 이 파일의 검사를 고치세요.
+for (const key of KNOWN_ENV_KEYS) process.env[key] = '';
+Object.assign(process.env, VERIFY_ENV);
+// ── 검사 결과 모으기 ─────────────────────────────────────────
+//
+// ★ 왜 모아두는가: 검사가 1000개를 넘어서, 실패가 나도 **스크롤을 한참 올려야**
+//   어디가 깨졌는지 보입니다. 그래서 실패한 것만 **맨 끝에 다시 모아** 보여줍니다.
+//   맨 끝은 스크롤하지 않아도 보이는 자리입니다.
+//
+// 조용히 보고 싶으면: `npm run verify:q`  (실패한 것만 나옵니다)
+
+const args = process.argv.slice(2);
+const QUIET = args.includes('-q') || args.includes('--quiet');
+
+let fail = 0;
+let checked = 0;
+/** @type {Array<{label: string, extra: string}>} 실패한 것만. 끝에서 다시 보여줍니다. */
+const failures = [];
+
+const ok = (label, cond, extra = '') => {
+  checked++;
+  // ⚠️ 함수를 그대로 넘기면 **항상 참**이 되어 조용히 통과합니다.
+  //    실제로 한 번 그렇게 썼습니다. 검사가 거짓으로 통과하는 것이 제일 나쁩니다.
+  if (typeof cond === 'function') {
+    fail++;
+    failures.push({ label, extra: '⚠️ 조건에 함수를 넘겼습니다. `cond()` 로 불러서 넘기세요.' });
+    console.log(`  FAIL ${label}  ⚠️ 조건에 함수를 넘겼습니다 (항상 통과가 됩니다)`);
+    return;
+  }
+  const passed = Boolean(cond);
+  if (!passed) {
+    fail++;
+    failures.push({ label, extra: String(extra ?? '') });
+  }
+  if (passed && QUIET) return;
+  console.log((passed ? '  ok   ' : '  FAIL ') + label + (extra ? '  ' + extra : ''));
+};
+
+/** 실패한 것만 맨 끝에 모아 보여줍니다. */
+function reportFailures() {
+  if (failures.length === 0) {
+    console.log(`\n✅ 전부 통과 — 검사 ${checked}개`);
+    return;
+  }
+  const line = '─'.repeat(60);
+  console.log(`\n${line}`);
+  console.log(`❌ 실패 ${failures.length}건 — 위로 올리지 않아도 여기 다 있습니다`);
+  console.log(line);
+  failures.forEach((f, i) => {
+    console.log(`${String(i + 1).padStart(2)}. ${f.label}`);
+    if (f.extra) console.log(`    └ ${f.extra}`);
+  });
+  console.log(line);
+  console.log(`검사 ${checked}개 중 ${failures.length}개 실패`);
+  console.log('실패한 것만 보려면:  npm run verify:q');
+}
 
 // 1) 명령어 스키마
 const { initSettings } = await import('./src/settings.js');
@@ -1031,6 +1115,43 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('방송 채널을 정하면 제어판을 바로 띄움', src.includes("key === 'streamChannelId'"));
 }
 
+// 6za) 검사 자체가 환경에 기대지 않는가
+//
+// ★ 같은 사고가 **세 번** 났습니다. 전부 소유자 서버에서만 실패했습니다:
+//   GEMINI_API_KEY · YTDLP_PATH · (잠재적으로) TTS_VOICE · STREAM_CLIP_MAX_SEC
+//   집 PC 에서 초록불인데 서버에서 빨간불이면 검증이 방해가 됩니다.
+{
+  // `.env*.example` 에 있는 항목은 전부 눌려 있어야 한다.
+  const notNeutralized = KNOWN_ENV_KEYS.filter(
+    (k) => !(k in VERIFY_ENV) && (process.env[k] ?? '') !== ''
+  );
+  ok('알려진 설정 항목은 전부 눌러둠', notNeutralized.length === 0, notNeutralized.join(', '));
+  ok('눌러둘 항목 목록을 example 에서 읽음', KNOWN_ENV_KEYS.length > 30, `${KNOWN_ENV_KEYS.length}개`);
+
+  // 코드가 읽는 설정이 example 에 다 있는가. 없으면 그 항목만 환경에 따라 흔들린다.
+  const codeKeys = new Set();
+  for (const f of ['./src/config.js', './src/music/ytdlp.js', './src/images/cleanup.js']) {
+    const text = fs.readFileSync(f, 'utf8');
+    for (const m of text.matchAll(/process\.env(?:\.([A-Z][A-Z0-9_]*)|\['([A-Z][A-Z0-9_]*)'\])/g)) {
+      codeKeys.add(m[1] ?? m[2]);
+    }
+    for (const m of text.matchAll(/\b(?:str|num|bool|list)\('([A-Z][A-Z0-9_]*)'/g)) codeKeys.add(m[1]);
+  }
+  // 이 셋은 설정이 아니라 시스템 환경변수라 example 에 없습니다.
+  const systemKeys = new Set(['HOME', 'NODE_ENV', 'PATH', 'TMPDIR', 'TEMP']);
+  const missing = [...codeKeys].filter((k) => !systemKeys.has(k) && !KNOWN_ENV_KEYS.includes(k));
+  ok('코드가 읽는 설정이 .env*.example 에 다 있음', missing.length === 0, missing.join(', ') || '빠진 것 없음');
+
+  // 실패를 맨 끝에 모아 보여주는가 (1000개가 넘어 스크롤로는 못 찾는다)
+  const vsrc = fs.readFileSync('./verify.mjs', 'utf8');
+  ok('실패를 맨 끝에 모아 보여줌', vsrc.includes('function reportFailures') && vsrc.includes('failures.push'));
+  ok('실패한 것만 보는 방법이 있음', vsrc.includes('--quiet') && vsrc.includes("'-q'"));
+  ok('npm 스크립트로도 있음',
+    Boolean(JSON.parse(fs.readFileSync('./package.json', 'utf8')).scripts['verify:q']));
+  // 조건에 함수를 넘기면 항상 통과가 된다. 실제로 한 번 그렇게 썼다.
+  ok('조건에 함수를 넘기면 잡아냄', vsrc.includes("typeof cond === 'function'"));
+}
+
 // 6o) 기능 on/off
 {
   const st = await import('./src/settings.js');
@@ -1537,6 +1658,49 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   let rev = null;
   await clips.makeClip({ folder: 'abc123', url: 'x', startSec: 60, endSec: 30, title: 't' }).catch((e) => (rev = e.message));
   ok('끝이 시작보다 앞이면 막음', /뒤여야/.test(rev ?? ''));
+
+  // ── ffmpeg 이 죽었을 때 (소유자 서버 실측: `ffmpeg exited with code -11`) ──
+  //
+  // ★ 음수 코드는 **신호 번호**다. -11 = SIGSEGV. 정상 실패(코드 1)와 구분해야
+  //   "다른 ffmpeg 으로 넘기기" 를 아무 실패에나 하지 않는다.
+  {
+    const yt4 = await import('./src/music/ytdlp.js');
+    ok('-11 은 죽은 것으로 봄', clips.looksLikeFfmpegCrash('ERROR: ffmpeg exited with code -11'));
+    ok('-9(메모리 부족)도 죽은 것', clips.looksLikeFfmpegCrash('ffmpeg exited with code -9'));
+    ok('segfault 글자도 잡음', clips.looksLikeFfmpegCrash('ffmpeg: Segmentation fault'));
+    // ⚠️ 정상 실패를 죽음으로 보면 아무 오류에나 ffmpeg 을 갈아치운다.
+    ok('코드 1 은 죽은 것이 아님', !clips.looksLikeFfmpegCrash('ERROR: ffmpeg exited with code 1'));
+    ok('다른 오류도 죽은 것이 아님', !clips.looksLikeFfmpegCrash('ERROR: Video unavailable'));
+
+    const crashMsg = clips.clipError('ERROR: ffmpeg exited with code -11');
+    ok('죽었을 때 원문을 그대로 보여줌', crashMsg.includes('code -11'));
+    ok('신호 번호라는 것을 설명', crashMsg.includes('-11 = 세그폴트'));
+    ok('무엇을 해보면 되는지 적음', crashMsg.includes('sudo apt install -y ffmpeg') && crashMsg.includes('FFMPEG_PATH'));
+    ok('-9 면 메모리를 보라고 안내', crashMsg.includes('free -h'));
+
+    // 후보를 넘길 수 있어야 한다. 못 넘기면 재시도할 것이 없다.
+    yt4.resetFfmpegChoice();
+    const first = yt4.ffmpegInUse();
+    ok('기본은 묶음 ffmpeg', first.includes('ffmpeg-static'), first);
+    const second = yt4.nextFfmpeg();
+    ok('죽으면 다음 후보로 넘어감', Boolean(second) && second !== first, String(second));
+    // FFMPEG_PATH 를 지정하면 그것만 쓴다 (사람이 정한 것을 봇이 갈아치우면 안 된다).
+    process.env.FFMPEG_PATH = '/usr/bin/ffmpeg';
+    yt4.resetFfmpegChoice();
+    ok('FFMPEG_PATH 를 정하면 그것만 씀', yt4.ffmpegInUse() === '/usr/bin/ffmpeg');
+    ok('정해줬으면 다른 것으로 안 넘김', yt4.nextFfmpeg() === null);
+    process.env.FFMPEG_PATH = '';
+    yt4.resetFfmpegChoice();
+
+    const csrc = fs.readFileSync('./src/stream/clips.js', 'utf8');
+    ok('죽었을 때만 다시 시도', csrc.includes('looksLikeFfmpegCrash(err.message) && nextFfmpeg()'));
+    ok('다시 시도 전에 반쪽 파일을 치움',
+      /cleanLeftovers\(folder, stem\);[\s\S]{0,400}looksLikeFfmpegCrash/.test(csrc));
+    ok('바꿔 시도한다는 것을 로그에 남김', csrc.includes('다른 ffmpeg 으로 다시 시도합니다'));
+    const idx3 = fs.readFileSync('./src/index.js', 'utf8');
+    ok('켤 때 쓸 수 있는 ffmpeg 을 골라 찍음', idx3.includes('pickFfmpeg()') && idx3.includes('클립용 ffmpeg'));
+    ok('못 찾으면 타임라인은 된다고 알려줌', idx3.includes('타임라인 기록은 ffmpeg 없이도 됩니다'));
+  }
 
   // 오류 안내 — 원인을 모르면 원문을 그대로 보여줘야 한다. (ARCHITECTURE 3.1-4)
   ok('다시보기가 아직 없으면 그렇게 안내',
@@ -2973,5 +3137,5 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 await new Promise((res) => server.close(res));
 fs.rmSync('./data/verify-images', { recursive: true, force: true });
 fs.rmSync('./data/verify-data', { recursive: true, force: true });
-console.log(fail === 0 ? '\n✅ 전부 통과' : `\n❌ 실패 ${fail}건`);
+reportFailures();
 process.exit(fail === 0 ? 0 : 1);

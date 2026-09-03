@@ -21,7 +21,7 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint, warmUpCache, cacheDir } from './music/ytdlp.js';
+import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint, warmUpCache, cacheDir, pickFfmpeg } from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { initUsage as initAiUsage, flushUsage as flushAiUsage } from './ai/usage.js';
 import { adoptGalleryPanel } from './images/panel.js';
@@ -99,7 +99,22 @@ client.once(Events.ClientReady, (c) => {
     .catch((err) => console.error('[panel] 제어판 준비 실패:', err.message));
   // 클립은 한 개가 수 MB 입니다. 예산을 넘으면 오래된 것부터 지우고 **알립니다.**
   // (사진 예산과 따로입니다 — 합치면 클립이 늘 때 사진이 지워집니다)
-  if (inRole('stream')) startClipCleanup(c);
+  if (inRole('stream')) {
+    startClipCleanup(c);
+    // 클립을 자를 때 ffmpeg 이 필요합니다. **켤 때 미리 골라 로그에 찍습니다** —
+    // 안 그러면 "클립 버튼을 눌렀는데 안 된다" 로만 알게 됩니다.
+    // ⚠️ `-version` 이 통해도 실제 구간 받기에서 죽을 수 있습니다(실제로 그랬습니다).
+    //    그래서 이건 예고일 뿐이고, 죽으면 clips.js 가 다음 후보로 넘깁니다.
+    pickFfmpeg().then((found) => {
+      if (found) return console.log(`   클립용 ffmpeg: ${found}`);
+      console.warn(
+        '   ⚠️ 쓸 수 있는 ffmpeg 을 못 찾았습니다. **클립 만들기가 안 됩니다.**\n' +
+          '      `npm install` 을 다시 하거나, 서버에서 `sudo apt install -y ffmpeg` 후\n' +
+          '      `.env` 에 FFMPEG_PATH=/usr/bin/ffmpeg 을 넣어주세요.\n' +
+          '      (타임라인 기록은 ffmpeg 없이도 됩니다)'
+      );
+    });
+  }
   c.user.setActivity('/도움말', { type: ActivityType.Listening });
 
   // yt-dlp 를 **켜는 데만** 몇 초가 걸리는지 한 번 재둡니다.

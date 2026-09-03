@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { userError } from '../user-error.js';
-import { downloadSection } from '../music/ytdlp.js';
+import { downloadSection, nextFfmpeg } from '../music/ytdlp.js';
 
 const BASE = path.join(config.dataDir, 'clips');
 
@@ -195,9 +195,37 @@ export function fmtBytes(n) {
  * ⚠️ **원인을 모르면 지어내지 마세요.** 아래 목록에 없으면 원문을 그대로 붙여
  *    소유자가 진짜 원인을 찾을 수 있게 합니다. (CLAUDE.md · ARCHITECTURE 3.1-4)
  */
+/**
+ * ffmpeg 이 **죽었는가.** (정상 종료가 아니라 신호로 끝난 것)
+ *
+ * yt-dlp 는 `ffmpeg exited with code -11` 처럼 알려줍니다. 음수는 신호 번호입니다 —
+ * -11 은 SIGSEGV(세그폴트), -9 는 SIGKILL(대개 메모리 부족), -6 은 abort.
+ * 정상적인 실패(코드 1 등)와 **구분해야** 합니다. 죽은 것만 다른 ffmpeg 으로 넘깁니다.
+ */
+export function looksLikeFfmpegCrash(message) {
+  const s = String(message ?? '');
+  if (/ffmpeg[\s\S]{0,40}exited with code -\d+/i.test(s)) return true;
+  return /ffmpeg[\s\S]{0,40}(sigsegv|segmentation fault|core dumped)/i.test(s);
+}
+
 export function clipError(message) {
   const s = String(message ?? '');
   const low = s.toLowerCase();
+
+  // ⚠️ 원인을 짐작해서 적지 않습니다. **무엇을 해보면 되는지**만 적습니다.
+  //    (묶음 ffmpeg 이 왜 죽는지는 확정하지 못했습니다 — ARCHITECTURE 3.6-9)
+  if (looksLikeFfmpegCrash(s)) {
+    return (
+      `${s.trim()}\n\n` +
+      '**ffmpeg 이 정상 종료가 아니라 죽었습니다** (음수 코드는 신호 번호입니다. -11 = 세그폴트).\n' +
+      '봇이 다른 ffmpeg 으로도 해봤지만 안 됐습니다. 서버에서 이렇게 해보세요:\n' +
+      '```\nsudo apt install -y ffmpeg\nffmpeg -version\n```\n' +
+      '그다음 `.env` 에 아래를 넣고 재시작하세요.\n' +
+      '```\nFFMPEG_PATH=/usr/bin/ffmpeg\n```\n' +
+      '· -9 가 나왔다면 메모리 부족입니다. `free -h` 로 swap 을 확인하세요.\n' +
+      '· 클립 화질을 낮추면 부담이 줄어듭니다 (`STREAM_CLIP_MAX_HEIGHT=480`).'
+    );
+  }
 
   if (low.includes('live event will begin') || low.includes('premieres in') || low.includes('is_upcoming')) {
     return '아직 시작하지 않은 방송입니다.';
@@ -251,19 +279,31 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
   const out = path.join(folderPath(folder), stem);
 
   const t0 = Date.now();
+  const cut = () =>
+    downloadSection(url, { startSec, endSec, outPath: out, maxHeight: config.stream.clipMaxHeight });
+
   try {
-    await downloadSection(url, {
-      startSec,
-      endSec,
-      outPath: out,
-      maxHeight: config.stream.clipMaxHeight,
-    });
+    await cut();
   } catch (err) {
     // ⚠️ 실패하면 **반쪽 파일을 치웁니다.** `--force-overwrites` 는 다음 실행 이야기라
     //    지금 남은 `.part` 를 지워주지 않습니다.
     await cleanLeftovers(folder, stem);
-    const e = userError(clipError(err.message));
-    throw e;
+
+    // ffmpeg 이 **죽었으면**(-11 = SIGSEGV 등) 다른 ffmpeg 으로 한 번 더 해봅니다.
+    // 소유자 서버에서 묶음 ffmpeg 이 실제로 이렇게 죽었습니다. 원인은 확정하지 못했지만
+    // 서버에 깔린 ffmpeg 으로 바꾸면 되는 경우가 있으니, 사람이 손대기 전에 봇이 해봅니다.
+    if (looksLikeFfmpegCrash(err.message) && nextFfmpeg()) {
+      console.warn(`[stream] ffmpeg 이 죽어서(${err.message.trim()}) 다른 ffmpeg 으로 다시 시도합니다.`);
+      try {
+        await cut();
+      } catch (again) {
+        await cleanLeftovers(folder, stem);
+        throw userError(clipError(again.message));
+      }
+      // 성공했으면 그대로 진행합니다. 아래에서 파일을 확인합니다.
+    } else {
+      throw userError(clipError(err.message));
+    }
   }
 
   const file = `${stem}.mp4`;
