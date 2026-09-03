@@ -1,5 +1,7 @@
 // Steam 게임 검색. 두 엔드포인트 모두 비공식이므로, 실패해도 직접 입력 경로는 살아 있어야 합니다.
 // docs/게임검색-포럼연동-기획.md 2절.
+import { resolveKnownGame, searchKnownGames } from './catalog.js';
+
 const SEARCH_URL = 'https://steamcommunity.com/actions/SearchApps/';
 const DETAIL_URL = 'https://store.steampowered.com/api/appdetails';
 const CACHE_MS = 10 * 60_000;
@@ -78,8 +80,10 @@ export function directGame(name) {
 }
 
 /** 자동완성 값(`steam:번호`) 또는 사람이 직접 친 이름을 게임 객체로 바꿉니다. */
-export async function resolveGame(input) {
+export async function resolveGame(input, guildId = null) {
   const text = String(input ?? '').trim();
+  const known = guildId ? resolveKnownGame(guildId, text) : null;
+  if (known) return known;
   const steam = text.match(/^steam:(\d+)$/);
   if (!steam) return directGame(text);
   return gameByAppId(steam[1]);
@@ -87,8 +91,22 @@ export async function resolveGame(input) {
 
 export async function autocompleteGames(interaction) {
   const focused = interaction.options.getFocused();
-  const games = await searchGames(focused);
+  const known = searchKnownGames(interaction.guildId, focused);
+  // 현재 Steam 엔드포인트는 통용 한글명을 찾지 못합니다. 이미 한글 별칭을 찾았다면
+  // 느린 원격 요청을 보태지 않고 바로 답합니다. 영문 검색은 양쪽 결과를 합칩니다.
+  const remote = known.length && /[가-힣]/.test(focused) ? [] : await searchGames(focused);
+  const games = [...known];
+  for (const game of remote) {
+    if (!games.some((x) => x.key === `steam:${game.appid}`)) {
+      games.push({ ...game, key: `steam:${game.appid}`, alias: null });
+    }
+  }
   await interaction
-    .respond(games.map((g) => ({ name: `🎮 ${g.name}`.slice(0, 100), value: `steam:${g.appid}` })))
+    .respond(games.slice(0, 10).map((g) => ({
+      name: `🎮 ${g.alias && normalizeForLabel(g.alias) !== normalizeForLabel(g.name) ? `${g.alias} — ` : ''}${g.name}`.slice(0, 100),
+      value: g.key,
+    })))
     .catch(() => {});
 }
+
+const normalizeForLabel = (value) => String(value ?? '').trim().toLocaleLowerCase('ko-KR');

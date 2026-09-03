@@ -2852,16 +2852,64 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 6s-1) 게임 검색 · 포럼 연결
 {
   const steam = await import('./src/game/steam.js');
+  const catalog = await import('./src/game/catalog.js');
   const forumStore = await import('./src/game/store.js');
   const forum = await import('./src/game/forum.js');
   const streams = await import('./src/stream/store.js');
   const settings = await import('./src/settings.js');
 
+  await catalog.initGameCatalog();
+
   const direct = await steam.resolveGame('  모여봐요   동물의 숲  ');
   ok('Steam에 없는 게임도 직접 입력', direct.name === '모여봐요 동물의 숲' && direct.key === 'name:모여봐요 동물의 숲');
   ok('직접 입력 게임은 협동 여부를 추측하지 않음', direct.cooperative === null);
 
+  const stardew = {
+    key: 'steam:413150', appid: '413150', name: 'Stardew Valley', image: null,
+    genres: ['인디'], cooperative: true,
+  };
+  catalog.rememberGame('alias-guild', stardew, '📷 스타듀 밸리 스샷방');
+  catalog.rememberGame('alias-guild', stardew, '스타듀밸리 녹화방');
+  catalog.rememberGame('alias-guild', stardew, '스듀');
+  ok('수동 줄임말도 같은 Steam 게임으로 검색', catalog.searchKnownGames('alias-guild', '스듀')[0]?.key === stardew.key);
+  ok('다른 서버에 별칭이 새어나가지 않음', catalog.searchKnownGames('other-alias-guild', '스듀').length === 0);
+  await catalog.flushGameCatalog();
+  await catalog.initGameCatalog();
+  ok('재시작 뒤에도 별칭 복원', catalog.resolveKnownGame('alias-guild', '스듀')?.key === stardew.key);
+  catalog.rememberGame('collision-guild', stardew, '겹치는별칭');
+  catalog.rememberGame('collision-guild', { ...stardew, key: 'steam:892970', appid: '892970', name: 'Valheim' }, '겹치는별칭');
+  let collisionRejected = false;
+  try { await steam.resolveGame('겹치는별칭', 'collision-guild'); } catch { collisionRejected = true; }
+  ok('별칭 충돌은 조용히 다른 게임으로 확정하지 않음', collisionRejected && catalog.searchKnownGames('collision-guild', '겹치는별칭').length === 2);
+  ok('포럼 제목을 게임의 한글 별칭으로 누적',
+    catalog.searchKnownGames('alias-guild', '스타듀밸리')[0]?.key === stardew.key);
+  ok('한글 별칭 검색은 띄어쓰기·이모지를 무시',
+    catalog.searchKnownGames('alias-guild', '스타듀 밸리')[0]?.key === stardew.key);
+  ok('저장된 한글 별칭을 Steam 게임으로 복원',
+    (await steam.resolveGame('스타듀밸리 녹화방', 'alias-guild'))?.key === stardew.key);
+  let aliasChoices = [];
+  await steam.autocompleteGames({
+    guildId: 'alias-guild',
+    options: { getFocused: () => '스타듀' },
+    respond: async (choices) => { aliasChoices = choices; },
+  });
+  ok('/게임·/방송 자동완성에서 한글 별칭 검색',
+    aliasChoices.some((x) => x.value === stardew.key && x.name.includes('스타듀')));
+
   const gameCmd = allCommands.find((c) => c.data.toJSON().name === '게임');
+  ok('/게임 안에 수동 별칭 옵션', gameCmd.data.toJSON().options.some((o) => o.name === '별칭' && !o.required));
+  let aliasReply = '';
+  const aliasInteraction = {
+    guildId: 'alias-guild', channel: null,
+    options: { getString: (name) => name === '검색' ? stardew.key : '농장겜' },
+    memberPermissions: { has: () => false },
+    deferReply: async () => {}, editReply: async (text) => { aliasReply = text; },
+  };
+  await gameCmd.execute(aliasInteraction);
+  ok('일반 사용자의 별칭 변경 거부', aliasReply.includes('권한') && catalog.searchKnownGames('alias-guild', '농장겜').length === 0);
+  aliasInteraction.memberPermissions.has = () => true;
+  await gameCmd.execute(aliasInteraction);
+  ok('관리자가 명령으로 별칭 추가', aliasReply.includes('저장했습니다') && catalog.resolveKnownGame('alias-guild', '농장겜')?.key === stardew.key);
   ok('/게임 검색칸은 자동완성',
     typeof gameCmd.autocomplete === 'function' && gameCmd.data.toJSON().options[0].autocomplete === true);
   const broadcastCmd = allCommands.find((c) => c.data.toJSON().name === '방송');
@@ -2896,9 +2944,15 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   streams.closeSession(session);
   forumStore.bindForumPost('game-post-guild', 'rec', direct.key, 'record-thread');
   const sentContents = [];
+  const editedContents = [];
+  const removedMessages = [];
   const fakeClient = { channels: { fetch: async () => ({
     isThread: () => true,
     isTextBased: () => true,
+    messages: {
+      fetch: async (id) => ({ id, edit: async (payload) => editedContents.push(payload.content) }),
+      delete: async (id) => removedMessages.push(id),
+    },
     send: async (payload) => {
       sentContents.push(payload.content);
       return { id: `msg-${sentContents.length}` };
@@ -2906,21 +2960,68 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   }) } };
   const posted = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
-  ok('녹화 포스트 기록에 방송자·일시·링크·타임라인',
+  ok('녹화 포스트 기록에 방송자·시작 날짜·링크만',
     sentContents.join('\n').includes('<@broadcaster>') && sentContents.join('\n').includes('방송 시작') &&
-      sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes('00:'));
+      sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
+      !sentContents.join('\n').includes(':F>') && !sentContents.join('\n').includes('```'));
   ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
+  stream.forumPosted.messageIds.push('old-timeline-page');
   const again = await forum.publishStreamRecord(fakeClient, session, stream);
-  ok('같은 방송 기록을 포럼에 중복 전송하지 않음', again.status === 'already' && sentContents.length === 1);
+  ok('같은 방송 기록은 새 메시지 없이 갱신', again.status === 'updated' && sentContents.length === 1 && editedContents.length === 1);
+  ok('옛 타임라인 추가 페이지 정리', removedMessages.includes('old-timeline-page') && stream.forumPosted.messageIds.length === 1);
 
   const gameSrc = fs.readFileSync('./src/game/index.js', 'utf8');
   ok('포스트는 자동 생성하지 않고 현재 포스트를 수동 연결',
     gameSrc.includes('bindForumPost') && !gameSrc.includes('threads.create'));
+  ok('포스트 연결 시 제목을 한글 별칭으로 기억',
+    gameSrc.includes('rememberGame(interaction.guildId, game, interaction.channel?.name)'));
   ok('포럼 연결 변경은 스레드 관리자만 가능',
     gameSrc.includes('PermissionFlagsBits.ManageThreads'));
   const streamSrc = fs.readFileSync('./src/stream/index.js', 'utf8');
   ok('연결 안 된 녹화 기록은 보류한다고 안내', streamSrc.includes('기록을 보류했습니다'));
   ok('포럼 연결 저장도 종료 전에 flush', fs.readFileSync('./src/index.js', 'utf8').includes('await flushForumPosts()'));
+  ok('게임 한글 별칭도 종료 전에 flush', fs.readFileSync('./src/index.js', 'utf8').includes('await flushGameCatalog()'));
+}
+
+// 단순 확인 응답만 교체하고 사용자별 화면과 오류는 보존합니다.
+{
+  const { isConfirmation, createNoticeKeeper, installNoticeCleanup } = await import('./src/notices.js');
+  ok('단순 성공 확인은 정리 대상', isConfirmation('✅ 별칭을 저장했습니다.'));
+  ok('오류는 정리하지 않음', !isConfirmation('⚠️ 저장에 실패했습니다.'));
+  ok('결과 링크는 정리하지 않음', !isConfirmation('완료했습니다. https://example.com/result'));
+  ok('다음 버튼은 정리하지 않음', !isConfirmation({ content: '고쳤습니다.', components: [{}] }));
+  ok('임베드 결과는 정리하지 않음', !isConfirmation({ content: '완료했습니다.', embeds: [{}] }));
+  const deleted = [];
+  const keeper = createNoticeKeeper({ schedule: () => 0, cancel: () => {} });
+  await keeper('user-a', 'one', async () => deleted.push('one'), 100);
+  await keeper('user-b', 'other', async () => deleted.push('other'), 100);
+  await keeper('user-a', 'two', async () => deleted.push('two'), 100);
+  await keeper('user-a', 'two', async () => deleted.push('two'), 100);
+  ok('같은 사용자 최신 한 개만 남기고 타인은 보존', deleted.join() === 'one');
+  keeper.forget('user-a', 'two');
+  await keeper('user-a', 'three', async () => {}, 100);
+  ok('결과 화면으로 바뀐 확인은 삭제 예약 해제', deleted.join() === 'one');
+  const fake = {
+    id: 'notice-fake', applicationId: 'app', guildId: 'g', channelId: 'c', user: { id: 'u' },
+    reply: async () => 'original-result', deleteReply: async () => {},
+  };
+  installNoticeCleanup(fake);
+  ok('응답 반환값을 바꾸지 않음', await fake.reply({ content: '저장했습니다.', flags: 64 }) === 'original-result');
+  const removed = [];
+  const interactionFor = (id) => ({
+    id, applicationId: 'notice-test', guildId: 'g', channelId: 'c', user: { id: 'u' }, ephemeral: true,
+    reply: async () => id, editReply: async () => id,
+    deleteReply: async () => removed.push(id),
+  });
+  const one = interactionFor('one'), two = interactionFor('two');
+  installNoticeCleanup(one); installNoticeCleanup(two);
+  await one.reply({ content: '저장했습니다.', flags: 64 });
+  await two.reply({ content: '고쳤습니다.', flags: 64 });
+  ok('실제 응답 래퍼가 이전 확인만 삭제', removed.join() === 'one');
+  await two.editReply({ content: '⚠️ 갱신 실패', components: [{}] });
+  const three = interactionFor('three'); installNoticeCleanup(three);
+  await three.reply({ content: '저장했습니다.', flags: 64 });
+  ok('오류·버튼 화면으로 바뀌면 보호', removed.join() === 'one');
 }
 
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**

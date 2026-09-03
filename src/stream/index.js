@@ -214,7 +214,7 @@ export const commands = [
       if (!link) {
         if (game && activeSession(guildId)) {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-          const resolved = await resolveGame(game);
+          const resolved = await resolveGame(game, guildId);
           if (!resolved) {
             return interaction.editReply(
               'Steam에서 게임 이름을 가져오지 못했습니다. 목록을 다시 고르거나 게임 이름을 직접 입력해주세요.'
@@ -305,7 +305,7 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
   const currentStream = currentSession ? streamOf(currentSession, userId) : null;
   let resolvedGame = null;
   if (game) {
-    resolvedGame = await resolveGame(game);
+    resolvedGame = await resolveGame(game, guildId);
     if (!resolvedGame) {
       throw userError(
         'Steam에서 게임 이름을 가져오지 못했습니다. 검색 목록을 다시 고르거나 게임 이름을 직접 입력해주세요.'
@@ -669,7 +669,7 @@ async function endSession(interaction, client) {
   for (const stream of session.streams) {
     sent += await postSummary(channel, session, stream);
     const result = await publishStreamRecord(client, session, stream);
-    if (result.status === 'posted' || result.status === 'already') forumPosted += 1;
+    if (result.status === 'posted' || result.status === 'updated') forumPosted += 1;
     else if (result.status === 'unlinked') forumPending += 1;
     else forumFailed += 1;
   }
@@ -1012,6 +1012,12 @@ async function postSummary(channel, session, stream) {
 
 /** 고쳐 쓰기를 먼저 시도하고, 안 되면 새로 올립니다. */
 async function updateSummary(client, session, stream) {
+  if (session.closedAt && stream.forumPosted?.messageIds?.length) {
+    const result = await publishStreamRecord(client, session, stream);
+    if (result.status === 'failed' || result.status === 'missing') {
+      console.warn('[stream] 녹화 포스트 갱신 실패:', session.id, stream.userId);
+    }
+  }
   if (await refreshSummary(client, session, stream)) return;
 
   const channel = await client.channels.fetch(session.channelId).catch(() => null);

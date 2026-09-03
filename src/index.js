@@ -35,6 +35,8 @@ import { initSettlements, handleSettleModal, handleSettleComponent, flushSettlem
 import { handleStreamComponent, handleStreamModal, startClipCleanup, stopClipCleanup } from './stream/index.js';
 import { initStreams, flushStreams } from './stream/store.js';
 import { initForumPosts, flushForumPosts } from './game/store.js';
+import { initGameCatalog, flushGameCatalog } from './game/catalog.js';
+import { installNoticeCleanup } from './notices.js';
 import { initClips } from './stream/clips.js';
 import { ensureStreamPanels } from './stream/panel.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
@@ -187,6 +189,7 @@ function logError(tag, err) {
 // ── 슬래시 명령어 ───────────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isAutocomplete()) installNoticeCleanup(interaction);
   // 자동완성 (/타이머 의 시간 칸 등)
   if (interaction.isAutocomplete()) {
     const cmd = commandMap.get(interaction.commandName);
@@ -388,6 +391,7 @@ if (inRole('stream')) {
   await initStreams();
   await initClips();
   await initForumPosts();
+  await initGameCatalog();
 }
 // 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
 if (inRole('ai')) await initAiUsage();
@@ -454,6 +458,7 @@ async function shutdown(signal) {
   // 재시작 직전 몇 초의 마킹이 사라지면 안 됩니다. 그게 안 사라지는 것이 이 기능의 존재 이유입니다.
   await flushStreams().catch(() => {});
   await flushForumPosts().catch(() => {});
+  await flushGameCatalog().catch(() => {});
 
   // 정리 타이머를 멈춥니다. `unref()` 를 걸어둬서 종료를 막지는 않지만,
   // 종료하는 중에 파일을 지우기 시작하면 반쯤 지운 상태로 끝날 수 있습니다.
