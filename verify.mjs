@@ -2338,6 +2338,29 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     // 고정 주소로 조회했는데 방송이 없으면 **주소 문제가 아니다.** 라이브를 안 켠 것이다.
     ok('고정 주소인데 방송이 없으면 "라이브를 먼저 켜세요"',
       si3.includes('**라이브를 먼저 켜고** 다시 눌러주세요'));
+
+    // ★ **고정 주소는 공개 방송만 찾는다.** (실측 2026-09-03)
+    //   라이브 중이 아닌 채널의 /live 에 대해 yt-dlp 는 이렇게 답한다:
+    //     ERROR: [youtube:tab] @Google: The channel is not currently live
+    //   일부공개로 켜면 채널 목록에 안 떠서 같은 답이 온다.
+    //   이 안내가 없으면 "분명히 방송 중인데" 하고 멀쩡한 주소를 들여다본다.
+    ok('"채널이 라이브 중이 아니다" 를 가로채 일부공개 사정을 설명',
+      /not currently live[\s\S]{0,900}일부공개/.test(si3));
+    ok('일부공개면 이번 방송 주소를 넣으라고 안내',
+      /not currently live[\s\S]{0,900}이번 방송 주소를 그대로 넣어주세요/.test(si3));
+    ok('라이브를 안 켠 경우도 같은 답이라고 알려줌',
+      /not currently live[\s\S]{0,1200}라이브를 아직 안 켠 경우에도/.test(si3));
+    ok('고정 주소를 "추천" 으로 앞세우지 않음 (일부공개엔 안 됨)',
+      !si3.includes('**고정 주소(추천)**'));
+    ok('저장된 주소가 없을 때도 일부공개 사정을 알려줌',
+      /저장해둔 주소가 없습니다[\s\S]{0,500}일부공개는 이 방법이 안 됩니다/.test(si3));
+
+    // friendlyError 가 이 문장을 영어 그대로 넘기는 것을 전제로 가로챈다.
+    // 만약 나중에 번역을 넣으면 위 정규식이 못 잡으므로 여기서 함께 확인한다.
+    const yt3 = await import('./src/music/ytdlp.js');
+    const passedThrough = yt3.friendlyError('ERROR: [youtube:tab] @Google: The channel is not currently live');
+    ok('friendlyError 가 이 문장을 그대로 넘김 (가로채기가 성립하는 근거)',
+      /not currently live/i.test(passedThrough), passedThrough);
     ok('저장된 주소를 안내에 함께 보여줌', si3.includes('저장된 주소:'));
     ok('yt-dlp 가 풀어준 videoId 를 씀 (고정 주소 해석)',
       si3.includes('info.videoId || parseVideoId(target)'));

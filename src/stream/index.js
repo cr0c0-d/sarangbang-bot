@@ -165,8 +165,9 @@ function buildStatus(guildId, userId) {
   lines.push(
     home
       ? `📌 내 고정 주소: ${home}\n(제어판의 **🎬 나도 등록** 이 이 주소를 씁니다. 바꾸려면 \`/방송 링크:…\` 로 다시 등록하세요)`
-      : '📌 내 고정 주소가 없습니다. `/방송 링크:https://www.youtube.com/@내계정/live` 로 **한 번만** 등록하면\n' +
-          '그다음부터는 제어판의 **🎬 나도 등록** 버튼만 누르면 됩니다.'
+      : '📌 등록은 `/방송 링크:<이번 방송 주소>` 로 합니다.\n' +
+          '**공개**로 방송하신다면 `…/@내계정/live` 를 한 번 등록해두면 그다음부터 **🎬 나도 등록** 만 누르면 됩니다.\n' +
+          '**일부공개는 그 방법이 안 됩니다** — 채널 목록에 안 떠서 유튜브가 못 찾아줍니다. 방송마다 주소를 넣어주세요.'
   );
 
   const past = recentSessions(guildId, 6).filter((s) => s.closedAt);
@@ -250,9 +251,10 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
       if (!homeToSave) {
         throw userError(
           '유튜브 주소를 알아볼 수 없습니다. 둘 중 하나로 적어주세요.\n' +
-            '· **고정 주소(추천)** — `https://www.youtube.com/@내계정/live`\n' +
-            '  한 번만 등록하면 저장됩니다. 다음부터는 제어판의 **🎬 나도 등록** 만 누르면 됩니다.\n' +
-            '· 이번 방송 주소 — `https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`'
+            '· **이번 방송 주소** — `https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`\n' +
+            '  **일부공개(링크 있는 사람만)로 켜셨다면 이쪽입니다.**\n' +
+            '· 채널 고정 주소 — `https://www.youtube.com/@내계정/live`\n' +
+            '  **공개 방송에서만 됩니다.** 되면 저장돼서 다음부터 **🎬 나도 등록** 만 누르면 됩니다.'
         );
       }
       target = homeToSave;
@@ -263,9 +265,11 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
     const saved = streamHome(guildId, userId);
     if (!saved) {
       throw userError(
-        '저장해둔 주소가 없습니다. **한 번만** 등록해주세요.\n' +
-          '`/방송 링크:https://www.youtube.com/@내계정/live`\n' +
-          '그다음부터는 이 버튼만 누르면 됩니다. (방송마다 바뀌는 주소가 아니라 고정 주소입니다)'
+        '저장해둔 주소가 없습니다. `/방송 링크:<이번 방송 주소>` 로 등록해주세요.\n' +
+          '`https://www.youtube.com/live/…` · `https://youtu.be/…` · `…/watch?v=…`\n\n' +
+          '💡 **공개**로 방송하신다면 `https://www.youtube.com/@내계정/live` 를 한 번 등록해두면\n' +
+          '   그다음부터 이 버튼만 누르면 됩니다.\n' +
+          '   **일부공개는 이 방법이 안 됩니다** — 채널 목록에 안 떠서 유튜브가 못 찾아줍니다.'
       );
     }
     target = saved;
@@ -276,7 +280,29 @@ async function registerStream(interaction, { link = null, game = null } = {}) {
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
   }
 
-  const info = await liveInfo(target);
+  let info;
+  try {
+    info = await liveInfo(target);
+  } catch (err) {
+    // ⚠️ **고정 주소는 공개 방송만 찾습니다.** (실측 확인)
+    //    라이브 중이 아닌 채널의 `/live` 주소에 대해 yt-dlp 는 이렇게 답합니다:
+    //      ERROR: [youtube:tab] @Google: The channel is not currently live
+    //    일부공개(링크 있는 사람만)로 켜면 **채널 목록에 안 떠서** 같은 답이 옵니다.
+    //    이 안내가 없으면 사람은 "분명히 방송 중인데" 하고 멀쩡한 주소를 들여다봅니다.
+    if (usingHome && /not currently live|현재 라이브 중이 아/i.test(err.message)) {
+      throw userError(
+        '유튜브가 **"이 채널은 지금 라이브 중이 아니다"** 라고 답했습니다.\n\n' +
+          '**채널 고정 주소(`@계정/live`)는 공개 방송만 찾습니다.**\n' +
+          '일부공개(링크 있는 사람만)로 켜면 채널 목록에 안 뜨기 때문에 이 방법으로는 안 찾아집니다.\n\n' +
+          '→ **이번 방송 주소를 그대로 넣어주세요.** (유튜브 스튜디오의 공유 링크)\n' +
+          '`/방송 링크:https://www.youtube.com/live/…`\n' +
+          '`/방송 링크:https://youtu.be/…` · `/방송 링크:…/watch?v=…`\n\n' +
+          '일부공개로 쓰실 거면 **방송마다** 이렇게 넣어야 합니다.\n' +
+          '(라이브를 아직 안 켠 경우에도 같은 답이 옵니다 — 켜셨는지도 확인해주세요)'
+      );
+    }
+    throw err;
+  }
 
   if (info.liveStatus === 'is_upcoming' || (usingHome && !info.videoId)) {
     // ⚠️ 고정 주소를 쓸 때는 **주소가 잘못된 게 아닙니다.** 아직 안 켠 것입니다.
