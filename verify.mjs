@@ -1950,7 +1950,18 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const u1 = store.streamOf(s, 'u1');
   const u2 = store.streamOf(s, 'u2');
 
-  ok('마킹은 세션에 한 줄씩만 (사람별 복사 없음)', s.marks.length === 2 && !('marks' in u1));
+  // 진짜 불변조건: **등록한 사람이 몇 명이든 한 번 찍으면 한 줄** 이다.
+  // (`!('marks' in u1)` 로 검사하면 없던 키를 확인하는 것이라 그냥 통과한다)
+  const beforeMark = s.marks.length;
+  const extra = store.addMark(s, 'u2');
+  ok('한 번 찍으면 사람이 몇 명이든 한 줄',
+    s.marks.length === beforeMark + 1 && s.streams.length === 2,
+    `${s.streams.length}명 / ${s.marks.length}줄`);
+  ok('사람별 방송에는 마킹을 복사해두지 않음',
+    s.streams.every((x) => Object.keys(x).join() === 'userId,url,videoId,startedAt,startSource,offsetSec'),
+    Object.keys(u1).join());
+  store.removeLastMark(s);
+  void extra;
   ok('마킹 시각은 사람마다 따로 계산', store.markSecondsFor(u1, mk2) === 380 && store.markSecondsFor(u2, mk2) === 100);
   ok('늦게 켠 사람의 요약판에서는 음수 마킹이 빠짐',
     store.timelineFor(s, u2).length === 1, `${store.timelineFor(s, u2).length}개`);
@@ -2048,6 +2059,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   const si = fs.readFileSync('./src/stream/index.js', 'utf8');
   // 제어판 수정이 답보다 앞에 오면 가장 많이 눌리는 버튼에서 "Unknown interaction" 이 난다.
+  // ⚠️ 이 검사는 **소스 글자에 의존한다.** 답변 문구를 고치면 여기가 깨진다.
+  //    깨지면 순서가 아직 맞는지 눈으로 확인하고 아래 문자열을 맞춰줄 것.
+  //    (양쪽이 -1 이 되면 `-1 < -1` 이 false 라 조용히 통과하지 않고 실패한다 — 그게 낫다)
   ok('마킹은 답을 먼저 하고 제어판을 나중에 고침',
     si.indexOf('await interaction.reply(\n    eph(`✂️') < si.indexOf('scheduleStreamPanelRefresh(client, interaction.guildId'));
   ok('제어판 수정을 몰아서 함 (6명이 연달아 눌러도 한도에 안 걸리게)',
@@ -2055,6 +2069,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('요약판은 하나씩 순서대로 보냄 (한꺼번에 던지면 전송 한도)',
     /for \(const stream of session\.streams\)[\s\S]{0,400}?await channel\s*\n?\s*\.send/.test(si));
   ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
+  // 채널을 못 찾으면 **닫지 않는다.** 닫아버리면 [이어서 기록] 버튼도 못 그려서 되돌릴 길이 없다.
+  ok('방송 채널을 못 찾으면 종료하지 않음',
+    si.indexOf('const channel = await client.channels.fetch(session.channelId)') < si.indexOf('\n  closeSession(session);'));
+  // 세션을 다시 연 뒤 설명을 채우면 요약판이 제어판 아래에 쌓인다. 조건 없이 다시 올려야 한다.
+  ok('설명을 채운 뒤에도 제어판을 조건 없이 맨 아래로',
+    !/resendSummary[\s\S]{0,600}if \(!activeSession/.test(si));
 
   const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
   ok('시작 시각은 release_timestamp 로 읽음', yt.includes('%(release_timestamp)s'));

@@ -293,15 +293,19 @@ async function endSession(interaction, client) {
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  closeSession(session);
 
+  // ⚠️ **채널을 먼저 확인하고 나중에 닫습니다.** 순서를 바꾸면 이렇게 됩니다:
+  //    닫혔는데 요약판도 못 올리고, 제어판도 못 고쳐서 [▶️ 이어서 기록] 버튼이 안 생깁니다.
+  //    그러면 되돌릴 방법이 화면에 없어집니다.
   const channel = await client.channels.fetch(session.channelId).catch(() => null);
   if (!channel?.isTextBased?.()) {
     return interaction.editReply(
-      '방송을 종료했습니다. 그런데 방송 채널을 찾지 못해 요약판을 올리지 못했습니다.\n' +
-        '`/채널설정` 에서 방송 채널을 확인해주세요. 기록은 남아 있습니다.'
+      '방송 채널을 찾지 못해 요약판을 올릴 수 없습니다. **종료하지 않았습니다.**\n' +
+        '`/채널설정` 에서 방송 채널을 확인한 뒤 다시 눌러주세요. 기록은 그대로 있습니다.'
     );
   }
+
+  closeSession(session);
 
   // ⚠️ **하나씩 순서대로** 보냅니다. 6명분을 한꺼번에 던지면 채널 전송 한도에 걸립니다.
   let sent = 0;
@@ -484,7 +488,8 @@ async function resendSummary(client, session, stream) {
       .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
       .catch(() => {});
   }
-  if (!activeSession(session.guildId)) {
-    await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
-  }
+  // ⚠️ **기록 중인지 따지지 말고 항상 다시 올립니다.** [▶️ 이어서 기록] 으로 세션을 다시 연
+  //    뒤에 설명을 채우면, 새 요약판이 제어판 **아래**에 쌓여 제어판이 파묻힙니다.
+  //    그때 아무도 제어판을 맨 아래로 되돌려주지 않습니다.
+  await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
 }
