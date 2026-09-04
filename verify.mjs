@@ -1585,6 +1585,14 @@ ok('일반문장 무시', findYoutubeLink('링크 없음') === null);
 const { startWebServer } = await import('./src/web/server.js');
 const server = await startWebServer();
 const base = 'http://127.0.0.1:38473';
+const guideResponse = await fetch(`${base}/guide/stream`);
+const guideHtml = await guideResponse.text();
+ok('방송 사용 가이드는 암호 없이 HTML 제공', guideResponse.status === 200 && guideResponse.headers.get('content-type').includes('text/html'));
+ok('가이드에 6단계와 캡처 자리 6개', ['start', 'register', 'mark', 'finish', 'clip', 'save'].every((id) => guideHtml.includes(`id="${id}"`)) && (guideHtml.match(/data-shot=/g) ?? []).length === 6);
+ok('가이드가 종료·처리 완료 차이와 시간 입력 주의를 안내', guideHtml.includes('방송 종료 ≠ 다시보기 처리 완료') && guideHtml.includes('20분') && guideHtml.includes('유튜브 방송을 꺼주지는'));
+ok('가이드 누락 캡처는 깨진 이미지 대신 안내 표시', guideHtml.includes("img.addEventListener('error'") && guideHtml.includes('SCREENSHOT 06'));
+const landingResponse = await fetch(base);
+ok('웹 첫 화면에 방송 가이드 링크', (await landingResponse.text()).includes('href="/guide/stream"'));
 const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
 // 루트: 안내만. 폴더 이름이 새어나가면 안 됩니다.
 {

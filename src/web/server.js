@@ -8,6 +8,7 @@
 //   (크롬은 처음 한 번 "여러 파일을 다운로드하시겠습니까?" 를 묻고, 허용하면 그다음부터 조용합니다.)
 import express from 'express';
 import crypto from 'node:crypto';
+import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { inRole } from '../settings.js';
 import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
@@ -43,6 +44,11 @@ export function createWebServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
   app.disable('x-powered-by');
+  // 친구용 공개 안내서. 사용자 데이터나 폴더 목록은 노출하지 않습니다.
+  app.get('/guide/stream', (req, res) => {
+    res.sendFile(fileURLToPath(new URL('./guide/stream.html', import.meta.url)));
+  });
+  app.use('/guide/assets', express.static(fileURLToPath(new URL('./guide/assets', import.meta.url)), { index: false, dotfiles: 'deny' }));
 
   // ── 인증 ──
   // 보기·내려받기는 **누구나** 가능합니다. 링크를 아는 사람이면 그대로 열립니다.
@@ -352,6 +358,7 @@ function landingPage() {
 <main>
   <p>사진은 디스코드 채널별로 정리되어 있습니다.</p>
   <p class="muted">보려는 채널에서 <code>/갤러리</code> 를 입력하면 그 채널의 사진 링크가 나옵니다.</p>
+  <p><a class="btn" href="/guide/stream">🎥 게임 방송 · 클립 사용 가이드</a></p>
   <p style="margin-top:28px"><a class="btn" href="/folders">폴더 목록 보기 (관리자)</a></p>
 </main>`;
 }
