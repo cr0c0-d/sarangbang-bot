@@ -2971,16 +2971,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     si.indexOf('await interaction.reply(\n    eph(`✂️') < si.indexOf('scheduleStreamPanelRefresh(client, interaction.guildId'));
   ok('제어판 수정을 몰아서 함 (6명이 연달아 눌러도 한도에 안 걸리게)',
     fs.readFileSync('./src/stream/panel.js', 'utf8').includes('pendingRefresh'));
-  ok('요약판은 하나씩 순서대로 보냄 (한꺼번에 던지면 전송 한도)',
-    /for \(const payload of buildSummary\(session, stream\)\)[\s\S]{0,300}?await channel\s*\n?\s*\.send/.test(si));
+  ok('개인 요약은 순서대로 나만 보기로 전송', si.includes('for (const payload of buildSummary(session, mine))') && si.includes('MessageFlags.Ephemeral | MessageFlags.SuppressNotifications'));
   // ★ 클립·설명이 바뀔 때 요약판을 **새로 올리면** 같은 타임라인이 채널에 쌓인다.
   //   클립 5개 = 요약판 6장. 제어판처럼 그 자리에서 고쳐 써야 한다.
-  ok('요약판은 그 자리에서 고쳐 씀 (새로 올려 쌓지 않음)',
-    si.includes('async function refreshSummary') && si.includes('msg.edit({ content:'));
-  ok('요약판 메시지 ID 를 기억해둠 (고쳐 쓰려면 필요)',
-    si.includes('setSummaryMessages(session, stream.userId, ids)'));
-  ok('고쳐 쓰지 못하면 새로 올림 (장수가 바뀌었을 때)',
-    /if \(await refreshSummary\([\s\S]{0,200}?postSummary\(channel, session, stream\)/.test(si));
+  ok('공개 요약 신규 전송 경로 제거', !si.includes('async function postSummary'));
+  ok('개인 요약 ID를 영구 저장하지 않음', !si.includes('setSummaryMessages'));
+  ok('개인 요약 재조회는 본인 방송만 선택', si.includes('streamOf(session, interaction.user.id)'));
   ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
   // 채널을 못 찾으면 **닫지 않는다.** 닫아버리면 [이어서 기록] 버튼도 못 그려서 되돌릴 길이 없다.
   ok('방송 채널을 못 찾으면 종료하지 않음',
@@ -3197,10 +3193,44 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     reply: async () => {}, editReply: async () => {},
   }, syncClient);
   ok('설명 모달 제출이 공유 방송자 두 명의 녹화방까지 동기화',
-    ['record-shared-a', 'record-shared-b', 'summary-shared-a', 'summary-shared-b'].every((id) =>
+    ['record-shared-a', 'record-shared-b'].every((id) =>
       syncEdits.some((edit) => edit.id === id && edit.content.includes('공유 장면 설명 수정'))) && sharedMark.text === '공유 장면 설명 수정');
 
   const gameSrc = fs.readFileSync('./src/game/index.js', 'utf8');
+  {
+    const personal = streams.openSession('private-summary-guild', 'private-home', '개인요약');
+    for (const userId of ['mine', 'other']) streams.putStream(personal, {
+      userId, url: `https://youtu.be/${userId === 'mine' ? 'aaaaaaaaaaa' : 'bbbbbbbbbbb'}`,
+      startedAt: streams.nowSec() - 60, startSource: 'release_timestamp',
+    });
+    streams.addMark(personal, 'mine', 'mine');
+    streams.addMark(personal, 'other', 'other');
+    const publicMessages = [], privateMessages = [], replies = [];
+    const channel = { isTextBased: () => true, send: async (p) => { publicMessages.push(p); return { id: 'private-test-panel' }; } };
+    const client = { channels: { fetch: async () => channel } };
+    const interaction = {
+      guildId: personal.guildId, user: { id: 'mine' }, customId: 'tm:panel:end',
+      deferReply: async () => {}, editReply: async (p) => replies.push(p), reply: async (p) => replies.push(p),
+      followUp: async (p) => privateMessages.push(p),
+    };
+    await streamFeature.handleStreamComponent(interaction, client);
+    ok('종료 시 공개 채널에는 타임라인을 전송하지 않음', publicMessages.every((p) => !p.content?.includes('타임라인')));
+    ok('종료 개인 요약은 본인 방송만 포함', privateMessages.length > 0 && privateMessages.every((p) => p.content.includes('<@mine>') && !p.content.includes('<@other>')));
+    ok('종료 개인 요약은 모두 Ephemeral 및 무음', privateMessages.every((p) => (p.flags & 64) && (p.flags & 4096)));
+    privateMessages.length = 0;
+    interaction.user.id = 'other'; interaction.customId = 'tm:resum'; interaction.values = [personal.id];
+    await streamFeature.handleStreamComponent(interaction, client);
+    ok('다른 참여자는 재조회 시 자기 요약만 확인', privateMessages.length > 0 && privateMessages.every((p) => p.content.includes('<@other>') && !p.content.includes('<@mine>')));
+    privateMessages.length = 0;
+    interaction.user.id = 'outsider';
+    await streamFeature.handleStreamComponent(interaction, client);
+    ok('미등록 사용자에게 다른 방송자 요약을 주지 않음', privateMessages.length === 0 && replies.at(-1).content.includes('본인 방송이 없습니다'));
+    interaction.user.id = 'mine'; interaction.guildId = 'wrong-guild';
+    await streamFeature.handleStreamComponent(interaction, client);
+    ok('다른 서버 개인 요약 조회 차단', privateMessages.length === 0 && replies.at(-1).content.includes('찾지 못했습니다'));
+    const pp = await import('./src/stream/panel.js');
+    ok('지난 방송 선택 목록도 본인 참가 세션만 표시', pp.buildSessionPicker(personal.guildId, 'outsider') === null);
+  }
   ok('포스트는 자동 생성하지 않고 현재 포스트를 수동 연결',
     gameSrc.includes('bindForumPost') && !gameSrc.includes('threads.create'));
   ok('포스트 연결 시 제목을 한글 별칭으로 기억',

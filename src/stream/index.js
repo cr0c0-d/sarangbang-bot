@@ -38,8 +38,6 @@ import {
   setMarkText,
   addClip,
   clipsOf,
-  setSummaryMessages,
-  summaryMessages,
   timelineFor,
   hhmmss,
   humanDuration,
@@ -231,7 +229,7 @@ export const commands = [
         }
         // 녹화방 미연결 때도 요약판에서 클립을 만들 수 있습니다. 밀려 올라갔을 때
         // 여기서 다시 부를 수 있어야 합니다.
-        const picker = buildSessionPicker(guildId);
+        const picker = buildSessionPicker(guildId, interaction.user.id);
         return interaction.reply({
           embeds: [buildStatus(guildId, interaction.user.id)],
           ...(picker ? { components: [picker] } : {}),
@@ -538,32 +536,24 @@ export async function handleStreamComponent(interaction, client) {
 
   // 모르는 버튼입니다. 조용히 넘기면 디스코드가 "응답하지 않았어요" 를 띄웁니다.
   // (기능을 늘릴 때 여기 갈래를 먼저 추가하세요 — 안 하면 새 버튼이 이 안내에 삼켜집니다)
-  return interaction.reply(eph('⚠️ 이 버튼은 더 쓰지 않습니다. `/방송` 으로 요약판을 다시 올려주세요.')).catch(() => {});
+  return interaction.reply(eph('⚠️ 이 버튼은 더 쓰지 않습니다. `/방송` 으로 내 지난 방송 타임라인 보기를 열어주세요.')).catch(() => {});
 }
 
-/** 지난 방송을 골라 요약판을 다시 올립니다. */
+/** 지난 방송에서 본인 요약만 나만 보기로 엽니다. */
 async function resendPastSummary(interaction, client) {
   const session = sessionById(interaction.values?.[0]);
-  if (!session) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
-
+  if (!session || session.guildId !== interaction.guildId) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  const mine = streamOf(session, interaction.user.id);
+  if (!mine) return interaction.reply(eph('이 세션에 등록한 본인 방송이 없습니다.'));
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const channel = await client.channels.fetch(session.channelId).catch(() => null);
-  if (!channel?.isTextBased?.()) {
-    return interaction.editReply('방송 채널을 찾지 못했습니다. `/채널설정` 에서 확인해주세요.');
-  }
-
-  let forumFailed = false;
-  for (const stream of session.streams) {
-    await postSummary(channel, session, stream);
-    // 과거에 공유한 녹화방 메시지도 버튼을 붙여 갱신합니다. 새 포스트는 만들지 않습니다.
-    if (session.closedAt && stream.forumPosted?.messageIds?.length) {
-      const result = await publishStreamRecord(client, session, stream);
-      if (!['posted', 'updated'].includes(result.status)) forumFailed = true;
+  await interaction.editReply('📝 내 방송 요약입니다. 다른 사람에게는 보이지 않습니다.');
+  await sendOwnSummary(interaction, session);
+  if (session.closedAt && mine.forumPosted?.messageIds?.length) {
+    const result = await publishStreamRecord(client, session, mine);
+    if (!['posted', 'updated'].includes(result.status)) {
+      await interaction.editReply('⚠️ 내 요약은 표시했지만 녹화방 갱신에 실패했습니다. 권한을 확인하고 다시 시도해주세요.');
     }
   }
-  await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
-  await interaction.editReply(`📝 요약판을 <#${session.channelId}> 에 다시 올렸습니다.` +
-    (forumFailed ? '\n⚠️ 녹화방 버튼 갱신에 실패했습니다. 권한을 확인하고 다시 시도해주세요.' : ''));
 }
 
 async function markNow(interaction, client) {
@@ -660,26 +650,23 @@ async function endSession(interaction, client) {
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
   // ⚠️ **채널을 먼저 확인하고 나중에 닫습니다.** 순서를 바꾸면 이렇게 됩니다:
-  //    닫혔는데 요약판도 못 올리고, 제어판도 못 고쳐서 [▶️ 이어서 기록] 버튼이 안 생깁니다.
+  //    닫혔는데 제어판을 못 고쳐서 [▶️ 이어서 기록] 버튼이 안 생깁니다.
   //    그러면 되돌릴 방법이 화면에 없어집니다.
   const channel = await client.channels.fetch(session.channelId).catch(() => null);
   if (!channel?.isTextBased?.()) {
     return interaction.editReply(
-      '방송 채널을 찾지 못해 요약판을 올릴 수 없습니다. **종료하지 않았습니다.**\n' +
+      '방송 채널을 찾지 못해 제어판을 갱신할 수 없습니다. **종료하지 않았습니다.**\n' +
         '`/채널설정` 에서 방송 채널을 확인한 뒤 다시 눌러주세요. 기록은 그대로 있습니다.'
     );
   }
 
   closeSession(session);
 
-  // ⚠️ **하나씩 순서대로** 보냅니다. 6명분을 한꺼번에 던지면 채널 전송 한도에 걸립니다.
-  //    보낸 메시지 ID 를 기억해둡니다 — 나중에 설명·클립이 바뀌면 **그 자리에서 고쳐 씁니다.**
-  let sent = 0;
+  // 공유 녹화방 기록만 순서대로 보냅니다. 방송 채널에는 공개 요약을 보내지 않습니다.
   let forumPosted = 0;
   let forumPending = 0;
   let forumFailed = 0;
   for (const stream of session.streams) {
-    sent += await postSummary(channel, session, stream);
     const result = await publishStreamRecord(client, session, stream);
     if (result.status === 'posted' || result.status === 'updated') forumPosted += 1;
     else if (result.status === 'unlinked') forumPending += 1;
@@ -689,12 +676,11 @@ async function endSession(interaction, client) {
   // 제어판을 **맨 마지막에** 다시 올립니다. 그래야 채널 맨 아래에 남습니다.
   await repostStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
 
-  const resultLines = sent > 0
-    ? [
-        `⏹️ 방송을 종료하고 요약판을 <#${session.channelId}> 에 올렸습니다.`,
-        '잘못 눌렀다면 제어판의 **▶️ 이어서 기록** 으로 되돌릴 수 있습니다.',
-      ]
-    : ['⏹️ 방송을 종료했습니다. 등록된 방송이 없어 요약판은 없습니다.'];
+  const resultLines = [
+    '⏹️ 방송 기록을 종료했습니다. 본인 방송의 요약만 나만 보기로 표시합니다.',
+    '다른 참여자는 `/방송`에서 지난 방송을 골라 자기 요약을 확인할 수 있습니다.',
+    '잘못 눌렀다면 방송 채널 제어판의 **▶️ 이어서 기록**으로 되돌릴 수 있습니다.',
+  ];
   if (forumPosted) resultLines.push(`📺 녹화 포스트에 방송 기록 **${forumPosted}개**를 올렸습니다.`);
   if (forumPending) {
     resultLines.push(
@@ -704,6 +690,7 @@ async function endSession(interaction, client) {
   }
   if (forumFailed) resultLines.push(`⚠️ 녹화 포스트 전송에 실패한 기록이 ${forumFailed}개 있습니다. 연결과 권한을 확인해주세요.`);
   await interaction.editReply(resultLines.join('\n'));
+  await sendOwnSummary(interaction, session);
 }
 
 async function reopen(interaction, client, sessionId) {
@@ -875,7 +862,7 @@ async function submitClip(interaction, client) {
   }
   await interaction.editReply(lines.join('\n'));
 
-  // 요약판의 ✅ 표시와 [클립 보기] 링크가 따라오게 다시 올립니다.
+  // 녹화방을 동기화합니다. 개인 요약의 최신 내용은 다시 열 때 표시합니다.
   await updateSummary(client, session, stream).catch(() => {});
 }
 
@@ -992,7 +979,7 @@ async function submitDesc(interaction, client) {
   }
   await interaction.reply(payload);
 
-  // 공유 마킹 설명은 다른 방송자의 타임라인에도 들어갑니다. 해당 요약판·포럼도 함께 갱신합니다.
+  // 공유 마킹 설명은 다른 방송자의 타임라인에도 들어갑니다. 해당 포럼도 함께 갱신합니다. 개인 요약은 다시 열어 확인합니다.
   let syncFailed = false;
   for (const target of session.streams) {
     if (target !== stream && !timelineFor(session, target).some(({ mark }) => changedMarkIds.has(mark.id))) continue;
@@ -1006,61 +993,25 @@ async function submitDesc(interaction, client) {
   }
 }
 
-/**
- * 요약판을 **그 자리에서 고쳐 씁니다.**
- *
- * ★ 새로 올리면 안 됩니다. 클립을 5개 만들면 채널에 같은 타임라인이 6장 쌓입니다.
- *   (제어판을 메시지 하나로 고쳐 쓰는 것과 같은 이유 — 3.6-1)
- *
- * @returns {Promise<boolean>} 고쳐 쓰지 못했으면 false (부르는 쪽이 새로 올립니다)
- */
-async function refreshSummary(client, session, stream) {
-  const ids = summaryMessages(session, stream.userId);
-  const pages = buildSummary(session, stream);
-  // 설명을 채우면 글자가 늘어 장수가 바뀔 수 있습니다. 그때는 고쳐 쓸 수 없습니다.
-  if (ids.length === 0 || ids.length !== pages.length) return false;
-
-  const channel = await client.channels.fetch(session.channelId).catch(() => null);
-  if (!channel?.isTextBased?.()) return false;
-
-  for (let i = 0; i < ids.length; i++) {
-    const msg = await channel.messages.fetch(ids[i]).catch(() => null);
-    if (!msg) return false; // 누가 지웠습니다. 새로 올려야 합니다.
-    await msg.edit({ content: pages[i].content, components: pages[i].components ?? [] }).catch(() => {});
+/** 본인 방송만 나만 보기로 보냅니다. 영구 메시지 ID로 저장하지 않습니다. */
+async function sendOwnSummary(interaction, session) {
+  const mine = session.guildId === interaction.guildId ? streamOf(session, interaction.user.id) : null;
+  if (!mine) {
+    await interaction.followUp(eph('이 세션에 등록한 본인 방송이 없습니다. 다른 참여자의 요약은 표시하지 않습니다.'));
+    return;
   }
-  return true;
+  for (const payload of buildSummary(session, mine)) {
+    await interaction.followUp({
+      ...payload, flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
+      allowedMentions: { parse: [] },
+    });
+  }
 }
 
-/** 요약판을 새로 올리고 메시지 ID 를 기억합니다. **하나씩 순서대로** 보냅니다. */
-async function postSummary(channel, session, stream) {
-  const ids = [];
-  for (const payload of buildSummary(session, stream)) {
-    const sent = await channel
-      .send({ ...payload, flags: MessageFlags.SuppressNotifications, allowedMentions: { parse: [] } })
-      .catch(() => null);
-    if (sent) ids.push(sent.id);
-  }
-  if (ids.length > 0) setSummaryMessages(session, stream.userId, ids);
-  return ids.length;
-}
-
-/** 고쳐 쓰기를 먼저 시도하고, 안 되면 새로 올립니다. */
+/** 개인 요약은 다시 열 때 최신 내용으로 만들고, 공유 녹화방만 동기화합니다. */
 async function updateSummary(client, session, stream) {
-  let forumResult = null;
   if (session.closedAt && stream.forumPosted?.messageIds?.length) {
-    const result = await publishStreamRecord(client, session, stream);
-    forumResult = result;
-    if (result.status === 'failed' || result.status === 'missing') {
-      console.warn('[stream] 녹화 포스트 갱신 실패:', session.id, stream.userId);
-    }
+    return publishStreamRecord(client, session, stream);
   }
-  if (await refreshSummary(client, session, stream)) return forumResult;
-
-  const channel = await client.channels.fetch(session.channelId).catch(() => null);
-  if (!channel?.isTextBased?.()) return forumResult;
-  await postSummary(channel, session, stream);
-  // 새로 올렸으니 제어판이 파묻혔습니다. 맨 아래로 되돌립니다.
-  // (고쳐 쓴 경우에는 채널에 아무것도 안 늘어나므로 건드리지 않습니다)
-  await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
-  return forumResult;
+  return null;
 }

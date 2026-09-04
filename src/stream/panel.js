@@ -265,14 +265,15 @@ export function scheduleStreamPanelRefresh(client, guildId, channelId) {
  * 왜 필요한가: 녹화방 미연결 때에도 **요약판에서 클립 추출**로 갈 수 있어야 합니다.
  * 채팅이 쌓여 위로 밀려 올라가면 찾아 올라가기 어렵습니다. 여기서 다시 부를 수 있게 합니다.
  */
-export function buildSessionPicker(guildId) {
-  const past = recentSessions(guildId, SELECT_LIMIT).filter((s) => s.closedAt && s.streams.length > 0);
+export function buildSessionPicker(guildId, userId = null) {
+  const past = recentSessions(guildId, SELECT_LIMIT).filter((s) => s.closedAt && s.streams.length > 0 &&
+    (!userId || s.streams.some((stream) => stream.userId === userId)));
   if (past.length === 0) return null;
 
   return new ActionRowBuilder().addComponents(
     new StringSelectMenuBuilder()
       .setCustomId('tm:resum')
-      .setPlaceholder('📝 지난 방송의 요약판 다시 올리기')
+      .setPlaceholder('📝 내 지난 방송 타임라인 보기')
       .addOptions(
         past.map((s) => ({
           label: cut(`${s.game || '이름 없음'} · 마킹 ${s.marks.length}개`, 90),
