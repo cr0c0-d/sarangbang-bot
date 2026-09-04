@@ -1682,6 +1682,26 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   await clips.makeClip({ folder: 'abc123', url: 'x', startSec: 60, endSec: 30, title: 't' }).catch((e) => (rev = e.message));
   ok('끝이 시작보다 앞이면 막음', /뒤여야/.test(rev ?? ''));
 
+  let processingError;
+  await clips.ensureClipReady('test-url', async () => ({ liveStatus: 'post_live' }))
+    .catch((e) => { processingError = e; });
+  ok('다시보기 처리 중이면 클립 추출 보류 안내', processingError?.message.includes('post_live') && processingError.message.includes('다시 시도'));
+  let readinessCalls = 0;
+  for (const liveStatus of ['was_live', 'not_live']) {
+    await clips.ensureClipReady('test-url', async (url) => {
+      if (url === 'test-url') readinessCalls++;
+      return { liveStatus };
+    });
+  }
+  ok('처리 완료 영상은 매번 새로 조회한 뒤 통과', readinessCalls === 2);
+  const lookupError = new Error('조회 실패');
+  let propagatedError;
+  await clips.ensureClipReady('test-url', async () => { throw lookupError; })
+    .catch((e) => { propagatedError = e; });
+  ok('상태 조회 실패를 처리 중으로 오인하거나 무시하지 않음', propagatedError === lookupError);
+  const clipSource = fs.readFileSync('./src/stream/clips.js', 'utf8').split('export async function makeClip')[1];
+  ok('처리 상태 확인은 파일 생성보다 먼저', clipSource.indexOf('await ensureClipReady(url)') < clipSource.indexOf('await fs.mkdir'));
+
   // ── ffmpeg 이 죽었을 때 (소유자 서버 실측: `ffmpeg exited with code -11`) ──
   //
   // ★ 음수 코드는 **신호 번호**다. -11 = SIGSEGV. 정상 실패(코드 1)와 구분해야

@@ -16,7 +16,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { userError } from '../user-error.js';
-import { downloadSection, nextFfmpeg } from '../music/ytdlp.js';
+import { downloadSection, nextFfmpeg, liveInfo } from '../music/ytdlp.js';
 
 const BASE = path.join(config.dataDir, 'clips');
 
@@ -391,6 +391,18 @@ function logClipFailure(err) {
   );
 }
 
+/** 방송 종료와 다시보기 처리 완료는 다릅니다. 조회 실패도 추출로 넘기지 않습니다. */
+export async function ensureClipReady(url, readInfo = liveInfo) {
+  const info = await readInfo(url);
+  if (info.liveStatus === 'post_live') {
+    throw userError(
+      '방송은 종료됐지만 유튜브가 아직 다시보기를 처리 중입니다. (post_live)\n' +
+      '이 상태에서는 클립이 짧게 잘리거나 재생되지 않을 수 있어 추출하지 않았습니다.\n' +
+      '처리가 끝난 뒤 같은 구간으로 다시 시도해주세요. 완료 시간은 유튜브에서 정합니다.'
+    );
+  }
+}
+
 /**
  * 한 구간을 잘라 파일로 만듭니다.
  *
@@ -407,6 +419,10 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
     );
   }
 
+  // 매번 다시 조회합니다. 종료 시 저장한 상태는 처리 완료 후에도 오래된 값일 수 있습니다.
+  // 파일 생성·덮어쓰기와 ffmpeg 실행보다 먼저 막아 기존 클립을 보존합니다.
+  folderPath(folder);
+  await ensureClipReady(url);
   await fs.mkdir(folderPath(folder), { recursive: true });
 
   // 파일 이름: 시작 시간 + 제목. 내려받았을 때 무슨 장면인지 바로 알 수 있게.
