@@ -1588,7 +1588,14 @@ const base = 'http://127.0.0.1:38473';
 const guideResponse = await fetch(`${base}/guide/stream`);
 const guideHtml = await guideResponse.text();
 ok('방송 사용 가이드는 암호 없이 HTML 제공', guideResponse.status === 200 && guideResponse.headers.get('content-type').includes('text/html'));
-ok('가이드에 6단계와 캡처 자리 6개', ['start', 'register', 'mark', 'finish', 'clip', 'save'].every((id) => guideHtml.includes(`id="${id}"`)) && (guideHtml.match(/data-shot=/g) ?? []).length === 6);
+ok('가이드에 6단계와 실제 캡처 13개', ['start', 'register', 'mark', 'finish', 'clip', 'save'].every((id) => guideHtml.includes(`id="${id}"`)) && (guideHtml.match(/data-shot=/g) ?? []).length === 13);
+for (const [, name] of guideHtml.matchAll(/data-shot="([^"]+)"/g)) {
+  const response = await fetch(`${base}/guide/assets/${name}`);
+  const bytes = Buffer.from(await response.arrayBuffer());
+  ok(`가이드 캡처 제공: ${name}`, response.status === 200 && response.headers.get('content-type').includes('image/png') && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])));
+}
+ok('캡처는 선택 목록 다음 구간 입력창 순서', guideHtml.indexOf('data-shot="05-picker.png"') < guideHtml.indexOf('data-shot="05-range.png"'));
+ok('가이드에서 영상 길이와 작업 시간 구분', guideHtml.includes('영상 길이가 아니라 작업 시간'));
 ok('가이드가 종료·처리 완료 차이와 시간 입력 주의를 안내', guideHtml.includes('방송 종료 ≠ 다시보기 처리 완료') && guideHtml.includes('20분') && guideHtml.includes('유튜브 방송을 꺼주지는'));
 ok('가이드 누락 캡처는 깨진 이미지 대신 안내 표시', guideHtml.includes("img.addEventListener('error'") && guideHtml.includes('SCREENSHOT 06'));
 const landingResponse = await fetch(base);
