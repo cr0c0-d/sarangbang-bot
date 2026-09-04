@@ -38,7 +38,8 @@ import { initForumPosts, flushForumPosts } from './game/store.js';
 import { initGameCatalog, flushGameCatalog } from './game/catalog.js';
 import { installNoticeCleanup } from './notices.js';
 import { initClips } from './stream/clips.js';
-import { ensureStreamPanels } from './stream/panel.js';
+import { ensureStreamPanels, syncVoiceStreamPanels } from './stream/panel.js';
+import { installQuietStreamReplies } from './stream/quiet.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
 import { handleChannelComponent } from './channel-commands.js';
@@ -189,6 +190,7 @@ function logError(tag, err) {
 // ── 슬래시 명령어 ───────────────────────────────────────────
 
 client.on(Events.InteractionCreate, async (interaction) => {
+  if (!interaction.isAutocomplete()) installQuietStreamReplies(interaction);
   if (!interaction.isAutocomplete()) installNoticeCleanup(interaction);
   // 자동완성 (/타이머 의 시간 칸 등)
   if (interaction.isAutocomplete()) {
@@ -356,6 +358,10 @@ client.on(Events.MessageCreate, async (message) => {
 // ── 아무도 없는 음성채널에 혼자 남으면 나가기 ────────────────
 
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
+  if (inRole('stream') && oldState.channelId !== newState.channelId) {
+    syncVoiceStreamPanels(client, newState.guild.id)
+      .catch((err) => console.warn('[stream] 음성 이동 제어판 갱신 실패:', err.message));
+  }
   // 누군가 음성채널에 들어오면 곧 읽어주기를 쓸 가능성이 높습니다.
   // 그때 미리 데워두면 첫 메시지도 즉시 나옵니다.
   if (inRole('tts') && newState?.channel && !newState.member?.user?.bot && ttsEnabled(newState.guild.id)) {

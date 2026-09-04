@@ -1577,6 +1577,83 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 }
 
 // 7) 유튜브 링크 감지
+{
+  const { quietPayload, installQuietStreamReplies } = await import('./src/stream/quiet.js');
+  ok('방송 나만 보기 응답에 무음 플래그 추가', quietPayload({ flags: 64, content: '<@123>' }).flags === (64 | 4096));
+  ok('방송 공개 응답은 공개 유지하며 무음', quietPayload('방송 기록').flags === 4096);
+  const quiet = quietPayload({ allowedMentions: { parse: ['users'], users: ['123'], repliedUser: true } });
+  ok('방송 알림에서 직접 멘션과 답글 멘션 차단', quiet.allowedMentions.parse.length === 0 && quiet.allowedMentions.users.length === 0 && !quiet.allowedMentions.repliedUser);
+  let delivered;
+  const interaction = { customId: 'tm:panel:mark', reply: async (p) => { delivered = p; return 'result'; }, editReply: async (p) => { delivered = p; } };
+  installQuietStreamReplies(interaction);
+  installQuietStreamReplies(interaction);
+  ok('방송 무음 래퍼는 반환값 유지', await interaction.reply('찍었습니다') === 'result' && delivered.flags === 4096);
+  await interaction.editReply('수정했습니다');
+  ok('편집에는 전송 전용 플래그 없이 멘션만 차단', delivered.flags === undefined && delivered.allowedMentions.parse.length === 0);
+  const other = { commandName: '타이머', reply: () => {} };
+  const original = other.reply;
+  installQuietStreamReplies(other);
+  ok('다른 기능의 알림 정책은 바꾸지 않음', other.reply === original);
+}
+{
+  const streamStore = await import('./src/stream/store.js');
+  const streamPanel = await import('./src/stream/panel.js');
+  const registry = await import('./src/panel-registry.js');
+  const guildId = 'voice-panel-test';
+  const session = streamStore.openSession(guildId, 'home', '협동게임');
+  for (const userId of ['caster-a', 'caster-b']) streamStore.putStream(session, {
+    userId, url: 'https://youtu.be/abcdefghijk', startedAt: streamStore.nowSec(), startSource: 'release_timestamp',
+  });
+  const voiceStates = new Map([['caster-a', { channelId: 'voice-a' }], ['caster-b', { channelId: 'voice-a' }]]);
+  let sends = 0, edits = 0, deletes = 0, denyDelete = false, denyEdit = false;
+  const messages = new Map();
+  const channels = new Map(['voice-a', 'voice-b'].map((id) => [id, {
+    id, isVoiceBased: () => true, isTextBased: () => true,
+    messages: {
+      fetch: async (messageId) => {
+        if (denyEdit) throw Object.assign(new Error('검증용 권한 없음'), { code: 50013 });
+        if (!messages.has(messageId)) throw Object.assign(new Error('삭제된 메시지'), { code: 10008 });
+        return { edit: async (p) => { JSON.stringify(p); edits++; } };
+      },
+      delete: async (messageId) => {
+        if (denyDelete) throw Object.assign(new Error('검증용 삭제 권한 없음'), { code: 50013 });
+        messages.delete(messageId); deletes++;
+      },
+    },
+    send: async (payload) => { JSON.stringify(payload); const message = { id: `voice-msg-${++sends}` }; messages.set(message.id, payload); return message; },
+  }]));
+  const client = {
+    guilds: { cache: new Map([[guildId, { id: guildId, voiceStates: { cache: voiceStates } }]]) },
+    channels: { fetch: async (id) => channels.get(id) },
+  };
+  await Promise.all([streamPanel.syncVoiceStreamPanels(client, guildId), streamPanel.syncVoiceStreamPanels(client, guildId)]);
+  ok('같은 음성채널 두 방송자·동시 갱신에도 제어판 하나', sends === 1 && edits === 1);
+  ok('음성 제어판에 기존 마킹 버튼', JSON.stringify([...messages.values()][0]).includes('tm:panel:mark'));
+  ok('음성 제어판 ID를 재사용 가능한 레지스트리에 저장', registry.rememberedId(`stream-voice:${guildId}`, 'voice-a') === 'voice-msg-1');
+  voiceStates.set('caster-a', { channelId: 'voice-b' });
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('방송자가 다른 음성채널에 있으면 두 채널에 표시', sends === 2 && deletes === 0);
+  voiceStates.delete('caster-b');
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('마지막 방송자가 떠난 음성채널만 정리', deletes === 1 && !registry.rememberedId(`stream-voice:${guildId}`, 'voice-a'));
+  denyEdit = true;
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('메시지 조회 권한 오류는 새 제어판 중복 생성 금지', sends === 2);
+  denyEdit = false;
+  messages.delete(registry.rememberedId(`stream-voice:${guildId}`, 'voice-b'));
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('삭제된 음성 제어판은 하나만 재생성', sends === 3);
+  streamStore.closeSession(session);
+  denyDelete = true;
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('삭제 권한 실패 시 기억을 보존해 재시도 가능', Boolean(registry.rememberedId(`stream-voice:${guildId}`, 'voice-b')));
+  denyDelete = false;
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('방송 종료 후 모든 보조 제어판 정리', registry.rememberedPanels(`stream-voice:${guildId}`).length === 0);
+  voiceStates.set('spectator', { channelId: 'voice-a' });
+  await streamPanel.syncVoiceStreamPanels(client, guildId);
+  ok('방송 기록 없이 음성채널에만 접속하면 생성 안 함', sends === 3);
+}
 const { findYoutubeLink } = await import('./src/music/commands.js');
 ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !== null);
 ok('일반문장 무시', findYoutubeLink('링크 없음') === null);

@@ -68,6 +68,11 @@ export function rememberedId(kind, channelId) {
   return store[kind]?.[channelId] ?? null;
 }
 
+/** 한 종류의 제어판만 조회합니다. 원본 저장 객체를 외부에 넘기지 않습니다. */
+export function rememberedPanels(kind) {
+  return Object.entries(store[kind] ?? {});
+}
+
 async function fetchPanel(client, channelId, messageId) {
   const channel = await client.channels.fetch(channelId);
   return { channel, message: await channel.messages.fetch(messageId) };
@@ -167,10 +172,11 @@ export async function sweepOrphanPanels(client, { perChannel = 50 } = {}) {
       const keepMusic = rememberedId(MUSIC, channel.id);
       // 방송 제어판도 남겨야 할 것이 하나 있습니다. 기억해둔 그것만 남기고 중복만 지웁니다.
       const keepStream = rememberedId(STREAM, channel.id);
+      const keepVoiceStream = rememberedId(`stream-voice:${guild.id}`, channel.id);
       for (const msg of messages.values()) {
         const stale =
           (isMusicPanel(msg, client.user.id) && msg.id !== keepMusic) ||
-          (isStreamPanel(msg, client.user.id) && msg.id !== keepStream) ||
+          (isStreamPanel(msg, client.user.id) && msg.id !== keepStream && msg.id !== keepVoiceStream) ||
           (isGalleryPanel(msg, client.user.id) && msg.id !== keepGallery);
         if (!stale) continue;
         if (await msg.delete().then(() => true).catch(() => false)) deleted++;

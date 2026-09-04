@@ -18,8 +18,8 @@ import {
   TextInputStyle,
   MessageFlags,
 } from 'discord.js';
-import { rememberPanel, forgetPanel, rememberedId, STREAM } from '../panel-registry.js';
-import { get as getSetting } from '../settings.js';
+import { rememberPanel, forgetPanel, rememberedId, rememberedPanels, STREAM } from '../panel-registry.js';
+import { get as getSetting, featureEnabled } from '../settings.js';
 import { config } from '../config.js';
 import {
   activeSession,
@@ -196,10 +196,11 @@ function joinButton() {
  * 채널이 제어판으로 도배되고, 전송 한도(5회/5초)에도 걸립니다.
  */
 export async function ensureStreamPanel(client, guildId, channelId) {
+  await syncVoiceStreamPanels(client, guildId).catch((err) => console.warn('[stream] 음성채널 제어판 갱신 실패:', err.message));
   const channel = await client.channels.fetch(channelId).catch(() => null);
   if (!channel?.isTextBased?.()) return null;
 
-  const payload = buildStreamPanel(guildId);
+  const payload = { ...buildStreamPanel(guildId), allowedMentions: { parse: [] } };
   const known = rememberedId(STREAM, channelId);
   if (known) {
     const msg = await channel.messages.fetch(known).catch(() => null);
@@ -221,7 +222,7 @@ export async function ensureStreamPanel(client, guildId, channelId) {
 export async function ensureStreamPanels(client) {
   for (const guild of client.guilds.cache.values()) {
     const channelId = getSetting(guild.id, 'streamChannelId');
-    if (!channelId) continue;
+    if (!channelId) { await syncVoiceStreamPanels(client, guild.id); continue; }
     await ensureStreamPanel(client, guild.id, channelId).catch(() => {});
   }
 }
@@ -450,6 +451,68 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
 export function buildClipEntry(session, stream) {
   return new ButtonBuilder().setCustomId(`tm:clipsopen:${session.id}:${stream.userId}`)
     .setLabel('클립 추출').setEmoji('🎥').setStyle(ButtonStyle.Secondary);
+}
+
+const voiceSyncJobs = new Map();
+
+/** 같은 서버의 등록/이동/마킹이 겹쳐도 한 번에 하나씩 최신 상태를 반영합니다. */
+export function syncVoiceStreamPanels(client, guildId) {
+  const previous = voiceSyncJobs.get(guildId) ?? Promise.resolve();
+  const job = previous.catch(() => {}).then(() => reconcileVoicePanels(client, guildId)).finally(() => {
+    if (voiceSyncJobs.get(guildId) === job) voiceSyncJobs.delete(guildId);
+  });
+  voiceSyncJobs.set(guildId, job);
+  return job;
+}
+
+async function reconcileVoicePanels(client, guildId) {
+  const guild = client.guilds?.cache?.get(guildId);
+  if (!guild) return;
+  const kind = `stream-voice:${guildId}`;
+  const session = activeSession(guildId);
+  const home = getSetting(guildId, 'streamChannelId');
+  const wanted = new Set();
+  if (session && featureEnabled(guildId, 'stream')) {
+    for (const stream of session.streams) {
+      const state = guild.voiceStates.cache.get(stream.userId);
+      if (state?.channelId && state.channelId !== home && !state.member?.user?.bot) wanted.add(state.channelId);
+    }
+  }
+  // 등록된 방송자가 아무도 남지 않았거나 종료됐으면, 우리가 보낸 보조판만 지웁니다.
+  for (const [channelId, messageId] of rememberedPanels(kind)) {
+    if (wanted.has(channelId)) continue;
+    try {
+      const channel = await client.channels.fetch(channelId);
+      if (channel) await channel.messages.delete(messageId);
+      forgetPanel(kind, channelId);
+    } catch (err) {
+      if ([10003, 10008].includes(err.code)) forgetPanel(kind, channelId);
+      else console.warn('[stream] 음성채널 제어판 정리 실패:', channelId, err.message);
+      // 권한/통신 실패 시 ID를 보존해 다음 이벤트·재시작 때 재시도합니다.
+    }
+  }
+  for (const channelId of wanted) {
+    try {
+      const channel = await client.channels.fetch(channelId);
+      if (!channel?.isVoiceBased?.() || !channel.isTextBased?.()) continue;
+      const payload = { ...buildStreamPanel(guildId), allowedMentions: { parse: [] } };
+      const known = rememberedId(kind, channelId);
+      if (known) {
+        try {
+          const message = await channel.messages.fetch(known);
+          await message.edit(payload);
+          continue;
+        } catch (err) {
+          if (err.code !== 10008) throw err;
+          forgetPanel(kind, channelId);
+        }
+      }
+      const message = await channel.send({ ...payload, flags: MessageFlags.SuppressNotifications });
+      rememberPanel(kind, channelId, message.id);
+    } catch (err) {
+      console.warn('[stream] 음성채널 제어판 표시 실패:', channelId, err.message);
+    }
+  }
 }
 
 /** 녹화방 원문은 건드리지 않고, 누른 사람에게만 선택 화면을 보냅니다. */

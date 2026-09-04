@@ -1656,6 +1656,21 @@ markSecondsFor = mark.at − stream.startedAt − stream.offsetSec
 
 #### 제어판은 음악과 **반대로** 다룬다
 
+음성채널 보조 방송 제어판은 `stream/panel.js`의 `syncVoiceStreamPanels()`가 관리합니다.
+활성 세션의 등록 방송자 voice state로 대상 채널을 결정하며, 서버별 직렬 처리로 중복 생성을 막습니다.
+채널당 한 개이고 지정 방송 채널과 같으면 추가하지 않습니다. 마지막 방송자가 떠나거나 세션 종료 시 제거합니다.
+메시지 ID는 `panels.json`의 `stream-voice:<guildId>` 종류로 영속화하고 시작 시 훑기에서도 보호합니다.
+등록·입퇴장/이동·마킹/취소/오프셋 갱신·종료/다시 열기·기동 시 동기화합니다. 음소거 변경만으로는 갱신하지 않습니다.
+권한/네트워크 오류는 ID를 남겨 재시도하며, 실제 Unknown Message(10008)일 때만 재생성합니다.
+상시 방송 채널 제어판은 보존하며 음성 통화 접속이나 녹음은 하지 않습니다. 버튼의 마킹 대상 규칙도 바뀌지 않습니다.
+
+방송 무음 정책은 `stream/quiet.js`를 InteractionCreate 초기에 적용해 `/방송`·`tm:`의 오류 응답까지 포함합니다.
+reply/followUp은 기존 flags에 SuppressNotifications를 더하고, editReply/update는 멘션만 차단합니다.
+deferReply는 기존 Ephemeral만 유지합니다. 전송용 플래그를 편집/지연 응답에 억지로 넣지 않습니다.
+공개 전송(방송·음성 제어판/요약/녹화방/정리 공지)도 SuppressNotifications를 사용합니다.
+나만 보기 범위 및 다른 기능의 알림은 유지합니다. 읽지 않음 배지·클라이언트 자체 소리 제거는 보장하지 않습니다.
+[Discord 무음 플래그 설명](https://docs.discord.com/developers/resources/message).
+
 | | 음악 제어판 | 방송 제어판 |
 |---|---|---|
 | 재시작하면 | **지운다** — 곡이 끊겨서 "재생 중" 이 거짓말 | **남긴다** — 기록이 디스크에 남아 이어진다 |
