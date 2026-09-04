@@ -1977,7 +1977,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 요약판에 클립이 반영되는가
   st2.addClip(cs, { markId: cm.id, userId: 'u1', file: fakeName, startSec: 45, endSec: 60, title: '테스트 장면' });
-  const withClip = pn2.buildSummary(cs, cStream).at(-1);
+  const withClip = pn2.buildClipPicker(cs, cStream);
   const wcJson = JSON.stringify(withClip.components.map((r) => r.toJSON()));
   ok('만든 마킹에 ✅ 표시', wcJson.includes('✅'));
   ok('요약판에 [클립 보기] 링크', wcJson.includes(`/c/${cs.id}`));
@@ -1987,12 +1987,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     const m = st2.addMark(cs, 'u1');
     m.at = st2.nowSec() - 3000 + i;
   }
-  const paged = pn2.buildSummary(cs, cStream, 0).at(-1);
+  const paged = pn2.buildClipPicker(cs, cStream, 0);
   const pagedJson = JSON.parse(JSON.stringify(paged.components.map((r) => r.toJSON())));
   const opts = pagedJson.flatMap((r) => r.components).find((c) => c.type === 3)?.options ?? [];
   ok('드롭다운은 25개까지만', opts.length === 25, `${opts.length}개`);
   ok('넘치면 쪽 넘기기 버튼이 생김',
-    pagedJson.flatMap((r) => r.components).some((c) => String(c.custom_id ?? '').startsWith('tm:cpage:')));
+    pagedJson.flatMap((r) => r.components).some((c) => String(c.custom_id ?? '').startsWith('tm:pickpage:')));
 
   // 지난 방송의 요약판을 다시 부를 길 (종료 뒤 클립으로 가는 유일한 입구가 밀려 올라가므로)
   st2.closeSession(cs);
@@ -2826,8 +2826,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('요약판 조작부에 tm:panel: 이 없음 (훑기가 지우면 안 됨)',
     idsOf(summary[summary.length - 1]).every((x) => !x.startsWith('tm:panel:')),
     idsOf(summary[summary.length - 1]).join());
-  ok('요약판에 클립 뽑기 드롭다운이 있음',
-    idsOf(summary[summary.length - 1]).some((x) => x.startsWith('tm:clip:')));
+  ok('종료 요약판은 드롭다운 대신 클립 추출 버튼만 표시',
+    idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clipsopen:')) &&
+    !idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clip:')));
   ok('요약판이 2000자를 넘지 않음', summary.every((m) => m.content.length <= 2000));
 
   // 마킹이 많아도 나뉘어야 한다. 6명 × 여러 개가 한 장에 안 들어간다.
@@ -3003,6 +3004,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   streams.closeSession(session);
   forumStore.bindForumPost('game-post-guild', 'rec', direct.key, 'record-thread');
   const sentContents = [];
+  const recordPayloads = [];
   const editedContents = [];
   const removedMessages = [];
   let failAtSend = null;
@@ -3010,17 +3012,39 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     isThread: () => true,
     isTextBased: () => true,
     messages: {
-      fetch: async (id) => ({ id, edit: async (payload) => editedContents.push(payload.content) }),
+      fetch: async (id) => ({ id, edit: async (payload) => { recordPayloads.push(payload); editedContents.push(payload.content); } }),
       delete: async (id) => removedMessages.push(id),
     },
     send: async (payload) => {
       if (sentContents.length + 1 === failAtSend) { failAtSend = null; throw new Error('검증용 전송 실패'); }
       sentContents.push(payload.content);
+      recordPayloads.push(payload);
       return { id: `msg-${sentContents.length}` };
     },
   }) } };
   const posted = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
+  ok('녹화방 게시물에 해당 방송자 클립 추출 버튼', JSON.stringify(recordPayloads.at(-1)).includes(`tm:clipsopen:${session.id}:broadcaster`));
+  const streamModule = await import('./src/stream/index.js');
+  let pickerReply, pickerUpdate, clipModal;
+  const pickerInteraction = {
+    guildId: session.guildId, customId: `tm:clipsopen:${session.id}:broadcaster`,
+    reply: async (p) => { pickerReply = p; }, update: async (p) => { pickerUpdate = p; },
+    showModal: async (p) => { clipModal = p.toJSON(); },
+  };
+  await streamModule.handleStreamComponent(pickerInteraction, fakeClient);
+  ok('녹화방 버튼은 본인에게만 선택 화면 표시', pickerReply.flags === 64 && !pickerUpdate);
+  pickerInteraction.customId = `tm:pickpage:${session.id}:broadcaster:1`;
+  await streamModule.handleStreamComponent(pickerInteraction, fakeClient);
+  ok('선택 화면 쪽 넘기기는 원문 타임라인으로 덮어쓰지 않음', pickerUpdate.content.includes('클립 추출') && !pickerUpdate.content.includes('```'));
+  pickerInteraction.customId = `tm:clip:${session.id}:broadcaster:0`;
+  pickerInteraction.values = [session.marks[0].id];
+  await streamModule.handleStreamComponent(pickerInteraction, fakeClient);
+  ok('녹화방에서 마킹 선택 후 기존 구간 입력창 연결', clipModal.custom_id.startsWith(`tm:clipm:${session.id}:broadcaster:`));
+  pickerInteraction.guildId = 'other-guild';
+  pickerInteraction.customId = `tm:clipsopen:${session.id}:broadcaster`;
+  await streamModule.handleStreamComponent(pickerInteraction, fakeClient);
+  ok('다른 서버의 녹화 기록 선택 차단', pickerReply.content.includes('찾지 못했습니다'));
   ok('녹화 포스트 기록에 방송자·시작 날짜·링크·타임라인',
     sentContents.join('\n').includes('<@broadcaster>') && sentContents.join('\n').includes('방송 시작') &&
       sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
@@ -3044,12 +3068,20 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('부분 실패해도 성공한 페이지 ID 보존', partial.status === 'failed' && stream.forumPosted.messageIds.length === 2 && stream.forumPosted.complete === false);
   const retried = await forum.publishPendingForGame(fakeClient, session.guildId, stream.gameKey);
   ok('다시 연결 시 부분 전송 복구·중복 없음', retried === 1 && stream.forumPosted.complete && sentContents.length === expanded.length);
+  const multiPagePayloads = recordPayloads.slice(-expanded.length);
+  ok('녹화방 여러 페이지에서는 마지막 장에만 클립 버튼 유지',
+    multiPagePayloads.length > 1 && multiPagePayloads.slice(0, -1).every((p) => p.components.length === 0) &&
+    multiPagePayloads.at(-1).components.length === 1);
   for (const mark of session.marks) streams.setMarkText(session, mark.id, '짧게');
   const firstId = stream.forumPosted.messageIds[0];
   await forum.publishStreamRecord(fakeClient, session, stream);
   ok('설명이 짧아지면 추가 페이지만 삭제하고 첫 메시지 유지', stream.forumPosted.messageIds.length === 1 && stream.forumPosted.messageIds[0] === firstId);
   const countBefore = sentContents.length;
   await Promise.all([forum.publishStreamRecord(fakeClient, session, stream), forum.publishStreamRecord(fakeClient, session, stream)]);
+  const latestRecordPayloads = recordPayloads.slice(-forum.recordPages(session, stream).length);
+  ok('녹화방 한 페이지로 축소 후에도 클립 버튼 유지',
+    latestRecordPayloads.slice(0, -1).every((p) => p.components.length === 0) &&
+    latestRecordPayloads.at(-1).components.length === 1);
   ok('동시 갱신도 메시지를 중복 생성하지 않음', sentContents.length === countBefore);
   const shared = streams.openSession('shared-sync-guild', 'shared-summary', '공유게임');
   for (const userId of ['shared-a', 'shared-b']) {
@@ -3181,6 +3213,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     '방송 설명 채우기 창': () => sp.buildDescModal(scr, scrStream, 0).modal,
     '방송 설명 채우기 창 (설명 없음)': () => sp.buildDescModal(scrEmptySession, scrStream, 0).modal,
     '방송 요약판': () => sp.buildSummary(scr, scrStream)[0],
+    '녹화방 클립 선택': () => sp.buildClipPicker(scr, scrStream),
+    '녹화방 클립 선택 (마킹 없음)': () => sp.buildClipPicker({ ...scr, marks: [] }, scrStream),
     '방송 요약판 (마킹 없음)': () => sp.buildSummary({ ...scr, marks: [] }, scrStream)[0],
     '일정 판': () => plan.buildPanel(samplePlan),
     '일정 판 (빈 값)': () => plan.buildPanel(emptyPlan),

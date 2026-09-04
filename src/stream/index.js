@@ -50,6 +50,7 @@ import { resolveGame, autocompleteGames } from '../game/steam.js';
 import { publishStreamRecord } from '../game/forum.js';
 import {
   buildSummary,
+  buildClipPicker,
   buildOffsetModal,
   buildDescModal,
   buildClipModal,
@@ -228,7 +229,7 @@ export const commands = [
           if (channelId) await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
           return interaction.editReply(`🎮 내 방송 게임을 **${resolved.name}**(으)로 바꿨습니다.`);
         }
-        // 요약판은 종료 뒤 **클립 뽑기로 가는 유일한 입구**입니다. 밀려 올라갔을 때
+        // 녹화방 미연결 때도 요약판에서 클립을 만들 수 있습니다. 밀려 올라갔을 때
         // 여기서 다시 부를 수 있어야 합니다.
         const picker = buildSessionPicker(guildId);
         return interaction.reply({
@@ -529,6 +530,8 @@ export async function handleStreamComponent(interaction, client) {
   if (id === 'tm:panel:end') return endSession(interaction, client);
   if (id.startsWith('tm:panel:reopen:')) return reopen(interaction, client, id.split(':')[3]);
   if (id.startsWith('tm:desc:')) return openDescModal(interaction, id);
+  if (id.startsWith('tm:clipsopen:')) return openClipPicker(interaction, id);
+  if (id.startsWith('tm:pickpage:')) return openClipPicker(interaction, id, true);
   if (id.startsWith('tm:clip:')) return openClipModal(interaction, id);
   if (id.startsWith('tm:cpage:')) return turnClipPage(interaction, id);
   if (id === 'tm:resum') return resendPastSummary(interaction, client);
@@ -549,9 +552,18 @@ async function resendPastSummary(interaction, client) {
     return interaction.editReply('방송 채널을 찾지 못했습니다. `/채널설정` 에서 확인해주세요.');
   }
 
-  for (const stream of session.streams) await postSummary(channel, session, stream);
+  let forumFailed = false;
+  for (const stream of session.streams) {
+    await postSummary(channel, session, stream);
+    // 과거에 공유한 녹화방 메시지도 버튼을 붙여 갱신합니다. 새 포스트는 만들지 않습니다.
+    if (session.closedAt && stream.forumPosted?.messageIds?.length) {
+      const result = await publishStreamRecord(client, session, stream);
+      if (!['posted', 'updated'].includes(result.status)) forumFailed = true;
+    }
+  }
   await repostStreamPanel(client, session.guildId, session.channelId).catch(() => {});
-  await interaction.editReply(`📝 요약판을 <#${session.channelId}> 에 다시 올렸습니다.`);
+  await interaction.editReply(`📝 요약판을 <#${session.channelId}> 에 다시 올렸습니다.` +
+    (forumFailed ? '\n⚠️ 녹화방 버튼 갱신에 실패했습니다. 권한을 확인하고 다시 시도해주세요.' : ''));
 }
 
 async function markNow(interaction, client) {
@@ -721,6 +733,15 @@ function openDescModal(interaction, customId) {
 }
 
 /** 요약판의 드롭다운에서 마킹을 고르면 구간 창을 띄웁니다. */
+function openClipPicker(interaction, customId, turning = false) {
+  const [, , sessionId, userId, pageRaw] = customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session?.guildId === interaction.guildId ? streamOf(session, userId) : null;
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  const payload = buildClipPicker(session, stream, Number(pageRaw) || 0);
+  return turning ? interaction.update(payload) : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+}
+
 function openClipModal(interaction, customId) {
   const [, , sessionId, userId] = customId.split(':');
   const session = sessionById(sessionId);
@@ -744,7 +765,7 @@ async function turnClipPage(interaction, customId) {
 
   // 요약판은 여러 장일 수 있고, 조작부는 **마지막 장에만** 있습니다.
   // 지금 누른 그 메시지만 고쳐야 하므로 마지막 장을 씁니다.
-  const pages = buildSummary(session, stream, Number(pageRaw) || 0);
+  const pages = buildSummary(session, stream, Number(pageRaw) || 0, true);
   const last = pages[pages.length - 1];
   return interaction.update({ content: last.content, components: last.components ?? [] });
 }

@@ -261,7 +261,7 @@ export function scheduleStreamPanelRefresh(client, guildId, channelId) {
 /**
  * 지난 방송의 요약판을 다시 올리는 드롭다운.
  *
- * 왜 필요한가: 종료 뒤에는 **요약판이 클립 뽑기로 가는 유일한 입구**입니다.
+ * 왜 필요한가: 녹화방 미연결 때에도 **요약판에서 클립 추출**로 갈 수 있어야 합니다.
  * 채팅이 쌓여 위로 밀려 올라가면 찾아 올라가기 어렵습니다. 여기서 다시 부를 수 있게 합니다.
  */
 export function buildSessionPicker(guildId) {
@@ -398,7 +398,7 @@ export function buildClipModal(session, stream, mark) {
  *
  * @returns {Array<{content: string, components?: Array}>} 순서대로 보낼 메시지들
  */
-export function buildSummary(session, stream, clipPage = 0) {
+export function buildSummary(session, stream, clipPage = 0, expanded = false) {
   const rows = timelineFor(session, stream);
   const header =
     `📝 <@${stream.userId}> 의 타임라인` +
@@ -432,7 +432,13 @@ export function buildSummary(session, stream, clipPage = 0) {
     const content = (i === 0 ? `${header}\n` : '') + '```\n' + chunk.join('\n') + '\n```';
     // 버튼은 **마지막 조각에만** 붙입니다. 조각마다 붙으면 어느 걸 눌러야 할지 헷갈립니다.
     if (i < chunks.length - 1) return { content };
-    return { content, components: summaryControls(session, stream, rows, clipPage) };
+    return { content, components: expanded ? summaryControls(session, stream, rows, clipPage) : [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`tm:desc:${session.id}:${stream.userId}:0`)
+          .setLabel('설명 채우기').setStyle(ButtonStyle.Primary),
+        buildClipEntry(session, stream)
+      ),
+    ] };
   });
 }
 
@@ -441,7 +447,23 @@ export function buildSummary(session, stream, clipPage = 0) {
  *
  * 마킹이 25개를 넘으면 드롭다운에 다 못 담아서(디스코드 제한) 페이지로 나눕니다.
  */
-function summaryControls(session, stream, rows, clipPage) {
+export function buildClipEntry(session, stream) {
+  return new ButtonBuilder().setCustomId(`tm:clipsopen:${session.id}:${stream.userId}`)
+    .setLabel('클립 추출').setEmoji('🎥').setStyle(ButtonStyle.Secondary);
+}
+
+/** 녹화방 원문은 건드리지 않고, 누른 사람에게만 선택 화면을 보냅니다. */
+export function buildClipPicker(session, stream, page = 0) {
+  const rows = timelineFor(session, stream);
+  return {
+    content: `🎥 <@${stream.userId}>의 클립 추출 · 유튜브 다시보기 처리 완료 후 이용해주세요.` +
+      (rows.length ? '' : '\n이 방송에 남긴 마킹이 없습니다.'),
+    components: rows.length ? summaryControls(session, stream, rows, page, 'pickpage') : [],
+    allowedMentions: { parse: [] },
+  };
+}
+
+function summaryControls(session, stream, rows, clipPage, pageAction = 'cpage') {
   const pages = Math.max(1, Math.ceil(rows.length / SELECT_LIMIT));
   const page = Math.min(Math.max(0, clipPage), pages - 1);
   const slice = rows.slice(page * SELECT_LIMIT, page * SELECT_LIMIT + SELECT_LIMIT);
@@ -470,12 +492,12 @@ function summaryControls(session, stream, rows, clipPage) {
   if (pages > 1) {
     buttons.push(
       new ButtonBuilder()
-        .setCustomId(`tm:cpage:${session.id}:${stream.userId}:${page - 1}`)
+        .setCustomId(`tm:${pageAction}:${session.id}:${stream.userId}:${page - 1}`)
         .setLabel('이전 쪽')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page === 0),
       new ButtonBuilder()
-        .setCustomId(`tm:cpage:${session.id}:${stream.userId}:${page + 1}`)
+        .setCustomId(`tm:${pageAction}:${session.id}:${stream.userId}:${page + 1}`)
         .setLabel('다음 쪽')
         .setStyle(ButtonStyle.Secondary)
         .setDisabled(page >= pages - 1)
