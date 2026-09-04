@@ -3050,6 +3050,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
       sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
       !sentContents.join('\n').includes(':F>') && sentContents.join('\n').includes('```'));
   ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
+  ok('녹화방 유튜브 링크는 미리보기 억제 괄호 없이 전송',
+    sentContents[0].split('\n').includes(stream.url) && !sentContents[0].includes(`<${stream.url}>`));
   stream.forumPosted.messageIds.push('old-timeline-page');
   const again = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('같은 방송 기록은 새 메시지 없이 갱신', again.status === 'updated' && sentContents.length === 1 && editedContents.length === 1);
@@ -3057,6 +3059,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   streams.setMarkText(session, session.marks[0].id, '새로운 설명');
   await forum.publishStreamRecord(fakeClient, session, stream);
   ok('수정한 설명이 기존 녹화방 메시지에 반영', editedContents.at(-1).includes('새로운 설명') && sentContents.length === 1);
+  ok('녹화방 기존 글 갱신에도 유튜브 미리보기 허용', editedContents.at(-1).split('\n').includes(stream.url));
   for (let i = 0; i < 30; i++) {
     const mark = streams.addMark(session, 'broadcaster');
     streams.setMarkText(session, mark.id, '긴 설명'.repeat(50));

@@ -9,7 +9,8 @@ export function recordContent(session, stream) {
   const header =
     `📺 **${game}** · <@${stream.userId}>\n` +
     `방송 시작일 <t:${stream.startedAt}:d>\n` +
-    `<${stream.url}>`;
+    // <URL>은 Discord 미리보기를 숨깁니다. 녹화방은 영상 썸네일이 보이도록 그대로 보냅니다.
+    `${stream.url}`;
   return header;
 }
 
