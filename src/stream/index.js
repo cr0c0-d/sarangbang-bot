@@ -549,7 +549,7 @@ async function resendPastSummary(interaction, client) {
   await interaction.editReply('📝 내 방송 요약입니다. 다른 사람에게는 보이지 않습니다.');
   await sendOwnSummary(interaction, session);
   if (session.closedAt && mine.forumPosted?.messageIds?.length) {
-    const result = await publishStreamRecord(client, session, mine);
+    const result = await publishStreamRecord(client, session, mine, { refreshPreview: true });
     if (!['posted', 'updated'].includes(result.status)) {
       await interaction.editReply('⚠️ 내 요약은 표시했지만 녹화방 갱신에 실패했습니다. 권한을 확인하고 다시 시도해주세요.');
     }
@@ -984,7 +984,7 @@ async function submitDesc(interaction, client) {
   for (const target of session.streams) {
     if (target !== stream && !timelineFor(session, target).some(({ mark }) => changedMarkIds.has(mark.id))) continue;
     try {
-      const result = await updateSummary(client, session, target);
+      const result = await updateSummary(client, session, target, { refreshPreview: true });
       if (result && !['posted', 'updated'].includes(result.status)) syncFailed = true;
     } catch { syncFailed = true; }
   }
@@ -1009,9 +1009,9 @@ async function sendOwnSummary(interaction, session) {
 }
 
 /** 개인 요약은 다시 열 때 최신 내용으로 만들고, 공유 녹화방만 동기화합니다. */
-async function updateSummary(client, session, stream) {
+async function updateSummary(client, session, stream, options) {
   if (session.closedAt && stream.forumPosted?.messageIds?.length) {
-    return publishStreamRecord(client, session, stream);
+    return publishStreamRecord(client, session, stream, options);
   }
   return null;
 }

@@ -37,18 +37,18 @@ export function recordPages(session, stream) {
 const publishing = new Map();
 
 /** 연결된 녹화 포스트에 방송 기록을 올립니다. 연결이 없으면 기록은 보류 상태로 남습니다. */
-export async function publishStreamRecord(client, session, stream) {
+export async function publishStreamRecord(client, session, stream, { refreshPreview = false } = {}) {
   const key = `${session.id}:${stream.userId}`;
   // 갱신 중 들어온 설명 수정도 버리지 않고 순서대로 최신 상태를 반영합니다.
   const previous = publishing.get(key) ?? Promise.resolve();
-  const job = previous.catch(() => {}).then(() => publish(client, session, stream)).finally(() => {
+  const job = previous.catch(() => {}).then(() => publish(client, session, stream, refreshPreview)).finally(() => {
     if (publishing.get(key) === job) publishing.delete(key);
   });
   publishing.set(key, job);
   return job;
 }
 
-async function publish(client, session, stream) {
+async function publish(client, session, stream, refreshPreview) {
   const previous = stream.forumPosted;
   const gameKey = stream.gameKey;
   const threadId = previous?.threadId || (gameKey && postIdFor(session.guildId, 'rec', gameKey));
@@ -70,7 +70,11 @@ async function publish(client, session, stream) {
       };
       if (ids[i]) {
         const message = await thread.messages.fetch(ids[i]);
-        await message.edit(payload);
+        if (i === 0 && refreshPreview) {
+          await refreshRecordPreview(message, payload, stream.url);
+        } else {
+          await message.edit(payload);
+        }
       } else {
         const message = await thread.send({ ...payload, flags: MessageFlags.SuppressNotifications });
         ids.push(message.id);
@@ -90,6 +94,19 @@ async function publish(client, session, stream) {
     if (ids.length) remember();
     console.warn('[game] 녹화 포스트 동기화 실패:', threadId, err.message);
     return { status: 'failed', threadId };
+  }
+}
+
+/** 링크를 빼고 다시 넣어 자동 미리보기 재생성을 시도합니다. 캐시 갱신까지 보장하지 않습니다. */
+async function refreshRecordPreview(message, payload, url) {
+  // 기존 무음 플래그는 보존하고 임베드 숨김만 해제합니다. 링크는 첫 페이지에만 있습니다.
+  const restored = { ...payload, flags: (message.flags?.bitfield ?? MessageFlags.SuppressNotifications) & ~MessageFlags.SuppressEmbeds };
+  try {
+    await message.edit({ ...payload, content: payload.content.split('\n').filter((line) => line !== url).join('\n'), embeds: [] });
+  } finally {
+    // 링크 제거 요청이 실패/타임아웃해도 복원을 시도합니다. 복원 실패는 한 번 재시도합니다.
+    try { await message.edit(restored); }
+    catch { await message.edit(restored); }
   }
 }
 

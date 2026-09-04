@@ -3148,6 +3148,37 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   await forum.publishStreamRecord(fakeClient, session, stream);
   ok('수정한 설명이 기존 녹화방 메시지에 반영', editedContents.at(-1).includes('새로운 설명') && sentContents.length === 1);
   ok('녹화방 기존 글 갱신에도 유튜브 미리보기 허용', editedContents.at(-1).split('\n').includes(stream.url));
+  const previewStart = recordPayloads.length;
+  await forum.publishStreamRecord(fakeClient, session, stream, { refreshPreview: true });
+  const previewEdits = recordPayloads.slice(previewStart);
+  ok('미리보기 갱신은 링크·임베드를 비운 후 같은 링크 복원', previewEdits.length === 2 &&
+    !previewEdits[0].content.includes(stream.url) && previewEdits[0].embeds.length === 0 &&
+    previewEdits[1].content.split('\n').includes(stream.url) && !('embeds' in previewEdits[1]));
+  ok('미리보기 갱신도 새 채팅 없이 무음·멘션 억제 유지', sentContents.length === 1 &&
+    previewEdits[1].flags === 4096 && previewEdits.every((p) => p.allowedMentions.parse.length === 0));
+  let previewCalls = 0;
+  const restoreAttempts = [];
+  const retryPreviewClient = { channels: { fetch: async () => ({
+    isThread: () => true, isTextBased: () => true,
+    messages: { fetch: async () => ({ flags: { bitfield: 4100 }, edit: async (p) => {
+      restoreAttempts.push(p); if (++previewCalls === 2) throw new Error('검증용 미리보기 복원 실패');
+    } }) },
+  }) } };
+  const previewRetried = await forum.publishStreamRecord(retryPreviewClient, session, stream, { refreshPreview: true });
+  ok('링크 복원 실패는 한 번 재시도하며 숨김 플래그 해제', previewRetried.status === 'updated' &&
+    previewCalls === 3 && restoreAttempts.at(-1).content.includes(stream.url) && restoreAttempts.at(-1).flags === 4096);
+  previewCalls = 0;
+  const removalFailureClient = { channels: { fetch: async () => ({
+    isThread: () => true, isTextBased: () => true,
+    messages: { fetch: async () => ({ edit: async (p) => {
+      if (++previewCalls === 1) throw new Error('검증용 미리보기 제거 실패');
+      restoreAttempts.push(p);
+    } }) },
+  }) } };
+  const removalFailed = await forum.publishStreamRecord(removalFailureClient, session, stream, { refreshPreview: true });
+  ok('미리보기 제거 실패에도 최신 설명·링크 복원 시도 및 재시도 상태 보존',
+    removalFailed.status === 'failed' && previewCalls === 2 && restoreAttempts.at(-1).content.includes('새로운 설명') &&
+    restoreAttempts.at(-1).content.includes(stream.url) && stream.forumPosted.complete === false);
   for (let i = 0; i < 30; i++) {
     const mark = streams.addMark(session, 'broadcaster');
     streams.setMarkText(session, mark.id, '긴 설명'.repeat(50));
@@ -3195,6 +3226,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('설명 모달 제출이 공유 방송자 두 명의 녹화방까지 동기화',
     ['record-shared-a', 'record-shared-b'].every((id) =>
       syncEdits.some((edit) => edit.id === id && edit.content.includes('공유 장면 설명 수정'))) && sharedMark.text === '공유 장면 설명 수정');
+  ok('설명 모달은 공유 방송자 녹화 링크도 각각 제거 후 복원',
+    ['record-shared-a', 'record-shared-b'].every((id) => {
+      const edits = syncEdits.filter((edit) => edit.id === id);
+      return edits.length === 2 && !edits[0].content.includes('https://youtu.be/') && edits[1].content.includes('https://youtu.be/');
+    }));
 
   const gameSrc = fs.readFileSync('./src/game/index.js', 'utf8');
   {
