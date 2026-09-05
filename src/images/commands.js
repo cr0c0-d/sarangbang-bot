@@ -60,15 +60,20 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('갤러리수집')
-      .setDescription('선택한 채널의 예전 사진과 동영상을 갤러리에 저장합니다')
+      .setDescription('현재 또는 선택한 채널의 예전 사진과 동영상을 갤러리에 저장합니다')
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
-      .addChannelOption((o) => o.setName('채널').setDescription('과거 자료를 가져올 채널 또는 포럼').setRequired(true)
+      .addChannelOption((o) => o.setName('채널').setDescription('과거 자료를 가져올 채널 또는 포럼 (비우면 현재 채널)').setRequired(false)
         .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum,
           ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread)),
     async execute(interaction) {
-      const channel = interaction.options.getChannel('채널', true);
+      // 비공개 채널은 Discord의 채널 선택 목록에 나타나지 않는 경우가 있습니다.
+      // 그 채널 안에서 옵션을 비우고 실행하면 현재 채널을 그대로 사용합니다.
+      const channel = interaction.options.getChannel('채널') ?? interaction.channel;
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       try {
+        if (!channel || (channel.type !== ChannelType.GuildForum && !channel.messages?.fetch)) {
+          throw new Error('메시지 기록을 읽을 수 있는 채팅 채널에서 실행하거나 채널을 선택해주세요.');
+        }
         if (typeof channel.send === 'function') setNotifyChannel(channel);
         const result = await collectHistory(channel, async (progress) => {
           await interaction.editReply(`🖼️ 과거 자료를 수집하는 중… 메시지 ${progress.messages}개 확인 · 파일 ${progress.saved}개 저장`).catch(() => {});

@@ -1046,7 +1046,19 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('선택 채널 과거 메시지에서 미디어 일괄 수집', history.messages === 1 && history.saved === 1 && history.failed === 0);
   ok('과거 미디어 수집 재실행도 중복 없음', historyAgain.messages === 1 && historyAgain.saved === 0);
   const icmd = imageCommands.commands.find((c) => c.data.toJSON().name === '갤러리수집')?.data.toJSON();
-  ok('/갤러리수집은 관리자만 채널을 골라 실행', Boolean(icmd?.default_member_permissions) && icmd.options[0].required);
+  ok('/갤러리수집은 관리자 전용이고 채널 선택은 선택사항',
+    Boolean(icmd?.default_member_permissions) && icmd.options[0].required === false);
+  const collectCommand = imageCommands.commands.find((c) => c.data.toJSON().name === '갤러리수집');
+  let currentChannelResult = '';
+  const emptyPage = new Map();
+  await collectCommand.execute({
+    channel: { id: 'private-current', type: 0, messages: { fetch: async () => emptyPage } },
+    options: { getChannel: () => null },
+    deferReply: async () => {},
+    editReply: async (payload) => { currentChannelResult = payload; },
+  });
+  ok('채널을 비우면 명령을 실행한 현재 채널 수집',
+    currentChannelResult.includes('<#private-current>') && currentChannelResult.includes('수집을 마쳤습니다'));
   ok('포럼 과거 수집은 선택한 부모 포럼의 게시글만 허용',
     ic.includes("filter((thread) => thread.parentId === channel.id)"));
 }
