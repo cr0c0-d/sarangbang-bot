@@ -2,15 +2,16 @@ import { MessageFlags, ActionRowBuilder } from 'discord.js';
 import { get as getSetting } from '../settings.js';
 import { postIdFor } from './store.js';
 import { markStreamForumPosted, timelineFor, hhmmss } from '../stream/store.js';
-import { buildClipEntry } from '../stream/panel.js';
+import { buildClipEntry, buildReplayLinkEntry } from '../stream/panel.js';
 
 export function recordContent(session, stream) {
   const game = stream.game || session.game || '게임 이름 없음';
   const header =
     `📺 **${game}** · <@${stream.userId}>\n` +
     `방송 시작일 <t:${stream.startedAt}:d>\n` +
-    // <URL>은 Discord 미리보기를 숨깁니다. 녹화방은 영상 썸네일이 보이도록 그대로 보냅니다.
-    `${stream.url}`;
+    (stream.url
+      ? `${stream.url}`
+      : '⚠️ **다시보기 링크 연결 대기** · 방송자 또는 관리자가 아래 버튼으로 연결해주세요.');
   return header;
 }
 
@@ -66,11 +67,12 @@ async function publish(client, session, stream, refreshPreview) {
         content: pages[i], allowedMentions: { parse: [] },
         // 항상 명시해 페이지 증감 때 이전 마지막 페이지의 버튼도 제거합니다.
         components: i === pages.length - 1
-          ? [new ActionRowBuilder().addComponents(buildClipEntry(session, stream))] : [],
+          ? [new ActionRowBuilder().addComponents(stream.url
+            ? buildClipEntry(session, stream) : buildReplayLinkEntry(session, stream))] : [],
       };
       if (ids[i]) {
         const message = await thread.messages.fetch(ids[i]);
-        if (i === 0 && refreshPreview) {
+        if (i === 0 && refreshPreview && stream.url) {
           await refreshRecordPreview(message, payload, stream.url);
         } else {
           await message.edit(payload);

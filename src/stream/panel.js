@@ -60,7 +60,7 @@ export function isStreamHome(guildId, channelId) {
  */
 function streamLine(s, now) {
   const elapsed = humanDuration(now - s.startedAt - (s.offsetSec ?? 0));
-  const bits = [`<@${s.userId}>`, s.game || '게임 미지정', `[라이브](${s.url})`, `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
+  const bits = [`<@${s.userId}>`, s.game || '게임 미지정', s.url ? `[라이브](${s.url})` : '⚠️ 링크 연결 전', `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
   if (s.offsetSec) bits.push(`오프셋 ${s.offsetSec > 0 ? '+' : ''}${s.offsetSec}초`);
   // 시작 시각을 유튜브에서 못 읽었으면 **반드시 말해줘야** 합니다. 그때는 전부 어긋납니다.
   if (s.startSource !== 'release_timestamp') bits.push('⚠️ 시작 시각 추정');
@@ -82,7 +82,7 @@ export function buildStreamPanel(guildId) {
     lines.push(
       session.streams.length > 0
         ? session.streams.map((s) => streamLine(s, now)).join('\n')
-        : '아직 등록한 사람이 없습니다. `/방송 링크:<내 라이브 주소>` 로 등록하세요.'
+        : '아직 등록한 사람이 없습니다. `/방송 게임명:<게임>` 으로 기록부터 시작하세요.'
     );
 
     // 최근 마킹 3개만. 전부 보여주면 제어판이 길어져 버튼이 화면 밖으로 밀립니다.
@@ -143,9 +143,9 @@ export function buildStreamPanel(guildId) {
 
   // ── 기록 중이 아닐 때 ──
   const last = recentSessions(guildId, 1)[0] ?? null;
-  const lines = ['지금 기록 중인 방송이 없습니다.', '`/방송 링크:<내 라이브 주소> 게임명:<이름>` 으로 시작하세요.'];
+  const lines = ['지금 기록 중인 방송이 없습니다.', '`/방송 게임명:<게임>` 으로 기록부터 시작하고, 다시보기 링크는 종료 후 연결할 수 있습니다.'];
   lines.push('');
-  lines.push('라이브를 **켠 다음에** 등록하세요. 켜기 전에 등록하면 시간이 어긋납니다.');
+  lines.push('게임을 먼저 등록해도 됩니다. 링크를 나중에 연결하면 유튜브의 실제 시작 시각으로 다시 맞춥니다.');
 
   if (last) {
     lines.push('');
@@ -406,10 +406,11 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
     `📝 <@${stream.userId}> 의 타임라인` +
     (stream.game || session.game ? ` · ${stream.game || session.game}` : '') +
     ` · 마킹 ${rows.length}개\n` +
-    `<${stream.url}>`;
+    (stream.url ? `<${stream.url}>` : '⚠️ 다시보기 링크 연결 대기');
 
   if (rows.length === 0) {
-    return [{ content: `${header}\n\n이 방송 시간 안에 든 마킹이 없습니다.` }];
+    return [{ content: `${header}\n\n이 방송 시간 안에 든 마킹이 없습니다.`,
+      ...(stream.url ? {} : { components: [new ActionRowBuilder().addComponents(buildReplayLinkEntry(session, stream))] }) }];
   }
 
   const lines = rows.map(({ mark, sec }) => `${hhmmss(sec)} ${mark.text || '(설명 없음)'}`);
@@ -438,7 +439,7 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`tm:desc:${session.id}:${stream.userId}:0`)
           .setLabel('설명 채우기').setStyle(ButtonStyle.Primary),
-        buildClipEntry(session, stream)
+        stream.url ? buildClipEntry(session, stream) : buildReplayLinkEntry(session, stream)
       ),
     ] };
   });
@@ -452,6 +453,19 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
 export function buildClipEntry(session, stream) {
   return new ButtonBuilder().setCustomId(`tm:clipsopen:${session.id}:${stream.userId}`)
     .setLabel('클립 추출').setEmoji('🎥').setStyle(ButtonStyle.Secondary);
+}
+
+export function buildReplayLinkEntry(session, stream) {
+  return new ButtonBuilder().setCustomId(`tm:replay:${session.id}:${stream.userId}`)
+    .setLabel('다시보기 연결').setEmoji('🔗').setStyle(ButtonStyle.Secondary);
+}
+
+export function buildReplayLinkModal(session, stream) {
+  return new ModalBuilder().setCustomId(`tm:replaym:${session.id}:${stream.userId}`).setTitle('다시보기 연결')
+    .addLabelComponents(new LabelBuilder().setLabel(`${stream.game || session.game || '방송'} 다시보기 주소`)
+      .setDescription('유튜브 처리가 끝나지 않았어도 주소를 먼저 연결할 수 있습니다.')
+      .setTextInputComponent(new TextInputBuilder().setCustomId('url').setStyle(TextInputStyle.Short)
+        .setPlaceholder('https://www.youtube.com/watch?v=…').setRequired(true)));
 }
 
 const voiceSyncJobs = new Map();

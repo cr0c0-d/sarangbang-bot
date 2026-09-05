@@ -14,6 +14,7 @@ import {
   ButtonBuilder,
   ButtonStyle,
   MessageFlags,
+  PermissionFlagsBits,
 } from 'discord.js';
 import { userError } from '../user-error.js';
 import { get as getSetting, streamHome, setStreamHome } from '../settings.js';
@@ -29,6 +30,7 @@ import {
   setGame,
   setStreamGame,
   putStream,
+  linkStreamReplay,
   streamOf,
   setOffset,
   addMark,
@@ -53,6 +55,7 @@ import {
   buildDescModal,
   buildClipModal,
   buildSessionPicker,
+  buildReplayLinkModal,
   ensureStreamPanel,
   repostStreamPanel,
   scheduleStreamPanelRefresh,
@@ -153,13 +156,14 @@ function buildStatus(guildId, userId) {
     );
     for (const s of session.streams) {
       lines.push(
-        `· <@${s.userId}> — **${s.game || '게임 미지정'}** · 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중`
+        `· <@${s.userId}> — **${s.game || '게임 미지정'}** · 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중` +
+        (s.url ? '' : ' · ⚠️ 링크 연결 전')
       );
     }
     if (session.streams.length === 0) lines.push('· 아직 등록한 사람이 없습니다.');
   } else {
     lines.push('기록 중인 방송이 없습니다.');
-    lines.push('`/방송 링크:<내 라이브 주소> 게임명:<이름>` 으로 시작하세요.');
+    lines.push('`/방송 게임명:<게임>` 으로 기록부터 시작하세요. 다시보기 링크는 종료 후 연결해도 됩니다.');
   }
 
   // 저장해둔 고정 주소를 보여줍니다. 무엇이 저장됐는지 볼 수 없으면 고칠 수도 없습니다.
@@ -168,9 +172,8 @@ function buildStatus(guildId, userId) {
   lines.push(
     home
       ? `📌 내 고정 주소: ${home}\n(제어판의 **🎬 지난 게임으로 등록** 이 이 주소와 마지막 게임을 씁니다. 바꾸려면 \`/방송 링크:… 게임명:…\` 으로 다시 등록하세요)`
-      : '📌 등록은 `/방송 링크:<이번 방송 주소>` 로 합니다.\n' +
-          '**공개**로 방송하신다면 `…/@내계정/live` 를 한 번 등록해두면 같은 게임은 **🎬 지난 게임으로 등록** 만 누르면 됩니다.\n' +
-          '**일부공개는 그 방법이 안 됩니다** — 채널 목록에 안 떠서 유튜브가 못 찾아줍니다. 방송마다 주소를 넣어주세요.'
+      : '📌 `/방송 게임명:<게임>`으로 기록부터 시작할 수 있습니다. 다시보기 링크는 종료 후 연결해도 됩니다.\n' +
+          '라이브 주소가 이미 있으면 `/방송 링크:<이번 방송 주소> 게임명:<게임>`으로 바로 연결할 수도 있습니다.'
   );
 
   const past = recentSessions(guildId, 6).filter((s) => s.closedAt);
@@ -211,7 +214,7 @@ export const commands = [
 
       // 인자가 없으면 상태만 보여줍니다.
       if (!link) {
-        if (game && activeSession(guildId)) {
+        if (game) {
           await interaction.deferReply({ flags: MessageFlags.Ephemeral });
           const resolved = await resolveGame(game, guildId);
           if (!resolved) {
@@ -219,13 +222,17 @@ export const commands = [
               'Steam에서 게임 이름을 가져오지 못했습니다. 목록을 다시 고르거나 게임 이름을 직접 입력해주세요.'
             );
           }
-          const changed = setStreamGame(activeSession(guildId), interaction.user.id, resolved);
-          if (!changed) {
-            return interaction.editReply('먼저 `/방송 링크:<내 라이브 주소> 게임명:<게임>` 으로 내 방송을 등록해주세요.');
-          }
+          const session = activeSession(guildId) ?? openSession(guildId, requireHomeChannel(guildId), resolved.name);
+          const existing = streamOf(session, interaction.user.id);
+          const changed = (existing && setStreamGame(session, interaction.user.id, resolved)) || putStream(session, {
+            userId: interaction.user.id, url: null, videoId: null, startedAt: nowSec(), startSource: 'manual',
+            game: resolved.name, gameKey: resolved.key, appid: resolved.appid, cooperative: resolved.cooperative,
+          });
           const channelId = getSetting(guildId, 'streamChannelId');
           if (channelId) await ensureStreamPanel(interaction.client, guildId, channelId).catch(() => {});
-          return interaction.editReply(`🎮 내 방송 게임을 **${resolved.name}**(으)로 바꿨습니다.`);
+          return interaction.editReply(existing
+            ? `🎮 내 방송 게임을 **${resolved.name}**(으)로 바꿨습니다.`
+            : `✅ **${resolved.name}** 방송 기록을 시작했습니다. 링크는 종료 후 **다시보기 연결**에서 넣어주세요.`);
         }
         // 녹화방 미연결 때도 요약판에서 클립을 만들 수 있습니다. 밀려 올라갔을 때
         // 여기서 다시 부를 수 있어야 합니다.
@@ -523,6 +530,7 @@ export async function handleStreamComponent(interaction, client) {
   if (id === 'tm:panel:join') return registerStream(interaction);
   if (id === 'tm:panel:mark') return markNow(interaction, client);
   if (id.startsWith('tm:share:')) return shareMarkNow(interaction, client, id.split(':')[2]);
+  if (id.startsWith('tm:replay:')) return openReplayLinkModal(interaction, id);
   if (id === 'tm:panel:undo') return undoMark(interaction, client);
   if (id === 'tm:panel:offset') return openOffsetModal(interaction);
   if (id === 'tm:panel:end') return endSession(interaction, client);
@@ -603,14 +611,56 @@ async function shareMarkNow(interaction, client, markId) {
   const session = activeSession(interaction.guildId);
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
-  const mark = shareMark(session, markId);
-  if (!mark) return interaction.reply(eph('그 마킹을 찾지 못했습니다. 이미 지워졌을 수 있습니다.'));
+  const shared = shareMark(session, markId);
+  if (!shared) return interaction.reply(eph('그 마킹을 찾지 못했습니다. 이미 지워졌을 수 있습니다.'));
 
   await interaction.update({
-    content: '👥 **모두의 타임라인**으로 넓혔습니다. 방송을 켠 사람 전원의 요약판에 들어갑니다.',
+    content: shared.merged
+      ? '👥 5초 안에 등록된 같은 순간이 있어 **기존 마킹 하나로 합쳤습니다.**'
+      : '👥 **모두의 타임라인**으로 넓혔습니다. 방송을 켠 사람 전원의 요약판에 들어갑니다.',
     components: [],
   });
   scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
+}
+
+function canLinkReplay(interaction, userId) {
+  return interaction.user.id === userId || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+}
+
+function openReplayLinkModal(interaction, customId) {
+  const [, , sessionId, userId] = customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session ? streamOf(session, userId) : null;
+  if (!stream || session.guildId !== interaction.guildId) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canLinkReplay(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 다시보기를 연결할 수 있습니다.'));
+  return interaction.showModal(buildReplayLinkModal(session, stream));
+}
+
+async function submitReplayLink(interaction, client) {
+  const [, , sessionId, userId] = interaction.customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session ? streamOf(session, userId) : null;
+  if (!stream || session.guildId !== interaction.guildId) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canLinkReplay(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 다시보기를 연결할 수 있습니다.'));
+  const videoId = parseVideoId(interaction.fields.getTextInputValue('url'));
+  if (!videoId) throw userError('유튜브 다시보기 주소를 알아볼 수 없습니다. `watch?v=…` 또는 `youtu.be/…` 주소를 넣어주세요.');
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+  const url = watchUrl(videoId);
+  let info;
+  try { info = await liveInfo(url); }
+  catch (err) { throw userError(`유튜브 영상을 확인하지 못했습니다. 공개 범위와 주소를 확인해주세요.\n${err.message}`); }
+  if (!['is_live', 'was_live', 'post_live'].includes(info.liveStatus)) {
+    throw userError('라이브 다시보기 영상이 아닙니다. 해당 방송의 유튜브 다시보기 주소를 넣어주세요.');
+  }
+  linkStreamReplay(session, userId, { url, videoId, startedAt: info.startedAt });
+  const result = await publishStreamRecord(client, session, stream, { refreshPreview: true });
+  const lines = [`🔗 <@${userId}>의 다시보기를 연결했습니다.`, info.startedAt
+    ? '유튜브 방송 시작 시각으로 타임라인을 다시 계산했습니다.'
+    : '⚠️ 유튜브 시작 시각을 읽지 못해 기존 기록 시작점을 유지했습니다.'];
+  if (info.liveStatus === 'post_live') lines.push('유튜브가 다시보기를 처리 중입니다. 처리가 끝나면 클립을 추출할 수 있습니다.');
+  if (info.liveStatus === 'is_live') lines.push('유튜브 방송은 아직 진행 중입니다. 종료·처리가 끝나면 클립을 추출할 수 있습니다.');
+  if (!['posted', 'updated'].includes(result.status)) lines.push('⚠️ 녹화방 갱신에 실패했습니다. 포럼 연결과 권한을 확인해주세요.');
+  await interaction.editReply({ content: lines.join('\n'), allowedMentions: { parse: [] } });
 }
 
 async function undoMark(interaction, client) {
@@ -764,6 +814,7 @@ export async function handleStreamModal(interaction, client) {
   if (id === 'tm:offsetm') return submitOffset(interaction, client);
   if (id.startsWith('tm:descm:')) return submitDesc(interaction, client);
   if (id.startsWith('tm:clipm:')) return submitClip(interaction, client);
+  if (id.startsWith('tm:replaym:')) return submitReplayLink(interaction, client);
   return interaction.reply(eph('⚠️ 알 수 없는 입력 창입니다.')).catch(() => {});
 }
 

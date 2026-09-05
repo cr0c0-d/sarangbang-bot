@@ -21,6 +21,7 @@ const KEEP_DAYS = 180;
 
 /** 한 세션에 담을 수 있는 마킹 수. 요약판이 감당할 수 있는 범위로 제한합니다. */
 export const MARK_MAX = 200;
+export const SHARED_MARK_MERGE_SEC = 5;
 
 /** @type {{ sessions: Session[] }} */
 let store = { sessions: [] };
@@ -189,6 +190,21 @@ export function putStream(session, { userId, url, videoId, startedAt, startSourc
   return found ?? session.streams[session.streams.length - 1];
 }
 
+/** 종료 뒤 다시보기를 연결할 때 영상 기준 시각으로 갈아끼우되 포럼 게시 ID는 보존합니다. */
+export function linkStreamReplay(session, userId, { url, videoId, startedAt }) {
+  const stream = streamOf(session, userId);
+  if (!stream) return null;
+  stream.url = url;
+  stream.videoId = videoId;
+  if (startedAt) {
+    stream.startedAt = startedAt;
+    stream.startSource = 'release_timestamp';
+    stream.offsetSec = 0;
+  }
+  save();
+  return stream;
+}
+
 export function setStreamGame(session, userId, game) {
   const stream = streamOf(session, userId);
   if (!stream || !game?.name || !game?.key) return null;
@@ -246,9 +262,18 @@ export function addMark(session, byUserId, forUserId = byUserId) {
 export function shareMark(session, markId) {
   const mark = session.marks.find((m) => m.id === markId);
   if (!mark) return null;
+  if (mark.forUserId === null) return { mark, merged: false };
+  const existing = session.marks.find((m) => m.id !== markId && m.forUserId === null &&
+    Math.abs(m.at - mark.at) <= SHARED_MARK_MERGE_SEC);
+  if (existing) {
+    if (!existing.text && mark.text) existing.text = mark.text;
+    session.marks.splice(session.marks.indexOf(mark), 1);
+    save();
+    return { mark: existing, merged: true };
+  }
   mark.forUserId = null;
   save();
-  return mark;
+  return { mark, merged: false };
 }
 
 /**

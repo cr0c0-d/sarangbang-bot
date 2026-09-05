@@ -2875,6 +2875,20 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   store.removeLastMark(s, 'u1');
   store.shareMark(s, mk2.id) && (mk2.forUserId = 'u1'); // 원래대로
 
+  const sharedFirst = store.addMark(s, 'u1');
+  sharedFirst.at = now;
+  store.shareMark(s, sharedFirst.id);
+  const sharedDuplicate = store.addMark(s, 'u2');
+  sharedDuplicate.at = now + 5;
+  const mergedShared = store.shareMark(s, sharedDuplicate.id);
+  ok('5초 이내 협동 마킹은 먼저 등록된 하나로 병합', mergedShared.merged && mergedShared.mark.id === sharedFirst.id &&
+    !s.marks.some((m) => m.id === sharedDuplicate.id));
+  const distinctShared = store.addMark(s, 'u2');
+  distinctShared.at = now + 6;
+  ok('5초를 넘긴 협동 마킹은 별도 유지', !store.shareMark(s, distinctShared.id).merged && s.marks.includes(distinctShared));
+  s.marks.splice(s.marks.indexOf(sharedFirst), 1);
+  s.marks.splice(s.marks.indexOf(distinctShared), 1);
+
   // 등록 안 한 사람이 누르면 갈 곳이 없다. 그때만 모두의 것으로 둔다.
   const guest = store.addMark(s, 'u9', null);
   ok('등록 안 한 사람이 찍으면 모두의 것', guest.forUserId === null);
@@ -3104,6 +3118,10 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const broadcastCmd = allCommands.find((c) => c.data.toJSON().name === '방송');
   ok('/방송 게임명도 자동완성',
     typeof broadcastCmd.autocomplete === 'function' && broadcastCmd.data.toJSON().options[1].autocomplete === true);
+  const linklessSource = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('/방송 게임명만으로 링크 없는 기록 시작',
+    linklessSource.includes("url: null, videoId: null, startedAt: nowSec(), startSource: 'manual'") &&
+    linklessSource.includes('링크는 종료 후 **다시보기 연결**에서 넣어주세요.'));
 
   await forumStore.initForumPosts();
   forumStore.bindForumPost('gameguild', 'rec', direct.key, 'thread-rec');
@@ -3151,10 +3169,55 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
       return { id: `msg-${sentContents.length}` };
     },
   }) } };
+  const pendingSession = streams.openSession('pending-record-guild', 'stream-channel', direct.name);
+  const pendingStream = streams.putStream(pendingSession, {
+    userId: 'pending-user', url: null, videoId: null, startedAt: streams.nowSec() - 30, startSource: 'manual',
+    game: direct.name, gameKey: direct.key, appid: null, cooperative: null,
+  });
+  streams.closeSession(pendingSession);
+  forumStore.bindForumPost('pending-record-guild', 'rec', direct.key, 'record-thread');
+  const pendingSent = [];
+  const pendingEdits = [];
+  const pendingClient = { channels: { fetch: async () => ({ isThread: () => true, isTextBased: () => true,
+    send: async (payload) => { pendingSent.push(payload); return { id: 'pending-message' }; },
+    messages: { fetch: async (id) => ({ id, flags: { bitfield: 4096 }, edit: async (payload) => { pendingEdits.push(payload); } }), delete: async () => {} },
+  }) } };
+  const pendingPosted = await forum.publishStreamRecord(pendingClient, pendingSession, pendingStream);
+  ok('링크 없는 종료 기록도 녹화방에 연결 대기로 게시', pendingPosted.status === 'posted' &&
+    pendingSent[0].content.includes('다시보기 링크 연결 대기') && JSON.stringify(pendingSent[0]).includes(`tm:replay:${pendingSession.id}:pending-user`));
+  const oldStart = pendingStream.startedAt;
+  streams.linkStreamReplay(pendingSession, 'pending-user', { url: 'https://www.youtube.com/watch?v=ccccccccccc', videoId: 'ccccccccccc', startedAt: oldStart - 10 });
+  ok('나중에 다시보기 연결 시 같은 방송의 링크·실제 시작 시각 갱신', pendingStream.url.includes('ccccccccccc') &&
+    pendingStream.startedAt === oldStart - 10 && pendingStream.forumPosted.messageIds[0] === 'pending-message');
+  const pendingUpdated = await forum.publishStreamRecord(pendingClient, pendingSession, pendingStream, { refreshPreview: true });
+  ok('다시보기 연결 뒤 녹화방의 같은 메시지를 링크·클립 버튼으로 갱신', pendingUpdated.status === 'updated' &&
+    pendingEdits.length === 2 && pendingEdits.at(-1).content.includes('ccccccccccc') &&
+    !pendingEdits.at(-1).content.includes('다시보기 링크 연결 대기') &&
+    JSON.stringify(pendingEdits.at(-1)).includes(`tm:clipsopen:${pendingSession.id}:pending-user`));
   const posted = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
   ok('녹화방 게시물에 해당 방송자 클립 추출 버튼', JSON.stringify(recordPayloads.at(-1)).includes(`tm:clipsopen:${session.id}:broadcaster`));
   const streamModule = await import('./src/stream/index.js');
+  const streamSource = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('다시보기 연결은 방송자 또는 서버 관리자만 허용', streamSource.includes('PermissionFlagsBits.ManageGuild') &&
+    streamSource.includes('interaction.user.id === userId'));
+  let replayReply, replayModal;
+  const replayInteraction = {
+    guildId: pendingSession.guildId, customId: `tm:replay:${pendingSession.id}:pending-user`, user: { id: 'stranger' },
+    memberPermissions: { has: () => false }, reply: async (p) => { replayReply = p; },
+    showModal: async (p) => { replayModal = p.toJSON(); },
+  };
+  await streamModule.handleStreamComponent(replayInteraction, pendingClient);
+  ok('일반 사용자는 남의 다시보기 연결 차단', replayReply.content.includes('방송자 본인 또는 서버 관리자') && !replayModal);
+  replayInteraction.user.id = 'pending-user';
+  replayReply = null;
+  await streamModule.handleStreamComponent(replayInteraction, pendingClient);
+  ok('방송자는 자기 다시보기 연결 모달 사용 가능', replayModal.custom_id === `tm:replaym:${pendingSession.id}:pending-user` && !replayReply);
+  replayInteraction.user.id = 'stranger';
+  replayModal = null;
+  replayInteraction.memberPermissions.has = () => true;
+  await streamModule.handleStreamComponent(replayInteraction, pendingClient);
+  ok('서버 관리자는 다른 방송자의 연결 모달 사용 가능', replayModal.custom_id === `tm:replaym:${pendingSession.id}:pending-user`);
   let pickerReply, pickerUpdate, clipModal;
   const pickerInteraction = {
     guildId: session.guildId, customId: `tm:clipsopen:${session.id}:broadcaster`,
