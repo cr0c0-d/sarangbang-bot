@@ -16,9 +16,12 @@ const META_FILE = path.join(BASE, '_meta.json');
 const FOLDER_MAP_FILE = path.join(BASE, '_folders.json');
 
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.bmp', '.avif', '.heic']);
+const VIDEO_EXT = new Set(['.mp4', '.webm', '.mov', '.m4v', '.avi', '.mkv']);
+const MEDIA_EXT = new Set([...IMAGE_EXT, ...VIDEO_EXT]);
 
 /** @type {Record<string, object>} "폴더/파일명" → 메타데이터 */
 let meta = {};
+let knownAttachments = new Set();
 /** @type {Record<string, string>} 채널ID → 폴더명 */
 let folderMap = {};
 
@@ -27,6 +30,7 @@ let writeChain = Promise.resolve();
 export async function initStore() {
   await fs.mkdir(BASE, { recursive: true });
   meta = await readJson(META_FILE, {});
+  knownAttachments = new Set(Object.values(meta).map(attachmentKey).filter(Boolean));
   folderMap = await readJson(FOLDER_MAP_FILE, {});
 }
 
@@ -173,6 +177,20 @@ export function isImageAttachment(att) {
   return IMAGE_EXT.has(path.extname(att.name ?? '').toLowerCase());
 }
 
+export function isVideoAttachment(att) {
+  if (att.contentType?.startsWith('video/')) return true;
+  return VIDEO_EXT.has(path.extname(att.name ?? '').toLowerCase());
+}
+
+export function isGalleryAttachment(att) {
+  return isImageAttachment(att) || isVideoAttachment(att);
+}
+
+function attachmentKey(value) {
+  if (!value?.messageId) return null;
+  return `${value.messageId}:${value.attachmentId ?? value.originalName ?? ''}`;
+}
+
 /** 이름이 겹치면 뒤에 -1, -2 를 붙여서 덮어쓰기를 막습니다. */
 async function uniquePath(dir, fileName) {
   const ext = path.extname(fileName);
@@ -200,7 +218,12 @@ export async function saveAttachments(message) {
 
   const saved = [];
   for (const att of message.attachments.values()) {
-    if (!isImageAttachment(att)) continue;
+    if (!isGalleryAttachment(att)) continue;
+
+    // 과거 채널 수집을 다시 실행해도 같은 Discord 첨부를 복제하지 않습니다.
+    const discordKey = `${message.id}:${att.id ?? att.name ?? ''}`;
+    const legacyKey = `${message.id}:${att.name ?? ''}`;
+    if (knownAttachments.has(discordKey) || knownAttachments.has(legacyKey)) continue;
 
     const stamp = localStamp(new Date(message.createdTimestamp));
     const base = safeFileName(`${stamp}_${att.name ?? 'image'}`);
@@ -213,6 +236,9 @@ export async function saveAttachments(message) {
       continue;
     }
     await pipeline(Readable.fromWeb(res.body), createWriteStream(dest));
+    // 과거 수집 파일도 Discord 게시 시각 순으로 보이고, 정리 정책이 실제 나이를 사용해야 합니다.
+    const uploaded = new Date(message.createdTimestamp);
+    await fs.utimes(dest, uploaded, uploaded);
 
     meta[`${folder}/${name}`] = {
       folder,
@@ -225,9 +251,12 @@ export async function saveAttachments(message) {
       authorId: message.author?.id ?? null,
       channelId: message.channelId,
       messageId: message.id,
+      attachmentId: att.id ?? null,
+      mediaType: isVideoAttachment(att) ? 'video' : 'image',
       messageUrl: message.url,
-      uploadedAt: new Date(message.createdTimestamp).toISOString(),
+      uploadedAt: uploaded.toISOString(),
     };
+    knownAttachments.add(discordKey);
     saved.push(name);
   }
 
@@ -260,7 +289,7 @@ export async function listFiles(folder) {
   const out = [];
   for (const e of entries) {
     if (!e.isFile()) continue;
-    if (!IMAGE_EXT.has(path.extname(e.name).toLowerCase())) continue;
+    if (!MEDIA_EXT.has(path.extname(e.name).toLowerCase())) continue;
     const st = await fs.stat(path.join(dir, e.name)).catch(() => null);
     if (!st) continue;
     out.push({
@@ -268,6 +297,7 @@ export async function listFiles(folder) {
       size: st.size,
       mtime: st.mtimeMs,
       meta: meta[`${folder}/${e.name}`] ?? null,
+      mediaType: VIDEO_EXT.has(path.extname(e.name).toLowerCase()) ? 'video' : 'image',
     });
   }
   out.sort((a, b) => b.mtime - a.mtime);
@@ -313,7 +343,10 @@ export async function deleteFiles(folder, files) {
   let n = 0;
   for (const f of files) {
     await fs.unlink(filePath(folder, f)).catch(() => {});
-    delete meta[`${safeFolderName(folder)}/${safeFileName(f)}`];
+    const key = `${safeFolderName(folder)}/${safeFileName(f)}`;
+    const known = attachmentKey(meta[key]);
+    if (known) knownAttachments.delete(known);
+    delete meta[key];
     n++;
   }
   saveJson(META_FILE, meta);

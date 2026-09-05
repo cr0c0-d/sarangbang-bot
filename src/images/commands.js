@@ -7,6 +7,7 @@ import {
   ButtonStyle,
   MessageFlags,
   PermissionFlagsBits,
+  ChannelType,
 } from 'discord.js';
 import { config } from '../config.js';
 import {
@@ -16,7 +17,7 @@ import {
   resolveFolder,
   explainFolder,
   listFolders,
-  isImageAttachment,
+  isGalleryAttachment,
   baseDir,
 } from './store.js';
 import { imageChannelAllowed, featureEnabled } from '../settings.js';
@@ -36,7 +37,7 @@ export async function handleImageMessage(message) {
   if (!imageChannelAllowed(message.guildId, message.channelId, parentId)) return false;
 
   if (message.attachments.size === 0) return false;
-  if (![...message.attachments.values()].some(isImageAttachment)) return false;
+  if (![...message.attachments.values()].some(isGalleryAttachment)) return false;
 
   try {
     const { folder, saved } = await saveAttachments(message);
@@ -56,6 +57,39 @@ export async function handleImageMessage(message) {
 }
 
 export const commands = [
+  {
+    data: new SlashCommandBuilder()
+      .setName('갤러리수집')
+      .setDescription('선택한 채널의 예전 사진과 동영상을 갤러리에 저장합니다')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addChannelOption((o) => o.setName('채널').setDescription('과거 자료를 가져올 채널 또는 포럼').setRequired(true)
+        .addChannelTypes(ChannelType.GuildText, ChannelType.GuildAnnouncement, ChannelType.GuildForum,
+          ChannelType.PublicThread, ChannelType.PrivateThread, ChannelType.AnnouncementThread)),
+    async execute(interaction) {
+      const channel = interaction.options.getChannel('채널', true);
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      try {
+        if (typeof channel.send === 'function') setNotifyChannel(channel);
+        const result = await collectHistory(channel, async (progress) => {
+          await interaction.editReply(`🖼️ 과거 자료를 수집하는 중… 메시지 ${progress.messages}개 확인 · 파일 ${progress.saved}개 저장`).catch(() => {});
+          await maybeAutoCleanup();
+        });
+        if (result.saved > 0) {
+          const folder = resolveFolder(channel, channel.id);
+          if (channel.type !== ChannelType.GuildForum && channel.isTextBased?.()) showGalleryPanel(channel, folder);
+        }
+        await interaction.editReply([
+          `✅ <#${channel.id}> 과거 자료 수집을 마쳤습니다.`,
+          `메시지 **${result.messages}개** 확인 · 사진/동영상 **${result.saved}개** 저장`,
+          result.failed ? `⚠️ 내려받지 못한 메시지 ${result.failed}개가 있습니다. 다시 실행하면 중복 없이 재시도합니다.` : '이미 저장된 첨부는 건너뛰었습니다.',
+        ].join('\n'));
+      } catch (err) {
+        console.error('[images] 과거 자료 수집 실패:', err.message);
+        await interaction.editReply(`⚠️ 과거 자료를 수집하지 못했습니다: ${err.message}\n봇의 **채널 보기 · 메시지 기록 보기** 권한을 확인한 뒤 다시 실행해주세요.`);
+      }
+    },
+  },
+
   {
     data: new SlashCommandBuilder()
       .setName('폴더')
@@ -102,21 +136,21 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('폴더목록')
-      .setDescription('저장된 폴더와 장수를 봅니다'),
+      .setDescription('저장된 폴더와 파일 수를 봅니다'),
     async execute(interaction) {
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
       const folders = await listFolders();
       if (folders.length === 0) {
-        return interaction.editReply('아직 저장된 이미지가 없습니다.');
+        return interaction.editReply('아직 저장된 사진·동영상이 없습니다.');
       }
       const lines = folders
         .slice(0, 25)
-        .map((f) => `• **${f.name}** — ${f.count}장`)
+        .map((f) => `• **${f.name}** — ${f.count}개`)
         .join('\n');
       const embed = new EmbedBuilder()
         .setTitle('📁 이미지 폴더')
         .setDescription(lines + (folders.length > 25 ? `\n… 외 ${folders.length - 25}개` : ''))
-        .setFooter({ text: `전체 ${folders.reduce((a, f) => a + f.count, 0)}장` })
+        .setFooter({ text: `전체 ${folders.reduce((a, f) => a + f.count, 0)}개` })
         .setColor(0x5865f2);
       await interaction.editReply({ embeds: [embed] });
     },
@@ -165,7 +199,7 @@ export const commands = [
   {
     data: new SlashCommandBuilder()
       .setName('갤러리')
-      .setDescription('이 채널의 사진을 여러 장 골라 한 번에 받을 수 있는 주소를 알려줍니다')
+      .setDescription('이 채널의 사진과 동영상을 골라 받을 수 있는 주소를 알려줍니다')
       .addStringOption((o) =>
         o.setName('폴더').setDescription('다른 폴더를 보려면 이름 입력 (비우면 이 채널)').setRequired(false)
       ),
@@ -182,7 +216,7 @@ export const commands = [
         content: [
           `🖼️ **${folder}** 폴더`,
           url,
-          '사진을 클릭해 여러 장 고르고 **⬇️ 선택한 사진 받기** 를 누르면 한 장씩 전부 저장됩니다.',
+          '사진을 클릭해 여러 개 고르고 **⬇️ 선택한 파일 받기** 를 누르면 하나씩 전부 저장됩니다.',
           '(Shift+클릭 으로 범위 선택, **전체 선택** 버튼도 있습니다)',
         ].join('\n'),
         flags: MessageFlags.Ephemeral,
@@ -190,6 +224,47 @@ export const commands = [
     },
   },
 ];
+
+/** 선택한 채널 또는 포럼의 모든 과거 메시지를 오래된 자료까지 거슬러 수집합니다. */
+export async function collectHistory(channel, onProgress = async () => {}) {
+  const targets = [];
+  if (channel.type === ChannelType.GuildForum) {
+    const active = await channel.threads.fetchActive();
+    targets.push(...[...active.threads.values()].filter((thread) => thread.parentId === channel.id));
+    let before;
+    do {
+      const page = await channel.threads.fetchArchived({ limit: 100, ...(before ? { before } : {}) });
+      targets.push(...[...page.threads.values()].filter((thread) => thread.parentId === channel.id));
+      before = page.hasMore ? page.threads.last()?.archivedAt : null;
+    } while (before);
+  } else {
+    targets.push(channel);
+  }
+
+  let messages = 0;
+  let saved = 0;
+  let failed = 0;
+  const seenTargets = new Set();
+  for (const target of targets) {
+    if (seenTargets.has(target.id) || !target.messages?.fetch) continue;
+    seenTargets.add(target.id);
+    let before;
+    while (true) {
+      const page = await target.messages.fetch({ limit: 100, ...(before ? { before } : {}) });
+      if (page.size === 0) break;
+      for (const message of page.values()) {
+        messages++;
+        if (![...message.attachments.values()].some(isGalleryAttachment)) continue;
+        try { saved += (await saveAttachments(message)).saved.length; }
+        catch (err) { failed++; console.warn('[images] 과거 첨부 저장 실패:', message.id, err.message); }
+      }
+      before = page.last()?.id;
+      await onProgress({ messages, saved, failed });
+      if (page.size < 100 || !before) break;
+    }
+  }
+  return { messages, saved, failed };
+}
 
 /** /정리 의 확인 버튼. customId 가 `g:` 으로 시작하는 것만 옵니다. */
 export async function handleImageComponent(interaction) {

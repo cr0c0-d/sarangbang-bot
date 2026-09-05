@@ -158,7 +158,7 @@ export function describe(plan) {
   const { usage: u, limits: L } = plan;
   const pct = ((u.bytes / L.maxBytes) * 100).toFixed(0);
   const lines = [
-    `📊 사진 **${u.count}장** · ${fmtBytes(u.bytes)} / ${fmtBytes(L.maxBytes)} (**${pct}%**) · 폴더 ${u.folders}개`,
+    `📊 사진·동영상 **${u.count}개** · ${fmtBytes(u.bytes)} / ${fmtBytes(L.maxBytes)} (**${pct}%**) · 폴더 ${u.folders}개`,
   ];
   if (u.diskFree !== null) {
     lines.push(`💽 디스크 여유 ${fmtBytes(u.diskFree)} / ${fmtBytes(u.diskTotal)}`);
@@ -168,20 +168,20 @@ export function describe(plan) {
     return lines.join('\n');
   }
 
-  lines.push(`\n🧹 **${plan.reason}** — 오래된 것부터 **${plan.files.length}장** (${fmtBytes(plan.freed)}) 정리 대상`);
+  lines.push(`\n🧹 **${plan.reason}** — 오래된 것부터 **${plan.files.length}개** (${fmtBytes(plan.freed)}) 정리 대상`);
   const preview = plan.files.slice(0, 5).map((f) => {
     const days = Math.floor((Date.now() - f.mtime) / 86400000);
     return `• ${f.folder} / ${f.name.slice(0, 40)} — ${days}일 전`;
   });
   lines.push(preview.join('\n'));
-  if (plan.files.length > 5) lines.push(`… 외 ${plan.files.length - 5}장`);
+  if (plan.files.length > 5) lines.push(`… 외 ${plan.files.length - 5}개`);
 
   if (plan.ignoredAge) {
     lines.push(`\n⚠️ 디스크 여유가 부족해 **최근 ${plan.limits.minKeepDays}일 보호를 해제**했습니다.`);
   }
   if (plan.shortfall) {
     lines.push(
-      `\n⚠️ 최근 ${L.minKeepDays}일 이내 사진은 보호되어 목표만큼 확보하지 못했습니다.` +
+      `\n⚠️ 최근 ${L.minKeepDays}일 이내 파일은 보호되어 목표만큼 확보하지 못했습니다.` +
         '\n`.env` 의 `IMAGE_MAX_GB` 를 늘리거나 `IMAGE_MIN_KEEP_DAYS` 를 줄여주세요.'
     );
   }
@@ -209,7 +209,7 @@ export async function maybeAutoCleanup() {
     await runCleanup(plan);
     // 조용히 지우면 안 됩니다. 무엇이 사라졌는지 알려야 합니다.
     await notifyChannel
-      ?.send(`🧹 **사진 자동 정리**\n${describe(plan)}`)
+      ?.send(`🧹 **갤러리 자동 정리**\n${describe(plan)}`)
       .catch(() => {});
     return plan;
   } catch (err) {

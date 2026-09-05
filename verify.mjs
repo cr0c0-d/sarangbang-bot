@@ -123,7 +123,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 23개 로드 (우클릭 1개 포함)', allCommands.length === 23, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 24개 로드 (우클릭 1개 포함)', allCommands.length === 24, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -188,6 +188,24 @@ for (const c of ['../../Windows', '..\\..\\evil', 'C:\\Windows', '/etc/passwd', 
   ok(`경로탈출 방어 ${JSON.stringify(c)}`, store.folderPath(c).startsWith(store.baseDir()), '→ ' + store.safeFolderName(c));
 }
 ok('날짜 폴더 하이픈 보존', store.safeFolderName('2026-08-31') === '2026-08-31', store.safeFolderName('2026-08-31'));
+ok('동영상 첨부 MIME·확장자 인식', store.isGalleryAttachment({ contentType: 'video/mp4', name: 'clip.bin' }) &&
+  store.isGalleryAttachment({ name: 'clip.webm' }) && !store.isGalleryAttachment({ name: 'notes.txt' }));
+{
+  const mediaChannel = { id: 'media-channel', name: '미디어검증', isThread: () => false };
+  const mediaMessage = {
+    id: 'media-message', channelId: mediaChannel.id, channel: mediaChannel, createdTimestamp: Date.now(),
+    author: { id: 'author', tag: '검증자' }, url: 'https://discord.test/media-message',
+    attachments: new Map([['video-att', {
+      id: 'video-att', name: 'sample.mp4', contentType: 'video/mp4', size: 4,
+      url: 'data:video/mp4;base64,AAAAAA==',
+    }]]),
+  };
+  const firstMedia = await store.saveAttachments(mediaMessage);
+  const secondMedia = await store.saveAttachments(mediaMessage);
+  const mediaFiles = await store.listFiles(firstMedia.folder);
+  ok('동영상 첨부를 갤러리에 저장', firstMedia.saved.length === 1 && mediaFiles.some((f) => f.mediaType === 'video'));
+  ok('같은 Discord 첨부 재수집은 중복 저장 안 함', secondMedia.saved.length === 0 && mediaFiles.length === 1);
+}
 
 // 5) 폴더 결정 규칙: 스레드명 > /폴더 지정 > 채널명 > 날짜
 ok('1순위 스레드명',
@@ -1015,6 +1033,22 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   const ic = fs.readFileSync('./src/images/commands.js', 'utf8');
   ok('/갤러리 기본값 = 이 채널 폴더', ic.includes('resolveFolder(interaction.channel, interaction.channelId)'));
   ok('/갤러리 가 폴더 목록으로 보내지 않음', !ic.includes('config.images.webPublicUrl;'));
+  const imageCommands = await import('./src/images/commands.js');
+  const page = new Map([['history-message', {
+    id: 'history-message', channelId: 'history-channel', channel: { id: 'history-channel', name: '과거자료', isThread: () => false },
+    createdTimestamp: Date.now(), author: { id: 'old-user', tag: '옛사용자' }, url: 'https://discord.test/history',
+    attachments: new Map([['old-video', { id: 'old-video', name: 'old.mov', contentType: 'video/quicktime', size: 4, url: 'data:video/quicktime;base64,AAAAAA==' }]]),
+  }]]);
+  page.last = () => [...page.values()].at(-1);
+  const historyChannel = { id: 'history-channel', type: 0, messages: { fetch: async () => page } };
+  const history = await imageCommands.collectHistory(historyChannel);
+  const historyAgain = await imageCommands.collectHistory(historyChannel);
+  ok('선택 채널 과거 메시지에서 미디어 일괄 수집', history.messages === 1 && history.saved === 1 && history.failed === 0);
+  ok('과거 미디어 수집 재실행도 중복 없음', historyAgain.messages === 1 && historyAgain.saved === 0);
+  const icmd = imageCommands.commands.find((c) => c.data.toJSON().name === '갤러리수집')?.data.toJSON();
+  ok('/갤러리수집은 관리자만 채널을 골라 실행', Boolean(icmd?.default_member_permissions) && icmd.options[0].required);
+  ok('포럼 과거 수집은 선택한 부모 포럼의 게시글만 허용',
+    ic.includes("filter((thread) => thread.parentId === channel.id)"));
 }
 
 // 6m) 타이머: 시간 해석과 저장 동작
@@ -1659,6 +1693,13 @@ ok('youtu.be 감지', findYoutubeLink('보셈 https://youtu.be/dQw4w9WgXcQ') !==
 ok('일반문장 무시', findYoutubeLink('링크 없음') === null);
 
 // 8) 웹 갤러리
+{
+  const webSource = fs.readFileSync('./src/web/server.js', 'utf8');
+  ok('갤러리 동영상은 웹 재생기로 표시', webSource.includes("f.mediaType === 'video'") && webSource.includes('preload="metadata"'));
+  ok('갤러리 뷰어는 좌우·키보드·스와이프 지원', webSource.includes('viewer-prev') &&
+    webSource.includes("e.key === 'ArrowRight'") && webSource.includes("addEventListener('touchend'"));
+  ok('모바일 갤러리는 3열', webSource.includes('grid-template-columns: repeat(3, minmax(0, 1fr))'));
+}
 const { startWebServer } = await import('./src/web/server.js');
 const server = await startWebServer();
 const base = 'http://127.0.0.1:38473';
@@ -3436,7 +3477,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 27개', union.length === 27, `${union.length}개`);
+  ok('둘을 합쳐 28개', union.length === 28, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

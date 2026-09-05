@@ -30,7 +30,7 @@ function buildPanel(folder, count, latest) {
     .setTitle(`🖼️ ${folder}`)
     .setColor(0x5865f2)
     .setDescription(
-      `사진 **${count}장**이 모여 있습니다.\n` +
+      `사진·동영상 **${count}개**가 모여 있습니다.\n` +
         '아래 버튼을 눌러 여러 장을 골라 한 번에 받으세요.'
     );
   // 최근 사진을 미리보기로 붙이면 뭐가 들어있는지 한눈에 보입니다.
@@ -70,7 +70,7 @@ async function showNow(channel, folder) {
   const files = await listFiles(folder);
   if (files.length === 0) return; // 한 장도 없으면 띄우지 않습니다
 
-  const body = buildPanel(folder, files.length, files[0]?.name);
+  const body = buildPanel(folder, files.length, files.find((file) => file.mediaType === 'image')?.name);
   const existing = panels.get(channel.id);
 
   if (existing) {

@@ -322,6 +322,7 @@ function layout(title, body) {
     width: 100%; aspect-ratio: 1; object-fit: cover; display: block; cursor: pointer;
     background: var(--card);
   }
+  .cell video { width: 100%; aspect-ratio: 1; object-fit: contain; display: block; background: #000; }
   .cell .cap { padding: 6px 8px; font-size: 11px; color: var(--muted); word-break: break-all; }
   .cell .tick {
     position: absolute; top: 8px; left: 8px; width: 24px; height: 24px; border-radius: 6px;
@@ -346,6 +347,23 @@ function layout(title, body) {
     border: 1px solid var(--line); background: var(--bg); color: var(--fg);
     padding: 7px 10px; border-radius: 8px; font: inherit; font-size: 13px;
   }
+  .viewer { position: fixed; inset: 0; z-index: 30; background: rgba(0,0,0,.92); display: none; align-items: center; justify-content: center; touch-action: pan-y; }
+  .viewer.open { display: flex; }
+  .viewer img, .viewer video { max-width: calc(100vw - 100px); max-height: calc(100vh - 80px); object-fit: contain; }
+  .viewer button { position: absolute; border: 0; background: rgba(255,255,255,.16); color: #fff; cursor: pointer; border-radius: 999px; }
+  .viewer .close { right: 14px; top: 14px; width: 42px; height: 42px; font-size: 24px; }
+  .viewer .prev, .viewer .next { top: 50%; width: 48px; height: 64px; margin-top: -32px; font-size: 32px; }
+  .viewer .prev { left: 14px; } .viewer .next { right: 14px; }
+  .viewer .position { position: absolute; left: 0; right: 0; bottom: 14px; text-align: center; color: #fff; font-size: 13px; }
+  @media (max-width: 600px) {
+    main { padding: 8px; }
+    .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
+    .cell .cap { padding: 4px; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .cell .tick, .cell .open { top: 4px; width: 22px; height: 22px; }
+    .cell .tick { left: 4px; } .cell .open { right: 4px; }
+    .viewer img, .viewer video { max-width: 100vw; max-height: calc(100vh - 70px); }
+    .viewer .prev { left: 4px; } .viewer .next { right: 4px; }
+  }
 </style>
 </head>
 <body>${body}</body>
@@ -356,8 +374,8 @@ function layout(title, body) {
 function landingPage() {
   return `<header><h1>🖼️ 이미지 갤러리</h1></header>
 <main>
-  <p>사진은 디스코드 채널별로 정리되어 있습니다.</p>
-  <p class="muted">보려는 채널에서 <code>/갤러리</code> 를 입력하면 그 채널의 사진 링크가 나옵니다.</p>
+  <p>사진과 동영상은 디스코드 채널별로 정리되어 있습니다.</p>
+  <p class="muted">보려는 채널에서 <code>/갤러리</code> 를 입력하면 그 채널의 갤러리 링크가 나옵니다.</p>
   <p><a class="btn" href="/guide/stream">🎥 게임 방송 · 클립 사용 가이드</a></p>
   <p style="margin-top:28px"><a class="btn" href="/folders">폴더 목록 보기 (관리자)</a></p>
 </main>`;
@@ -374,8 +392,8 @@ function foldersPage(folders) {
     )
     .join('');
 
-  return `<header><h1>📁 폴더 목록</h1><span class="muted">${folders.length}개 폴더 · 총 ${total}장</span></header>
-<main>${cards ? `<div class="folders">${cards}</div>` : '<p class="empty">아직 저장된 이미지가 없습니다.<br>디스코드에서 지정한 채널에 이미지를 올려보세요.</p>'}</main>`;
+  return `<header><h1>📁 폴더 목록</h1><span class="muted">${folders.length}개 폴더 · 총 ${total}개</span></header>
+<main>${cards ? `<div class="folders">${cards}</div>` : '<p class="empty">아직 저장된 사진·동영상이 없습니다.<br>디스코드에서 지정한 채널에 파일을 올려보세요.</p>'}</main>`;
 }
 
 /**
@@ -485,10 +503,13 @@ function galleryPage(folder, files) {
     .map((f) => {
       const src = `/img/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
       const who = f.meta?.author ? ` · ${esc(f.meta.author)}` : '';
-      return `<div class="cell" data-name="${esc(f.name)}">
+      const media = f.mediaType === 'video'
+        ? `<video src="${src}" controls preload="metadata" playsinline></video>`
+        : `<img src="${src}" loading="lazy" alt="${esc(f.name)}">`;
+      return `<div class="cell" data-name="${esc(f.name)}" data-type="${f.mediaType}">
         <div class="tick" data-tick>✓</div>
         <a class="open" href="${src}" target="_blank" rel="noopener" title="원본 보기">⤢</a>
-        <img src="${src}" loading="lazy" alt="${esc(f.name)}">
+        ${media}
         <div class="cap">${fmtBytes(f.size)}${who}</div>
       </div>`;
     })
@@ -498,17 +519,25 @@ function galleryPage(folder, files) {
   // 폴더 목록은 소유자 전용이고, 친구들은 자기 채널 폴더만 보면 되기 때문입니다.
   return `<header>
   <h1>${esc(folder)}</h1>
-  <span class="muted">${files.length}장</span>
+  <span class="muted">${files.length}개</span>
 </header>
 <main>
-  ${files.length ? `<div class="grid" id="grid">${cells}</div>` : '<p class="empty">이 폴더에는 이미지가 없습니다.</p>'}
+  ${files.length ? `<div class="grid" id="grid">${cells}</div>` : '<p class="empty">이 폴더에는 사진·동영상이 없습니다.</p>'}
 </main>
+
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-label="미디어 크게 보기">
+  <button class="close" id="viewer-close" aria-label="닫기">×</button>
+  <button class="prev" id="viewer-prev" aria-label="이전">‹</button>
+  <div id="viewer-media"></div>
+  <button class="next" id="viewer-next" aria-label="다음">›</button>
+  <div class="position" id="viewer-position"></div>
+</div>
 
 <div class="bar">
   <button class="btn" id="all">전체 선택</button>
   <button class="btn" id="none">선택 해제</button>
-  <span class="count" id="count">0장 선택</span>
-  <button class="btn primary" id="dl" disabled>⬇️ 선택한 사진 받기</button>
+  <span class="count" id="count">0개 선택</span>
+  <button class="btn primary" id="dl" disabled>⬇️ 선택한 파일 받기</button>
   <input type="text" id="dest" placeholder="옮길 폴더 이름" style="width:150px">
   <button class="btn" id="move" disabled>📂 옮기기</button>
   <button class="btn danger" id="del" disabled>🗑️ 삭제</button>
@@ -520,6 +549,8 @@ function galleryPage(folder, files) {
   var grid = document.getElementById('grid');
   var selected = new Set();
   var lastIndex = -1;
+  var viewerIndex = -1;
+  var touchX = null;
 
   function cells() { return grid ? Array.prototype.slice.call(grid.querySelectorAll('.cell')) : []; }
 
@@ -528,7 +559,7 @@ function galleryPage(folder, files) {
       c.classList.toggle('sel', selected.has(c.dataset.name));
     });
     var n = selected.size;
-    document.getElementById('count').textContent = n + '장 선택';
+    document.getElementById('count').textContent = n + '개 선택';
     ['dl', 'move', 'del'].forEach(function (id) {
       document.getElementById(id).disabled = n === 0;
     });
@@ -552,9 +583,47 @@ function galleryPage(folder, files) {
     cell.querySelector('[data-tick]').addEventListener('click', function (e) {
       e.preventDefault(); toggle(cell, i, e.shiftKey);
     });
-    cell.querySelector('img').addEventListener('click', function (e) {
+    var image = cell.querySelector('img');
+    if (image) image.addEventListener('click', function (e) {
       e.preventDefault(); toggle(cell, i, e.shiftKey);
     });
+    cell.querySelector('.open').addEventListener('click', function (e) {
+      e.preventDefault(); openViewer(i);
+    });
+  });
+
+  function openViewer(index) {
+    var list = cells();
+    if (!list.length) return;
+    viewerIndex = (index + list.length) % list.length;
+    var cell = list[viewerIndex];
+    var src = cell.querySelector('.open').href;
+    var media = cell.dataset.type === 'video'
+      ? '<video src="' + src + '" controls autoplay playsinline></video>'
+      : '<img src="' + src + '" alt="">';
+    document.getElementById('viewer-media').innerHTML = media;
+    document.getElementById('viewer-position').textContent = (viewerIndex + 1) + ' / ' + list.length;
+    document.getElementById('viewer').classList.add('open');
+  }
+  function closeViewer() {
+    document.getElementById('viewer').classList.remove('open');
+    document.getElementById('viewer-media').innerHTML = '';
+  }
+  document.getElementById('viewer-close').addEventListener('click', closeViewer);
+  document.getElementById('viewer-prev').addEventListener('click', function () { openViewer(viewerIndex - 1); });
+  document.getElementById('viewer-next').addEventListener('click', function () { openViewer(viewerIndex + 1); });
+  document.getElementById('viewer').addEventListener('click', function (e) { if (e.target === this) closeViewer(); });
+  document.getElementById('viewer').addEventListener('touchstart', function (e) { touchX = e.changedTouches[0].clientX; }, { passive: true });
+  document.getElementById('viewer').addEventListener('touchend', function (e) {
+    if (touchX === null) return;
+    var dx = e.changedTouches[0].clientX - touchX; touchX = null;
+    if (Math.abs(dx) > 45) openViewer(viewerIndex + (dx < 0 ? 1 : -1));
+  }, { passive: true });
+  document.addEventListener('keydown', function (e) {
+    if (!document.getElementById('viewer').classList.contains('open')) return;
+    if (e.key === 'Escape') closeViewer();
+    if (e.key === 'ArrowLeft') openViewer(viewerIndex - 1);
+    if (e.key === 'ArrowRight') openViewer(viewerIndex + 1);
   });
 
   document.getElementById('all').addEventListener('click', function () {
@@ -574,7 +643,7 @@ function galleryPage(folder, files) {
     (function next() {
       if (i >= names.length) {
         btn.disabled = false;
-        btn.textContent = '⬇️ 선택한 사진 받기';
+        btn.textContent = '⬇️ 선택한 파일 받기';
         return;
       }
       var name = names[i++];
