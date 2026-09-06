@@ -1256,7 +1256,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   }
   // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다.
   // /나가기 는 음악·읽어주기·알람이 같은 음성 커넥션을 쓰므로 어느 기능에도 안 속합니다.
-  for (const name of ['기능', '채널설정', '도움말', '나가기']) {
+  for (const name of ['기능', '채널설정', '도움말', '나가기', '상징이모지']) {
     ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
   }
 
@@ -2537,7 +2537,10 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 판: 할 일 버튼은 한 줄에 5개, 두 줄까지. 넘치면 조용히 자르지 말고 알려야 합니다.
   const { buildPanel } = await import('./src/plan/index.js');
+  const mentionSettings = await import('./src/settings.js');
+  mentionSettings.setUserSymbol('plan-symbol-guild', 'u1', '<:악어:123456789012345678>');
   const mkPlan = (n) => ({
+    guildId: 'plan-symbol-guild',
     title: '홍대 나들이', at: pw.parseWhen('10/3', now).at, hasTime: false,
     stops: pw.parseStops(
       ['12:00 점심 | 홍대 스시로', '오후 2시 카페 | 어니언 홍대', '16:00 방탈출'].join('\n'),
@@ -2578,6 +2581,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('장소를 인코딩해서 넘김', directionsUrl('강남 & 역삼').includes('%26'));
   ok('장소 없는 항목도 됨', pe.includes('방탈출'));
   ok('할 일 토글 버튼', pj.includes('"pl:todo:0"') && pj.includes('"pl:todo:2"'));
+  ok('일정 담당자 멘션 앞에 상징 이모지', pe.includes('<:악어:123456789012345678> <@u1>'));
   ok('조작 버튼', ['pl:edit', 'pl:addtodo', 'pl:note', 'pl:remind', 'pl:del'].every((id) => pj.includes(`"${id}"`)));
 
   // 삭제: **일정만** 과 **채널까지** 를 분명히 갈라놓아야 합니다.
@@ -2724,15 +2728,20 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   }
 
   const settle = {
+    guildId: 'settle-symbol-guild',
     title: '숙소', payerId: 'p', total: 120000,
     shares: [{ userId: 'p', amount: 40000, sent: false }, { userId: 'a', amount: 40000, sent: true },
              { userId: 'b', amount: 40000, sent: false }],
     createdAt: Date.now(),
   };
+  mentionSettings.setUserSymbol('settle-symbol-guild', 'p', '<:망고:223456789012345678>');
+  mentionSettings.setUserSymbol('settle-symbol-guild', 'a', '<:악어:123456789012345678>');
   const sj = JSON.stringify(st3.buildSettlement(settle).embeds[0].toJSON());
   ok('결제자는 송금 대상이 아님', sj.includes('(결제자)'));
   ok('보낸 사람만 표시', sj.includes('✅ 보냈어요') && sj.includes('⬜ 송금 전'));
   ok('받을 돈 합계', sj.includes('40,000원 / 80,000원'));
+  ok('정산 결제자·참여자 멘션 앞에 상징 이모지',
+    sj.includes('<:망고:223456789012345678> <@p>') && sj.includes('<:악어:123456789012345678> <@a>'));
   const allSent = { ...settle, shares: settle.shares.map((x) => ({ ...x, sent: true })) };
   ok('전원 보내면 완료', JSON.stringify(st3.buildSettlement(allSent).embeds[0].toJSON()).includes('정산 완료'));
   ok('완료되면 버튼도 사라짐', st3.buildSettlement(allSent).components.length === 0);
@@ -2755,7 +2764,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const settings = await import('./src/settings.js');
   await store.initStreams();
 
-  // ── 서버별 방송자 상징 이모지 ──
+  // ── 서버별 사람 상징 이모지 ──
   const symbolCommand = allCommands.find((c) => c.data.toJSON().name === '상징이모지');
   const symbolSchema = symbolCommand?.data.toJSON();
   ok('/상징이모지는 관리자 전용', Boolean(symbolSchema?.default_member_permissions));
@@ -2796,9 +2805,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   });
   ok('이모지를 비우면 사람의 상징 해제',
     settings.userSymbol('symbol-guild', 'symbol-user') === null && symbolReply.content.includes('해제했습니다'));
-  ok('방송 기능의 멘션은 공통 상징 표시 함수를 거침',
-    ['./src/stream/index.js', './src/stream/panel.js', './src/game/forum.js'].every((p) =>
+  ok('망고가 직접 만드는 사용자 멘션은 공통 상징 표시 함수를 거침',
+    ['./src/stream/index.js', './src/stream/panel.js', './src/game/forum.js',
+      './src/plan/index.js', './src/plan/settle.js', './src/timer/index.js'].every((p) =>
       !fs.readFileSync(p, 'utf8').includes('<@${')));
+  ok('타이머 종료 알림도 상징 멘션 사용',
+    fs.readFileSync('./src/timer/index.js', 'utf8').includes('symbolMention(timer.guildId, timer.userId)'));
 
   // ── 링크 형태: /live/ 를 반드시 받아야 한다 (라이브가 주는 형태다) ──
   const forms = {

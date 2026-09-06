@@ -38,7 +38,7 @@ import {
   titleFromChannelName,
 } from './parse-when.js';
 import { getPlan, setPlan, updatePlan, removePlan, scheduleReminder, cancelReminder } from './store.js';
-import { get as getSetting, set as setSetting } from '../settings.js';
+import { get as getSetting, set as setSetting, symbolMention } from '../settings.js';
 
 /** 할 일 버튼은 한 줄에 5개씩 두 줄까지. 그 이상은 목록으로만 보여줍니다. */
 const TODO_BUTTONS = 10;
@@ -83,7 +83,7 @@ export function directionsUrl(to, from = null) {
 
 // ── 판 ────────────────────────────────────────────────────
 
-export function buildPanel(plan) {
+export function buildPanel(plan, guildId = plan.guildId) {
   const done = plan.todos.filter((t) => t.doneBy).length;
 
   const body = [`🕘 ${formatWhen(plan.at, plan.hasTime)} · <t:${Math.floor(plan.at / 1000)}:R>`];
@@ -114,7 +114,7 @@ export function buildPanel(plan) {
     body.push(
       '',
       `**✅ 할 일  ${done}/${plan.todos.length}**`,
-      ...plan.todos.map((t) => `${t.doneBy ? '✅' : '⬜'} ${t.text}${t.doneBy ? ` <@${t.doneBy}>` : ''}`)
+      ...plan.todos.map((t) => `${t.doneBy ? '✅' : '⬜'} ${t.text}${t.doneBy ? ` ${symbolMention(guildId, t.doneBy)}` : ''}`)
     );
   }
   if (plan.notes.length > 0) {
@@ -295,8 +295,8 @@ export const commands = [
       const plan = getPlan(interaction.channelId);
       // 없으면 등록 창, 있으면 판을 맨 아래로 다시 띄웁니다 (제어판과 같은 규칙 — 3.6-1).
       if (!plan) return interaction.showModal(buildRegisterModal(interaction.channel));
-      await interaction.reply(buildPanel(plan));
-      updatePlan(interaction.channelId, { panelMessageId: (await interaction.fetchReply()).id });
+      await interaction.reply(buildPanel(plan, interaction.guildId));
+      updatePlan(interaction.channelId, { guildId: interaction.guildId, panelMessageId: (await interaction.fetchReply()).id });
     },
   },
   {
@@ -347,7 +347,7 @@ async function refreshPanel(channel, plan) {
   if (!plan.panelMessageId || !channel) return;
   const msg = await channel.messages.fetch(plan.panelMessageId).catch(() => null);
   if (!msg) return;
-  await msg.edit(buildPanel(plan)).catch(() => {});
+  await msg.edit(buildPanel(plan, channel.guildId)).catch(() => {});
 }
 
 /**
@@ -386,7 +386,7 @@ export function makeReminderFire(client) {
     await channel
       .send({
         content: `🔔 **${plan.title}** — ${formatWhen(plan.at, plan.hasTime)}`,
-        embeds: buildPanel(plan).embeds,
+        embeds: buildPanel(plan, channel.guildId).embeds,
       })
       .catch(() => {});
   };
@@ -411,6 +411,7 @@ export async function handlePlanComponent(interaction, client) {
       flags: MessageFlags.Ephemeral,
     });
   }
+  if (!plan.guildId) updatePlan(interaction.channelId, { guildId: interaction.guildId });
 
   if (action === 'todo') {
     const todo = plan.todos[Number(arg)];
@@ -580,6 +581,7 @@ export async function handlePlanModal(interaction, client) {
       panelMessageId: before?.panelMessageId ?? null,
       remindAt: before?.remindAt ?? null,
       createdBy: before?.createdBy ?? interaction.user.id,
+      guildId: interaction.guildId,
     };
     setPlan(interaction.channelId, plan);
     if (plan.remindAt) scheduleReminder(interaction.channelId, makeReminderFire(client));
@@ -629,6 +631,7 @@ export async function handlePlanModal(interaction, client) {
       panelMessageId: null,
       remindAt: null,
       createdBy: interaction.user.id,
+      guildId: interaction.guildId,
     };
     const panel = await channel.send(buildPanel(plan));
     plan.panelMessageId = panel.id;

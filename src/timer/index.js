@@ -17,7 +17,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { config } from '../config.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, symbolMention } from '../settings.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { synthesize } from '../tts/synth.js';
 
@@ -171,7 +171,7 @@ async function fire(id, lateBy = 0) {
     const channel = await discordClient?.channels?.fetch(timer.channelId).catch(() => null);
     // 알람은 알림이 울려야 의미가 있으므로 멘션을 붙입니다. (제어판과 반대)
     await channel
-      ?.send(`⏰ <@${timer.userId}> ${what} 타이머가 끝났습니다.${lateNote}`)
+      ?.send(`⏰ ${symbolMention(timer.guildId, timer.userId)} ${what} 타이머가 끝났습니다.${lateNote}`)
       .catch(() => {});
 
     await speakAlarm(timer);

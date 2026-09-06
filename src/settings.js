@@ -282,7 +282,7 @@ export function clearStreamHome(guildId, userId) {
   return true;
 }
 
-// ── 방송 이름 앞 상징 이모지 (서버·사람마다 따로) ────────────
+// ── 망고가 표시하는 이름 앞 상징 이모지 (서버·사람마다 따로) ──
 
 /** 관리자가 지정한 서버 커스텀 이모지 문자열(`<:이름:ID>` 또는 `<a:이름:ID>`). */
 export function userSymbol(guildId, userId) {
@@ -306,7 +306,7 @@ export function clearUserSymbol(guildId, userId) {
   return true;
 }
 
-/** 방송 화면에서 멘션 앞에 그 서버에서 지정한 상징을 붙입니다. */
+/** 망고가 만드는 사용자 멘션 앞에 그 서버에서 지정한 상징을 붙입니다. */
 export function symbolMention(guildId, userId) {
   const symbol = userSymbol(guildId, userId);
   return `${symbol ? `${symbol} ` : ''}<@${userId}>`;

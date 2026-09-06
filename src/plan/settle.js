@@ -24,6 +24,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from '../config.js';
 import { getPlan } from './store.js';
+import { symbolMention } from '../settings.js';
 
 const FILE = path.join(config.dataDir, 'settlements.json');
 const KEEP_DAYS = 120;
@@ -128,8 +129,8 @@ export function buildSettlement(s) {
 
   const rows = s.shares.map((x) =>
     x.userId === s.payerId
-      ? `<@${x.userId}>  ${won(x.amount)}  _(결제자)_`
-      : `<@${x.userId}>  ${won(x.amount)}  ${x.sent ? '✅ 보냈어요' : '⬜ 송금 전'}`
+      ? `${symbolMention(s.guildId, x.userId)}  ${won(x.amount)}  _(결제자)_`
+      : `${symbolMention(s.guildId, x.userId)}  ${won(x.amount)}  ${x.sent ? '✅ 보냈어요' : '⬜ 송금 전'}`
   );
 
   const embed = new EmbedBuilder()
@@ -137,7 +138,7 @@ export function buildSettlement(s) {
     .setTitle(`💰 ${s.title}`)
     .setDescription(
       [
-        `결제: <@${s.payerId}> · 총 ${won(s.total)} · ${s.shares.length}명`,
+        `결제: ${symbolMention(s.guildId, s.payerId)} · 총 ${won(s.total)} · ${s.shares.length}명`,
         '',
         ...rows,
         '',
@@ -267,6 +268,7 @@ export async function handleSettleModal(interaction) {
   }
 
   const s = {
+    guildId: interaction.guildId,
     title: interaction.fields.getTextInputValue('title').trim().slice(0, 100),
     payerId: interaction.user.id,
     total: amounts.reduce((a, b) => a + b, 0),
@@ -294,6 +296,7 @@ async function handleEditSubmit(interaction) {
       flags: MessageFlags.Ephemeral,
     });
   }
+  s.guildId ??= interaction.guildId;
   if (interaction.user.id !== s.payerId) {
     return interaction.reply({ content: '결제한 사람만 고칠 수 있습니다.', flags: MessageFlags.Ephemeral });
   }
@@ -335,6 +338,7 @@ export async function handleSettleComponent(interaction) {
       flags: MessageFlags.Ephemeral,
     });
   }
+  s.guildId ??= interaction.guildId;
 
   if (interaction.customId === 'st:edit') {
     if (interaction.user.id !== s.payerId) {

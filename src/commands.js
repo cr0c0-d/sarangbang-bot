@@ -20,6 +20,7 @@ import { commands as gameCommands } from './game/index.js';
 import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
+import { commands as symbolCommands } from './symbol-commands.js';
 import { getWithSource, inRole } from './settings.js';
 import { withShareButton } from './share.js';
 
@@ -126,7 +127,7 @@ const basicCommands = [
               '등록하면 방송 채널에 제어판이 뜹니다. 재미있을 때 **✂️ 지금!** 만 누르면 됩니다.',
               '설명은 안 받습니다 — 게임 중이니까요. **방송이 끝난 뒤** 요약판에서 붙입니다.',
               '마킹은 **내 방송에만** 들어갑니다. **👥 다 같이**는 5초 이내 중복을 하나로 합칩니다.',
-              '관리자는 `/상징이모지 사람:<대상> 이모지:<서버 이모지>`로 이름 앞 상징을 정할 수 있습니다.',
+              '관리자는 `/상징이모지 사람:<대상> 이모지:<서버 이모지>`로 방송·정산·일정·타이머의 이름 앞 상징을 정할 수 있습니다.',
               '`/게임 검색:<게임>` — 연결된 **스샷·녹화 포스트 바로가기**를 봅니다.',
               '기존 포럼 포스트 안에서 같은 명령을 한 번 실행하면 그 게임에 연결됩니다.',
               '**⏹️ 방송 종료** 를 누르면 본인의 유튜브 설명란용 타임라인이 나만 보기로 나옵니다.',
@@ -206,12 +207,14 @@ const taggedCommands = [
  * 태그가 없는 `/도움말` `/기능` `/채널설정` `/나가기` 는 **양쪽 봇에 다 있습니다.**
  * 봇마다 따로 켜고 끄고 설정해야 하고, 음성채널도 각자 들어가기 때문입니다.
  * 대신 각자 **자기 것만** 보여줍니다 (activeKeys / activeFeatures).
+ * `/상징이모지`도 태그가 없지만 사람 표시 전체의 설정이라 망고 역할에만 별도로 넣습니다.
  */
 export const allCommands = [
   ...basicCommands,
   ...featureCommands,
   ...channelCommands,
   ...leaveCommands,
+  ...(inRole('stream') ? symbolCommands : []),
   ...taggedCommands.filter((c) => inRole(c.feature)),
 ];
 
