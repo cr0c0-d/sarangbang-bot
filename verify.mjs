@@ -2896,6 +2896,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('경과 "20:00" 은 20분', stream.parseElapsed('20:00') === 1200);
   ok('숫자만 적으면 분', stream.parseElapsed('45') === 2700);
   ok('알아볼 수 없으면 null', stream.parseElapsed('헛소리') === null);
+  ok('타임라인 수정 시간은 시:분:초만 허용',
+    stream.parseTimelineTime('01:20:30') === 4830 && stream.parseTimelineTime('20') === null);
+  ok('타임라인 수정 시간의 분·초 범위를 검사', stream.parseTimelineTime('00:60:00') === null);
 
   // ── 마킹 시각 계산 + 오프셋 부호 ──
   const now = store.nowSec();
@@ -2931,6 +2934,23 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     mk2.forUserId === 'u1' && store.timelineFor(s, u2).length === 0,
     `u2 타임라인 ${store.timelineFor(s, u2).length}개`);
   ok('내 방송에는 들어감', store.timelineFor(s, u1).some((x) => x.mark.id === mk2.id));
+
+  // 공유 마킹도 한 방송의 시간 수정·삭제가 다른 방송으로 번지면 안 된다.
+  const editSession = store.openSession('edit-guild', 'edit-channel', '협동 게임');
+  const editU1 = store.putStream(editSession, { userId: 'edit-u1', startedAt: now - 500 });
+  const editU2 = store.putStream(editSession, { userId: 'edit-u2', startedAt: now - 400 });
+  const editMark = store.addMark(editSession, 'edit-u1', null);
+  editMark.at = now - 100;
+  ok('타임라인 시간을 방송별로 정확히 수정',
+    store.setTimelineMarkSecond(editSession, 'edit-u1', editMark.id, 123) &&
+    store.timelineFor(editSession, editU1)[0].sec === 123 && store.timelineFor(editSession, editU2)[0].sec === 300);
+  store.setTimelineMarkHidden(editSession, 'edit-u1', editMark.id, true);
+  ok('삭제는 해당 방송 타임라인에서만 숨김',
+    store.timelineFor(editSession, editU1).length === 0 && store.timelineFor(editSession, editU2).length === 1 &&
+    store.editableTimelineFor(editSession, editU1)[0].hidden === true);
+  store.setTimelineMarkHidden(editSession, 'edit-u1', editMark.id, false);
+  ok('삭제한 타임라인 마킹 복원', store.timelineFor(editSession, editU1)[0].mark.id === editMark.id);
+  store.closeSession(editSession);
 
   // 다 같이 하던 순간은 **찍은 뒤에** 넓힌다. 그 순간은 이미 잡혀 있으니 여유가 있다.
   store.shareMark(s, mk2.id);
@@ -3050,6 +3070,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('종료 요약판은 드롭다운 대신 클립 추출 버튼만 표시',
     idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clipsopen:')) &&
     !idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clip:')));
+  ok('요약판에 타임라인 수정 버튼', idsOf(summary.at(-1)).some((x) => x.startsWith('tm:tmedit:')));
   ok('요약판이 2000자를 넘지 않음', summary.every((m) => m.content.length <= 2000));
 
   // 마킹이 많아도 나뉘어야 한다. 6명 × 여러 개가 한 장에 안 들어간다.
@@ -3076,6 +3097,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('설명이 없는 칸에는 value 를 넣지 않음 (빈 문자열은 창을 죽인다)', !/"value":""/.test(inputs));
   ok('설명 창에 다음 페이지가 있음', built.next === 5 && built.total > 5);
   ok('더 채울 것이 없으면 null', panel.buildDescModal(s, u1, 9999) === null);
+  const editPicker = panel.buildTimelineEditPicker(s, u1, 0, s.marks[0].id);
+  ok('타임라인 편집에서 시간 수정·삭제 선택',
+    idsOf(editPicker).some((x) => x.startsWith('tm:tmtime:')) && idsOf(editPicker).some((x) => x.startsWith('tm:tmhide:')));
+  const timeModal = panel.buildTimelineTimeModal(s, u1, s.marks[0]);
+  ok('타임라인 시간 수정 창에 현재 시각', JSON.stringify(timeModal.toJSON()).includes('tm:tmtimem:'));
 
   // ── 배선 ──
   const idx = fs.readFileSync('./src/index.js', 'utf8');
@@ -3271,6 +3297,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const posted = await forum.publishStreamRecord(fakeClient, session, stream);
   ok('방송 종료 기록을 연결된 녹화 포스트에 전송', posted.status === 'posted' && sentContents.length > 0);
   ok('녹화방 게시물에 해당 방송자 클립 추출 버튼', JSON.stringify(recordPayloads.at(-1)).includes(`tm:clipsopen:${session.id}:broadcaster`));
+  ok('녹화방 게시물에 해당 방송자 타임라인 수정 버튼', JSON.stringify(recordPayloads.at(-1)).includes(`tm:tmedit:${session.id}:broadcaster`));
   const streamModule = await import('./src/stream/index.js');
   const streamSource = fs.readFileSync('./src/stream/index.js', 'utf8');
   ok('다시보기 연결은 방송자 또는 서버 관리자만 허용', streamSource.includes('PermissionFlagsBits.ManageGuild') &&
@@ -3551,6 +3578,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     '방송 시간 어긋남 창': () => sp.buildOffsetModal(scrStream),
     '방송 설명 채우기 창': () => sp.buildDescModal(scr, scrStream, 0).modal,
     '방송 설명 채우기 창 (설명 없음)': () => sp.buildDescModal(scrEmptySession, scrStream, 0).modal,
+    '방송 타임라인 편집': () => sp.buildTimelineEditPicker(scr, scrStream, 0, scrMark.id),
+    '방송 타임라인 시간 수정 창': () => sp.buildTimelineTimeModal(scr, scrStream, scrMark),
     '방송 요약판': () => sp.buildSummary(scr, scrStream)[0],
     '녹화방 클립 선택': () => sp.buildClipPicker(scr, scrStream),
     '녹화방 클립 선택 (마킹 없음)': () => sp.buildClipPicker({ ...scr, marks: [] }, scrStream),

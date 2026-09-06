@@ -2,7 +2,7 @@ import { MessageFlags, ActionRowBuilder } from 'discord.js';
 import { get as getSetting, symbolMention } from '../settings.js';
 import { postIdFor } from './store.js';
 import { markStreamForumPosted, timelineFor, hhmmss } from '../stream/store.js';
-import { buildClipEntry, buildReplayLinkEntry } from '../stream/panel.js';
+import { buildClipEntry, buildReplayLinkEntry, buildTimelineEditEntry } from '../stream/panel.js';
 
 export function recordContent(session, stream) {
   const game = stream.game || session.game || '게임 이름 없음';
@@ -67,8 +67,10 @@ async function publish(client, session, stream, refreshPreview) {
         content: pages[i], allowedMentions: { parse: [] },
         // 항상 명시해 페이지 증감 때 이전 마지막 페이지의 버튼도 제거합니다.
         components: i === pages.length - 1
-          ? [new ActionRowBuilder().addComponents(stream.url
-            ? buildClipEntry(session, stream) : buildReplayLinkEntry(session, stream))] : [],
+          ? [new ActionRowBuilder().addComponents(
+              buildTimelineEditEntry(session, stream),
+              stream.url ? buildClipEntry(session, stream) : buildReplayLinkEntry(session, stream)
+            )] : [],
       };
       if (ids[i]) {
         const message = await thread.messages.fetch(ids[i]);

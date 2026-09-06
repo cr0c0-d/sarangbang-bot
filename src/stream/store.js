@@ -335,6 +335,33 @@ export function setMarkText(session, markId, text) {
 }
 
 /**
+ * 방송자 한 명에게만 적용되는 타임라인 보정입니다.
+ *
+ * 공유 마킹은 원본 하나를 여러 방송이 함께 보므로 `mark.at` 자체를 고치면 다른 사람의
+ * 타임라인까지 움직입니다. 정확한 영상 시각과 삭제 여부는 방송별로 따로 둡니다.
+ * 삭제도 원본을 없애지 않는 숨김 방식이라 편집 화면에서 다시 복원할 수 있습니다.
+ */
+export function setTimelineMarkSecond(session, userId, markId, sec) {
+  const stream = streamOf(session, userId);
+  const mark = session.marks.find((m) => m.id === markId);
+  if (!stream || !mark || !markBelongsTo(mark, userId) || !Number.isFinite(sec) || sec < 0) return false;
+  stream.timelineEdits ??= {};
+  stream.timelineEdits[markId] = { ...(stream.timelineEdits[markId] ?? {}), sec: Math.floor(sec) };
+  save();
+  return true;
+}
+
+export function setTimelineMarkHidden(session, userId, markId, hidden) {
+  const stream = streamOf(session, userId);
+  const mark = session.marks.find((m) => m.id === markId);
+  if (!stream || !mark || !markBelongsTo(mark, userId)) return false;
+  stream.timelineEdits ??= {};
+  stream.timelineEdits[markId] = { ...(stream.timelineEdits[markId] ?? {}), hidden: Boolean(hidden) };
+  save();
+  return true;
+}
+
+/**
  * 이 마킹이 그 사람 영상에서 몇 초 지점인지.
  *
  * ★ 이 한 줄이 이 기능의 핵심입니다. (docs/게임방송-기획.md 2.2)
@@ -356,6 +383,22 @@ export function markBelongsTo(mark, userId) {
   return !mark.forUserId || mark.forUserId === userId;
 }
 
+/** 숨긴 마킹까지 포함한 편집용 목록. 방송별 수동 시각이 있으면 그 값을 우선합니다. */
+export function editableTimelineFor(session, stream) {
+  return session.marks
+    .filter((mark) => markBelongsTo(mark, stream.userId))
+    .map((mark) => {
+      const edit = stream.timelineEdits?.[mark.id] ?? {};
+      return {
+        mark,
+        sec: Number.isFinite(edit.sec) ? edit.sec : markSecondsFor(stream, mark),
+        hidden: edit.hidden === true,
+      };
+    })
+    .filter((x) => x.sec >= 0)
+    .sort((a, b) => a.sec - b.sec);
+}
+
 /**
  * 그 사람 영상에 실제로 담긴 마킹만, 시간순으로.
  *
@@ -364,11 +407,7 @@ export function markBelongsTo(mark, userId) {
  *   2. 그 사람이 켜기 전의 마킹 (음수). 늦게 켠 사람에게는 그 장면이 없습니다.
  */
 export function timelineFor(session, stream) {
-  return session.marks
-    .filter((mark) => markBelongsTo(mark, stream.userId))
-    .map((mark) => ({ mark, sec: markSecondsFor(stream, mark) }))
-    .filter((x) => x.sec >= 0)
-    .sort((a, b) => a.sec - b.sec);
+  return editableTimelineFor(session, stream).filter((x) => !x.hidden);
 }
 
 /** `01:20:45` 형태로. 한 시간 미만이어도 유튜브 설명란에는 시간까지 적는 편이 안전합니다. */

@@ -25,6 +25,7 @@ import {
   activeSession,
   recentSessions,
   timelineFor,
+  editableTimelineFor,
   clipsOf,
   hhmmss,
   humanDuration,
@@ -338,6 +339,28 @@ export function buildDescModal(session, stream, from = 0) {
   return { modal, marks: page.map((x) => x.mark), total: rows.length, next: start + DESC_PER_PAGE };
 }
 
+/** 마킹 하나의 영상 내 정확한 시각을 고치는 창. */
+export function buildTimelineTimeModal(session, stream, mark) {
+  const row = editableTimelineFor(session, stream).find((x) => x.mark.id === mark.id);
+  if (!row) return null;
+  return new ModalBuilder()
+    .setCustomId(`tm:tmtimem:${session.id}:${stream.userId}:${mark.id}`)
+    .setTitle('타임라인 시간 수정')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel(mark.text ? cut(mark.text, 45) : '설명 없는 마킹')
+        .setDescription('영상에서 보이는 정확한 시:분:초를 적어주세요.')
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('time')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('01:20:30')
+            .setValue(hhmmss(row.sec))
+        )
+    );
+}
+
 /**
  * 클립 구간을 받는 창. 마킹을 중심으로 기본값을 채워둡니다.
  *
@@ -402,6 +425,7 @@ export function buildClipModal(session, stream, mark) {
  */
 export function buildSummary(session, stream, clipPage = 0, expanded = false) {
   const rows = timelineFor(session, stream);
+  const editableRows = editableTimelineFor(session, stream);
   const header =
     `📝 ${symbolMention(session.guildId, stream.userId)} 의 타임라인` +
     (stream.game || session.game ? ` · ${stream.game || session.game}` : '') +
@@ -409,8 +433,14 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
     (stream.url ? `<${stream.url}>` : '⚠️ 다시보기 링크 연결 대기');
 
   if (rows.length === 0) {
-    return [{ content: `${header}\n\n이 방송 시간 안에 든 마킹이 없습니다.`,
-      ...(stream.url ? {} : { components: [new ActionRowBuilder().addComponents(buildReplayLinkEntry(session, stream))] }) }];
+    const buttons = [];
+    if (editableRows.length) buttons.push(buildTimelineEditEntry(session, stream));
+    if (!stream.url) buttons.push(buildReplayLinkEntry(session, stream));
+    const emptyText = editableRows.length
+      ? '표시 중인 마킹이 없습니다. 삭제한 마킹은 타임라인 수정에서 복원할 수 있습니다.'
+      : '이 방송 시간 안에 든 마킹이 없습니다.';
+    return [{ content: `${header}\n\n${emptyText}`,
+      ...(buttons.length ? { components: [new ActionRowBuilder().addComponents(...buttons)] } : {}) }];
   }
 
   const lines = rows.map(({ mark, sec }) => `${hhmmss(sec)} ${mark.text || '(설명 없음)'}`);
@@ -439,6 +469,7 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(`tm:desc:${session.id}:${stream.userId}:0`)
           .setLabel('설명 채우기').setStyle(ButtonStyle.Primary),
+        buildTimelineEditEntry(session, stream),
         stream.url ? buildClipEntry(session, stream) : buildReplayLinkEntry(session, stream)
       ),
     ] };
@@ -458,6 +489,60 @@ export function buildClipEntry(session, stream) {
 export function buildReplayLinkEntry(session, stream) {
   return new ButtonBuilder().setCustomId(`tm:replay:${session.id}:${stream.userId}`)
     .setLabel('다시보기 연결').setEmoji('🔗').setStyle(ButtonStyle.Secondary);
+}
+
+export function buildTimelineEditEntry(session, stream) {
+  return new ButtonBuilder().setCustomId(`tm:tmedit:${session.id}:${stream.userId}:0`)
+    .setLabel('타임라인 수정').setEmoji('🛠️').setStyle(ButtonStyle.Secondary);
+}
+
+/** 시간 수정·삭제·복원을 위한 나만 보기 선택 화면. */
+export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkId = null, notice = '') {
+  const rows = editableTimelineFor(session, stream);
+  const pages = Math.max(1, Math.ceil(rows.length / SELECT_LIMIT));
+  const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
+  const slice = rows.slice(current * SELECT_LIMIT, current * SELECT_LIMIT + SELECT_LIMIT);
+  if (!rows.length) return { content: '수정할 타임라인 마킹이 없습니다.', components: [], allowedMentions: { parse: [] } };
+
+  const select = new StringSelectMenuBuilder()
+    .setCustomId(`tm:tmeditpick:${session.id}:${stream.userId}:${current}`)
+    .setPlaceholder(pages > 1 ? `수정할 마킹 고르기 (${current + 1}/${pages}쪽)` : '수정할 마킹 고르기')
+    .addOptions(slice.map(({ mark, sec, hidden }) => ({
+      label: cut(`${hidden ? '삭제됨 · ' : ''}${hhmmss(sec)}`, 100),
+      description: mark.text ? cut(mark.text, 90) : '설명 없음',
+      value: mark.id,
+    })));
+  const components = [new ActionRowBuilder().addComponents(select)];
+  const buttons = [];
+  const selected = rows.find((x) => x.mark.id === selectedMarkId);
+  if (selected) {
+    buttons.push(
+      new ButtonBuilder().setCustomId(`tm:tmtime:${session.id}:${stream.userId}:${selected.mark.id}`)
+        .setLabel('시간 수정').setEmoji('⏱️').setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId(`tm:${selected.hidden ? 'tmrestore' : 'tmhide'}:${session.id}:${stream.userId}:${selected.mark.id}:${current}`)
+        .setLabel(selected.hidden ? '타임라인에 복원' : '이 타임라인에서 삭제')
+        .setEmoji(selected.hidden ? '↩️' : '🗑️')
+        .setStyle(selected.hidden ? ButtonStyle.Success : ButtonStyle.Danger)
+    );
+  }
+  if (pages > 1) {
+    buttons.push(
+      new ButtonBuilder().setCustomId(`tm:tmeditpage:${session.id}:${stream.userId}:${current - 1}`)
+        .setLabel('이전 쪽').setStyle(ButtonStyle.Secondary).setDisabled(current === 0),
+      new ButtonBuilder().setCustomId(`tm:tmeditpage:${session.id}:${stream.userId}:${current + 1}`)
+        .setLabel('다음 쪽').setStyle(ButtonStyle.Secondary).setDisabled(current >= pages - 1)
+    );
+  }
+  if (buttons.length) components.push(new ActionRowBuilder().addComponents(...buttons));
+  const selectedLine = selected
+    ? `\n선택: **${hhmmss(selected.sec)}** · ${selected.mark.text || '(설명 없음)'}${selected.hidden ? ' · 삭제됨' : ''}`
+    : '';
+  return {
+    content: `${notice ? `${notice}\n` : ''}🛠️ 시간을 고치거나 잘못 찍은 마킹을 삭제할 수 있습니다. 삭제한 마킹은 여기서 다시 복원할 수 있습니다.${selectedLine}`,
+    components,
+    allowedMentions: { parse: [] },
+  };
 }
 
 export function buildReplayLinkModal(session, stream) {
@@ -566,6 +651,7 @@ function summaryControls(session, stream, rows, clipPage, pageAction = 'cpage') 
       .setLabel('설명 채우기')
       .setEmoji('✏️')
       .setStyle(ButtonStyle.Primary),
+    buildTimelineEditEntry(session, stream),
   ];
   if (pages > 1) {
     buttons.push(

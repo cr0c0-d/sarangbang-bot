@@ -43,6 +43,8 @@ import {
   shareMark,
   markSecondsFor,
   setMarkText,
+  setTimelineMarkSecond,
+  setTimelineMarkHidden,
   addClip,
   clipsOf,
   timelineFor,
@@ -58,6 +60,8 @@ import {
   buildClipPicker,
   buildOffsetModal,
   buildDescModal,
+  buildTimelineEditPicker,
+  buildTimelineTimeModal,
   buildClipModal,
   buildSessionPicker,
   buildReplayLinkModal,
@@ -541,6 +545,12 @@ export async function handleStreamComponent(interaction, client) {
   if (id === 'tm:panel:end') return endSession(interaction, client);
   if (id.startsWith('tm:panel:reopen:')) return reopen(interaction, client, id.split(':')[3]);
   if (id.startsWith('tm:desc:')) return openDescModal(interaction, id);
+  if (id.startsWith('tm:tmedit:')) return openTimelineEditPicker(interaction, id);
+  if (id.startsWith('tm:tmeditpick:')) return selectTimelineEdit(interaction, id);
+  if (id.startsWith('tm:tmeditpage:')) return openTimelineEditPicker(interaction, id, true);
+  if (id.startsWith('tm:tmtime:')) return openTimelineTimeModal(interaction, id);
+  if (id.startsWith('tm:tmhide:')) return toggleTimelineMark(interaction, client, id, true);
+  if (id.startsWith('tm:tmrestore:')) return toggleTimelineMark(interaction, client, id, false);
   if (id.startsWith('tm:clipsopen:')) return openClipPicker(interaction, id);
   if (id.startsWith('tm:pickpage:')) return openClipPicker(interaction, id, true);
   if (id.startsWith('tm:clip:')) return openClipModal(interaction, id);
@@ -774,6 +784,58 @@ function openDescModal(interaction, customId) {
   return interaction.showModal(built.modal);
 }
 
+function canEditTimeline(interaction, userId) {
+  return interaction.user.id === userId || interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
+}
+
+function timelineEditTarget(interaction, customId) {
+  const parts = customId.split(':');
+  const session = sessionById(parts[2]);
+  const userId = parts[3];
+  const stream = session?.guildId === interaction.guildId ? streamOf(session, userId) : null;
+  return { parts, session, stream, userId };
+}
+
+/** 요약판에서 방송별 타임라인 편집 목록을 나만 보기로 엽니다. */
+function openTimelineEditPicker(interaction, customId, turning = false) {
+  const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  const payload = buildTimelineEditPicker(session, stream, Number(parts[4]) || 0);
+  return turning ? interaction.update(payload) : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+}
+
+function selectTimelineEdit(interaction, customId) {
+  const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  return interaction.update(buildTimelineEditPicker(session, stream, Number(parts[4]) || 0, interaction.values?.[0]));
+}
+
+function openTimelineTimeModal(interaction, customId) {
+  const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  const mark = session.marks.find((item) => item.id === parts[4]);
+  const modal = mark && buildTimelineTimeModal(session, stream, mark);
+  return modal ? interaction.showModal(modal) : interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
+}
+
+async function toggleTimelineMark(interaction, client, customId, hidden) {
+  const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  const changed = setTimelineMarkHidden(session, userId, parts[4], hidden);
+  if (!changed) return interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
+  await interaction.update(buildTimelineEditPicker(
+    session, stream, Number(parts[5]) || 0, parts[4], hidden ? '🗑️ 이 방송의 타임라인에서 삭제했습니다.' : '↩️ 이 방송의 타임라인에 복원했습니다.'
+  ));
+  const result = await updateSummary(client, session, stream, { refreshPreview: true }).catch(() => null);
+  if (result && !['posted', 'updated'].includes(result.status)) {
+    await interaction.followUp(eph('⚠️ 수정은 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.'));
+  }
+}
+
 /** 요약판의 드롭다운에서 마킹을 고르면 구간 창을 띄웁니다. */
 function openClipPicker(interaction, customId, turning = false) {
   const [, , sessionId, userId, pageRaw] = customId.split(':');
@@ -818,9 +880,36 @@ export async function handleStreamModal(interaction, client) {
   const id = interaction.customId;
   if (id === 'tm:offsetm') return submitOffset(interaction, client);
   if (id.startsWith('tm:descm:')) return submitDesc(interaction, client);
+  if (id.startsWith('tm:tmtimem:')) return submitTimelineTime(interaction, client);
   if (id.startsWith('tm:clipm:')) return submitClip(interaction, client);
   if (id.startsWith('tm:replaym:')) return submitReplayLink(interaction, client);
   return interaction.reply(eph('⚠️ 알 수 없는 입력 창입니다.')).catch(() => {});
+}
+
+/** 타임라인의 정확한 영상 시각은 혼동을 막기 위해 시:분:초만 받습니다. */
+export function parseTimelineTime(text) {
+  const match = String(text ?? '').trim().match(/^(\d{1,3}):(\d{2}):(\d{2})$/);
+  if (!match) return null;
+  const [, h, m, s] = match.map(Number);
+  if (m >= 60 || s >= 60) return null;
+  return h * 3600 + m * 60 + s;
+}
+
+async function submitTimelineTime(interaction, client) {
+  const { parts, session, stream, userId } = timelineEditTarget(interaction, interaction.customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  const raw = interaction.fields.getTextInputValue('time');
+  const sec = parseTimelineTime(raw);
+  if (sec === null) throw userError(`"${raw}" 를 알아볼 수 없습니다. \`01:20:30\`처럼 **시:분:초**로 적어주세요.`);
+  if (!setTimelineMarkSecond(session, userId, parts[4], sec)) return interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
+
+  const message = `⏱️ 이 방송의 타임라인 시간을 **${hhmmss(sec)}**로 고쳤습니다.`;
+  await interaction.reply(eph(message));
+  const result = await updateSummary(client, session, stream, { refreshPreview: true }).catch(() => null);
+  if (result && !['posted', 'updated'].includes(result.status)) {
+    await interaction.editReply(`${message}\n⚠️ 수정은 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.`);
+  }
 }
 
 /** 구간을 받아 실제로 잘라냅니다. 오래 걸리므로 진행 상황을 먼저 보여줍니다. */
