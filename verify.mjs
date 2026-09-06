@@ -123,7 +123,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 24개 로드 (우클릭 1개 포함)', allCommands.length === 24, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 25개 로드 (우클릭 1개 포함)', allCommands.length === 25, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -2752,7 +2752,53 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const store = await import('./src/stream/store.js');
   const panel = await import('./src/stream/panel.js');
   const stream = await import('./src/stream/index.js');
+  const settings = await import('./src/settings.js');
   await store.initStreams();
+
+  // ── 서버별 방송자 상징 이모지 ──
+  const symbolCommand = allCommands.find((c) => c.data.toJSON().name === '상징이모지');
+  const symbolSchema = symbolCommand?.data.toJSON();
+  ok('/상징이모지는 관리자 전용', Boolean(symbolSchema?.default_member_permissions));
+  ok('/상징이모지는 사람 필수·이모지 선택',
+    symbolSchema?.options?.find((o) => o.name === '사람')?.required === true &&
+    symbolSchema?.options?.find((o) => o.name === '이모지')?.required !== true);
+  const localEmoji = { id: '123456789012345678', name: '악어', toString: () => '<:악어:123456789012345678>' };
+  const emojiCache = new Map([[localEmoji.id, localEmoji]]);
+  let symbolReply;
+  await symbolCommand.execute({
+    guildId: 'symbol-guild', guild: { emojis: { cache: emojiCache } },
+    options: { getUser: () => ({ id: 'symbol-user' }), getString: () => localEmoji.id },
+    reply: async (payload) => { symbolReply = payload; },
+  });
+  ok('관리자가 고른 서버 이모지를 사람별로 저장',
+    settings.userSymbol('symbol-guild', 'symbol-user') === localEmoji.toString() && symbolReply.content.includes(localEmoji.toString()));
+  ok('상징은 같은 서버의 이름 멘션 앞에 표시',
+    settings.symbolMention('symbol-guild', 'symbol-user') === `${localEmoji} <@symbol-user>` &&
+    settings.symbolMention('other-guild', 'symbol-user') === '<@symbol-user>');
+  let symbolChoices = [];
+  await symbolCommand.autocomplete({
+    guild: { emojis: { cache: emojiCache } }, options: { getFocused: () => '악' },
+    respond: async (choices) => { symbolChoices = choices; },
+  });
+  ok('상징 이모지 자동완성은 현재 서버 이모지만 표시',
+    symbolChoices.length === 1 && symbolChoices[0].value === localEmoji.id);
+  await symbolCommand.execute({
+    guildId: 'symbol-guild', guild: { emojis: { cache: emojiCache } },
+    options: { getUser: () => ({ id: 'other-symbol-user' }), getString: () => '<:남의것:999999999999999999>' },
+    reply: async (payload) => { symbolReply = payload; },
+  });
+  ok('다른 서버 이모지는 등록 거부',
+    settings.userSymbol('symbol-guild', 'other-symbol-user') === null && symbolReply.content.includes('이 서버'));
+  await symbolCommand.execute({
+    guildId: 'symbol-guild', guild: { emojis: { cache: emojiCache } },
+    options: { getUser: () => ({ id: 'symbol-user' }), getString: () => null },
+    reply: async (payload) => { symbolReply = payload; },
+  });
+  ok('이모지를 비우면 사람의 상징 해제',
+    settings.userSymbol('symbol-guild', 'symbol-user') === null && symbolReply.content.includes('해제했습니다'));
+  ok('방송 기능의 멘션은 공통 상징 표시 함수를 거침',
+    ['./src/stream/index.js', './src/stream/panel.js', './src/game/forum.js'].every((p) =>
+      !fs.readFileSync(p, 'utf8').includes('<@${')));
 
   // ── 링크 형태: /live/ 를 반드시 받아야 한다 (라이브가 주는 형태다) ──
   const forms = {
@@ -2956,6 +3002,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // ── 제어판 ──
   const idsOf = (payload) =>
     payload.components.flatMap((r) => JSON.parse(JSON.stringify(r.toJSON())).components.map((c) => c.custom_id));
+  settings.setUserSymbol('gv', 'u1', localEmoji.toString());
   store.reopenSession(s);
   const live = panel.buildStreamPanel('gv');
   ok('제어판 버튼 (마킹·취소·오프셋·종료·나도등록)',
@@ -2965,6 +3012,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('기록 중에도 [지난 게임으로 등록] 이 있음', idsOf(live).includes('tm:panel:join'));
   ok('제어판이 경과 시간을 보여줌 (어긋남을 잡는 1차 방어선)',
     JSON.stringify(live.embeds[0].toJSON()).includes('진행 중'));
+  ok('제어판 이름 멘션 앞에 상징 이모지',
+    JSON.stringify(live.embeds[0].toJSON()).includes(`${localEmoji} <@u1>`));
   ok('시작 시각을 추정했으면 표시',
     JSON.stringify(live.embeds[0].toJSON()).includes('시작 시각 추정'));
   store.closeSession(s);
@@ -2980,6 +3029,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const joined = summary.map((m) => m.content).join('\n');
   ok('요약판이 코드블록 (유튜브 설명란에 그대로 복사)', joined.includes('```'));
   ok('요약판에 설명이 들어감', joined.includes('차에 치임'));
+  ok('개인 요약 이름 멘션 앞에 상징 이모지', joined.includes(`${localEmoji} <@u1>`));
   ok('설명 없는 마킹도 줄은 남김', joined.includes('(설명 없음)'));
   // 요약판이 tm:panel: 을 쓰면 **훑기가 요약판을 제어판으로 오인해 지운다.**
   ok('요약판 조작부에 tm:panel: 이 없음 (훑기가 지우면 안 됨)',
@@ -3552,7 +3602,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = namesFor('music');
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 28개', union.length === 28, `${union.length}개`);
+  ok('둘을 합쳐 29개', union.length === 29, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

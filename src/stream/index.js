@@ -17,7 +17,14 @@ import {
   PermissionFlagsBits,
 } from 'discord.js';
 import { userError } from '../user-error.js';
-import { get as getSetting, streamHome, setStreamHome } from '../settings.js';
+import {
+  get as getSetting,
+  streamHome,
+  setStreamHome,
+  setUserSymbol,
+  clearUserSymbol,
+  symbolMention,
+} from '../settings.js';
 import { liveInfo } from '../music/ytdlp.js';
 import {
   activeSession,
@@ -156,7 +163,7 @@ function buildStatus(guildId, userId) {
     );
     for (const s of session.streams) {
       lines.push(
-        `· <@${s.userId}> — **${s.game || '게임 미지정'}** · 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중` +
+        `· ${symbolMention(guildId, s.userId)} — **${s.game || '게임 미지정'}** · 시작 <t:${s.startedAt}:t> · ${humanDuration(now - s.startedAt - (s.offsetSec ?? 0))} 진행 중` +
         (s.url ? '' : ' · ⚠️ 링크 연결 전')
       );
     }
@@ -245,6 +252,53 @@ export const commands = [
       }
 
       return registerStream(interaction, { link, game });
+    },
+  },
+  {
+    data: new SlashCommandBuilder()
+      .setName('상징이모지')
+      .setDescription('방송 화면에서 사람 이름 앞에 붙일 서버 이모지를 정합니다')
+      .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
+      .addUserOption((o) => o.setName('사람').setDescription('상징 이모지를 지정할 사람').setRequired(true))
+      .addStringOption((o) => o.setName('이모지').setDescription('서버 이모지 검색 (비우면 해제)').setAutocomplete(true)),
+    async autocomplete(interaction) {
+      const query = interaction.options.getFocused().trim().toLowerCase();
+      const choices = [...(interaction.guild?.emojis?.cache?.values?.() ?? [])]
+        .filter((emoji) => !query || emoji.name.toLowerCase().includes(query))
+        .slice(0, 25)
+        .map((emoji) => ({ name: `:${emoji.name}:`, value: emoji.id }));
+      await interaction.respond(choices);
+    },
+    async execute(interaction) {
+      const user = interaction.options.getUser('사람', true);
+      const input = interaction.options.getString('이모지');
+      if (!input) {
+        const removed = clearUserSymbol(interaction.guildId, user.id);
+        const channelId = getSetting(interaction.guildId, 'streamChannelId');
+        if (removed && channelId) scheduleStreamPanelRefresh(interaction.client, interaction.guildId, channelId);
+        return interaction.reply({
+          content: removed ? `✅ ${symbolMention(interaction.guildId, user.id)}의 상징 이모지를 해제했습니다.` : '이미 지정된 상징 이모지가 없습니다.',
+          flags: MessageFlags.Ephemeral,
+          allowedMentions: { parse: [] },
+        });
+      }
+
+      const id = input.match(/<a?:[^:>]+:(\d+)>/)?.[1] ?? (/^\d+$/.test(input) ? input : null);
+      const emoji = id ? interaction.guild?.emojis?.cache?.get(id) : null;
+      if (!emoji) {
+        return interaction.reply({
+          content: '이 서버에 있는 이모지를 목록에서 골라주세요. 다른 서버 이모지와 일반 이모지는 등록할 수 없습니다.',
+          flags: MessageFlags.Ephemeral,
+        });
+      }
+      setUserSymbol(interaction.guildId, user.id, emoji.toString());
+      const channelId = getSetting(interaction.guildId, 'streamChannelId');
+      if (channelId) scheduleStreamPanelRefresh(interaction.client, interaction.guildId, channelId);
+      return interaction.reply({
+        content: `✅ ${symbolMention(interaction.guildId, user.id)}의 상징 이모지를 등록했습니다.`,
+        flags: MessageFlags.Ephemeral,
+        allowedMentions: { parse: [] },
+      });
     },
   },
 ];
@@ -654,7 +708,7 @@ async function submitReplayLink(interaction, client) {
   }
   linkStreamReplay(session, userId, { url, videoId, startedAt: info.startedAt });
   const result = await publishStreamRecord(client, session, stream, { refreshPreview: true });
-  const lines = [`🔗 <@${userId}>의 다시보기를 연결했습니다.`, info.startedAt
+  const lines = [`🔗 ${symbolMention(session.guildId, userId)}의 다시보기를 연결했습니다.`, info.startedAt
     ? '유튜브 방송 시작 시각으로 타임라인을 다시 계산했습니다.'
     : '⚠️ 유튜브 시작 시각을 읽지 못해 기존 기록 시작점을 유지했습니다.'];
   if (info.liveStatus === 'post_live') lines.push('유튜브가 다시보기를 처리 중입니다. 처리가 끝나면 클립을 추출할 수 있습니다.');

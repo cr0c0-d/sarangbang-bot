@@ -282,6 +282,36 @@ export function clearStreamHome(guildId, userId) {
   return true;
 }
 
+// ── 방송 이름 앞 상징 이모지 (서버·사람마다 따로) ────────────
+
+/** 관리자가 지정한 서버 커스텀 이모지 문자열(`<:이름:ID>` 또는 `<a:이름:ID>`). */
+export function userSymbol(guildId, userId) {
+  return store[guildId]?.userSymbols?.[userId] ?? null;
+}
+
+export function setUserSymbol(guildId, userId, emoji) {
+  store[guildId] ??= {};
+  store[guildId].userSymbols ??= {};
+  store[guildId].userSymbols[userId] = emoji;
+  save();
+  return emoji;
+}
+
+export function clearUserSymbol(guildId, userId) {
+  if (!store[guildId]?.userSymbols?.[userId]) return false;
+  delete store[guildId].userSymbols[userId];
+  if (Object.keys(store[guildId].userSymbols).length === 0) delete store[guildId].userSymbols;
+  if (Object.keys(store[guildId]).length === 0) delete store[guildId];
+  save();
+  return true;
+}
+
+/** 방송 화면에서 멘션 앞에 그 서버에서 지정한 상징을 붙입니다. */
+export function symbolMention(guildId, userId) {
+  const symbol = userSymbol(guildId, userId);
+  return `${symbol ? `${symbol} ` : ''}<@${userId}>`;
+}
+
 // ── 읽어주기 축약어 (서버마다 따로) ───────────────────────────
 //
 // `tts/index.js` 에 기본 축약어 표가 있습니다(ㅇㅇ → 응응 …). 그런데 친구들끼리

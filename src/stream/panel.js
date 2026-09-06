@@ -19,7 +19,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { rememberPanel, forgetPanel, rememberedId, rememberedPanels, STREAM } from '../panel-registry.js';
-import { get as getSetting, featureEnabled } from '../settings.js';
+import { get as getSetting, featureEnabled, symbolMention } from '../settings.js';
 import { config } from '../config.js';
 import {
   activeSession,
@@ -58,9 +58,9 @@ export function isStreamHome(guildId, channelId) {
  *   아무도 모릅니다. 등록한 사람은 자기가 언제 켰는지 아니까 이 줄을 읽는 순간 잡힙니다.
  *   (docs/게임방송-기획.md 2.2a)
  */
-function streamLine(s, now) {
+function streamLine(guildId, s, now) {
   const elapsed = humanDuration(now - s.startedAt - (s.offsetSec ?? 0));
-  const bits = [`<@${s.userId}>`, s.game || '게임 미지정', s.url ? `[라이브](${s.url})` : '⚠️ 링크 연결 전', `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
+  const bits = [symbolMention(guildId, s.userId), s.game || '게임 미지정', s.url ? `[라이브](${s.url})` : '⚠️ 링크 연결 전', `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
   if (s.offsetSec) bits.push(`오프셋 ${s.offsetSec > 0 ? '+' : ''}${s.offsetSec}초`);
   // 시작 시각을 유튜브에서 못 읽었으면 **반드시 말해줘야** 합니다. 그때는 전부 어긋납니다.
   if (s.startSource !== 'release_timestamp') bits.push('⚠️ 시작 시각 추정');
@@ -81,7 +81,7 @@ export function buildStreamPanel(guildId) {
     lines.push('');
     lines.push(
       session.streams.length > 0
-        ? session.streams.map((s) => streamLine(s, now)).join('\n')
+        ? session.streams.map((s) => streamLine(guildId, s, now)).join('\n')
         : '아직 등록한 사람이 없습니다. `/방송 게임명:<게임>` 으로 기록부터 시작하세요.'
     );
 
@@ -100,7 +100,7 @@ export function buildStreamPanel(guildId) {
               const at = owner
                 ? hhmmss(Math.max(0, m.at - owner.startedAt - (owner.offsetSec ?? 0)))
                 : `<t:${m.at}:t>`;
-              return m.forUserId ? `${at} <@${m.forUserId}>` : `${at} 👥모두`;
+              return m.forUserId ? `${at} ${symbolMention(guildId, m.forUserId)}` : `${at} 👥모두`;
             })
             .join(' · ')
       );
@@ -403,7 +403,7 @@ export function buildClipModal(session, stream, mark) {
 export function buildSummary(session, stream, clipPage = 0, expanded = false) {
   const rows = timelineFor(session, stream);
   const header =
-    `📝 <@${stream.userId}> 의 타임라인` +
+    `📝 ${symbolMention(session.guildId, stream.userId)} 의 타임라인` +
     (stream.game || session.game ? ` · ${stream.game || session.game}` : '') +
     ` · 마킹 ${rows.length}개\n` +
     (stream.url ? `<${stream.url}>` : '⚠️ 다시보기 링크 연결 대기');
@@ -534,7 +534,7 @@ async function reconcileVoicePanels(client, guildId) {
 export function buildClipPicker(session, stream, page = 0) {
   const rows = timelineFor(session, stream);
   return {
-    content: `🎥 <@${stream.userId}>의 클립 추출 · 유튜브 다시보기 처리 완료 후 이용해주세요.` +
+    content: `🎥 ${symbolMention(session.guildId, stream.userId)}의 클립 추출 · 유튜브 다시보기 처리 완료 후 이용해주세요.` +
       (rows.length ? '' : '\n이 방송에 남긴 마킹이 없습니다.'),
     components: rows.length ? summaryControls(session, stream, rows, page, 'pickpage') : [],
     allowedMentions: { parse: [] },

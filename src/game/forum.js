@@ -1,5 +1,5 @@
 import { MessageFlags, ActionRowBuilder } from 'discord.js';
-import { get as getSetting } from '../settings.js';
+import { get as getSetting, symbolMention } from '../settings.js';
 import { postIdFor } from './store.js';
 import { markStreamForumPosted, timelineFor, hhmmss } from '../stream/store.js';
 import { buildClipEntry, buildReplayLinkEntry } from '../stream/panel.js';
@@ -7,7 +7,7 @@ import { buildClipEntry, buildReplayLinkEntry } from '../stream/panel.js';
 export function recordContent(session, stream) {
   const game = stream.game || session.game || '게임 이름 없음';
   const header =
-    `📺 **${game}** · <@${stream.userId}>\n` +
+    `📺 **${game}** · ${symbolMention(session.guildId, stream.userId)}\n` +
     `방송 시작일 <t:${stream.startedAt}:d>\n` +
     (stream.url
       ? `${stream.url}`
