@@ -1,10 +1,10 @@
-// /채널설정 — 각 기능이 쓸 채널을 지정합니다.
+// /관리자 채널설정 — 각 기능이 쓸 채널을 지정합니다.
 //
-// 예전에는 /채널설정 /채널확인 /채널해제 세 개였습니다.
+// 예전에는 /채널설정 /채널확인 /채널해제 세 개였고, 지금은 /관리자 아래에 있습니다.
 // 명령어가 너무 많아져서 **하나로 합쳤습니다**:
 //   인자 없이 실행 → 현재 상태 + 해제 버튼이 있는 패널
 //   인자를 주면    → 그 자리에서 지정
-// /기능 과 같은 방식이라 조작이 일관됩니다.
+// /관리자 기능과 같은 방식이라 조작이 일관됩니다.
 //
 // 이 명령어는 **어떤 기능이 꺼져 있어도 항상 동작해야 합니다.**
 // (commands.js 에서 feature 태그를 붙이지 않습니다)
@@ -25,7 +25,7 @@ import { peekGuildAudio } from './audio/guild-audio.js';
 
 // 이 봇이 맡은 항목만 물어봅니다.
 // 음악만 맡은 봇에게 읽어주기 채널을 지정하게 해봐야, 그 봇은 읽어주지 않습니다.
-const CHOICES = Object.entries(activeKeys()).map(([key, spec]) => ({ name: spec.label, value: key }));
+export const channelChoices = Object.entries(activeKeys()).map(([key, spec]) => ({ name: spec.label, value: key }));
 
 const TEXT_TYPES = [ChannelType.GuildText, ChannelType.GuildAnnouncement];
 const VOICE_TYPES = [ChannelType.GuildVoice, ChannelType.GuildStageVoice];
@@ -129,7 +129,7 @@ function panel(guildId) {
     .setTitle('⚙️ 채널 설정')
     .setDescription(lines.join('\n\n'))
     .setFooter({
-      text: '바꾸려면 /채널설정 종류:... 채널:... · 명령어로 지정한 값은 .env 보다 우선합니다',
+      text: '바꾸려면 /관리자 채널설정 종류:... 채널:... · 명령어로 지정한 값은 .env 보다 우선합니다',
     })
     .setColor(0x5865f2);
 
@@ -162,7 +162,7 @@ export const commands = [
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .setDescription('각 기능이 사용할 채널을 보고 지정합니다 (비우면 현재 상태만 봅니다)')
       .addStringOption((o) =>
-        o.setName('종류').setDescription('무엇을 지정할지').setRequired(false).addChoices(...CHOICES)
+        o.setName('종류').setDescription('무엇을 지정할지').setRequired(false).addChoices(...channelChoices)
       )
       .addChannelOption((o) =>
         o

@@ -2,13 +2,12 @@
 // 새 명령어를 만들면 여기 배열에만 추가하면 됩니다.
 //
 // 기능이 꺼져 있어도 명령어는 항상 전부 등록합니다.
-// 채널을 /채널설정 으로 언제든 바꿀 수 있게 되면서, 등록 시점에 켜짐/꺼짐을
+// 채널을 /관리자 채널설정으로 언제든 바꿀 수 있게 되면서, 등록 시점에 켜짐/꺼짐을
 // 판단하면 "설정하려는데 설정할 명령어가 없는" 상황이 생기기 때문입니다.
 import { SlashCommandBuilder, EmbedBuilder, MessageFlags } from 'discord.js';
 import { commands as musicCommands } from './music/commands.js';
 import { commands as ttsCommands } from './tts/index.js';
 import { commands as imageCommands } from './images/commands.js';
-import { commands as channelCommands } from './channel-commands.js';
 import { commands as timerCommands } from './timer/index.js';
 import { commands as pollCommands } from './poll/index.js';
 import { commands as movieCommands } from './movie/index.js';
@@ -17,10 +16,9 @@ import { commands as settleCommands } from './plan/settle.js';
 import { commands as aiCommands } from './ai/index.js';
 import { commands as streamCommands } from './stream/index.js';
 import { commands as gameCommands } from './game/index.js';
-import { commands as featureCommands } from './feature-commands.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
-import { commands as symbolCommands } from './symbol-commands.js';
+import { commands as adminCommands } from './admin-commands.js';
 import { getWithSource, inRole } from './settings.js';
 import { withShareButton } from './share.js';
 
@@ -54,7 +52,7 @@ const basicCommands = [
             name: '🗣️ 읽어주기 (TTS)',
             value:
               ttsText.source === 'none'
-                ? '읽어줄 채팅방이 없어 꺼져 있습니다.\n`/채널설정` 에서 "읽어주기 채팅방"을 지정하세요.'
+                ? '읽어줄 채팅방이 없어 꺼져 있습니다.\n`/관리자 채널설정` 에서 "읽어주기 채팅방"을 지정하세요.'
                 : [
                     `<#${ttsText.value}> 에 글을 쓰면 음성채널에서 읽어줍니다.`,
                     '맨 앞에 `//` 를 붙이면 읽지 않습니다.',
@@ -127,7 +125,7 @@ const basicCommands = [
               '등록하면 방송 채널에 제어판이 뜹니다. 재미있을 때 **✂️ 지금!** 만 누르면 됩니다.',
               '설명은 안 받습니다 — 게임 중이니까요. **방송이 끝난 뒤** 요약판에서 붙입니다.',
               '마킹은 **내 방송에만** 들어갑니다. **👥 다 같이**는 5초 이내 중복을 하나로 합칩니다.',
-              '관리자는 `/상징이모지 사람:<대상> 이모지:<서버 이모지>`로 방송·정산·일정·타이머의 이름 앞 상징을 정할 수 있습니다. 이름으로 검색하거나 `목록페이지`로 25개씩 넘겨보세요.',
+              '관리자는 `/관리자 상징이모지 사람:<대상> 이모지:<서버 이모지>`로 방송·정산·일정·타이머의 이름 앞 상징을 정할 수 있습니다. 이름으로 검색하거나 `목록페이지`로 25개씩 넘겨보세요.',
               '`/게임 검색:<게임>` — 연결된 **스샷·녹화 포스트 바로가기**를 봅니다.',
               '기존 포럼 포스트 안에서 같은 명령을 한 번 실행하면 그 게임에 연결됩니다.',
               '**⏹️ 방송 종료** 를 누르면 본인의 유튜브 설명란용 타임라인이 나만 보기로 나옵니다.',
@@ -145,18 +143,18 @@ const basicCommands = [
                 ? [
                     '봇이 볼 수 있는 **모든 채널**의 사진·동영상을 자동으로 정리합니다. (기본값)',
                     '폴더 이름은 **채널 이름**을 그대로 씁니다.',
-                    '특정 채널만 원하면 `/채널설정` 에서 "이미지 채널"을 지정하세요.',
+                    '특정 채널만 원하면 `/관리자 채널설정` 에서 "이미지 채널"을 지정하세요.',
                     '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
-                    '`/갤러리수집 채널:` — 관리자가 선택한 채널의 예전 자료도 한 번에 저장 (비우면 현재 채널)',
-                    '`/폴더` — 이 채널의 저장 폴더 보기·바꾸기 · `/폴더목록` · `/정리` — 용량 관리',
+                    '`/관리자 갤러리수집 채널:` — 선택한 채널의 예전 자료도 한 번에 저장 (비우면 현재 채널)',
+                    '`/폴더` — 이 채널의 저장 폴더 보기·바꾸기 · `/폴더목록` · `/관리자 정리` — 용량 관리',
                   ].join('\n')
                 : [
                     `${imageCh.value.map((id) => `<#${id}>`).join(' ')} 에 올린 사진·동영상만 정리합니다.`,
                     '폴더 이름은 기본적으로 **채널 이름**을 씁니다. (스레드면 스레드 이름)',
                     '`/폴더 <이름>` — 이 채널의 폴더를 다른 이름으로 바꾸기',
                     '`/갤러리` — 여러 장 골라 한 번에 받는 웹페이지 주소',
-                    '`/갤러리수집 채널:` — 관리자가 선택한 채널의 예전 자료도 한 번에 저장 (비우면 현재 채널)',
-                    '`/폴더` `/폴더목록` `/정리`',
+                    '`/관리자 갤러리수집 채널:` — 선택한 채널의 예전 자료도 한 번에 저장 (비우면 현재 채널)',
+                    '`/폴더` `/폴더목록` `/관리자 정리`',
                   ].join('\n'),
           },
       ];
@@ -164,7 +162,7 @@ const basicCommands = [
       const embed = new EmbedBuilder()
         .setTitle('🤖 봇 사용법')
         .setColor(0x5865f2)
-        .setDescription('설정은 `/기능` 으로 켜고 끄고, `/채널설정` 으로 채널을 정합니다.')
+        .setDescription('설정은 `/관리자 기능`으로 켜고 끄고, `/관리자 채널설정`으로 채널을 정합니다.')
         .addFields(fields.filter((f) => inRole(f.feature)).map(({ feature, ...f }) => f));
 
       // 📢 버튼으로 채팅방 모두에게 한 번 올릴 수 있습니다. (기능이 추가됐을 때 공지용)
@@ -179,7 +177,7 @@ const basicCommands = [
  * (명령어마다 직접 적으면 반드시 빠뜨리는 것이 생깁니다)
  *
  * index.js 가 이 값을 보고 꺼진 기능의 명령어를 막습니다.
- * `/기능` `/채널설정` `/도움말` `/나가기` 는 태그가 없어 **항상 동작합니다** —
+ * `/관리자` `/도움말` `/나가기`는 태그가 없어 **항상 동작합니다** —
  * 다 꺼놓고 다시 켤 방법이 없으면 안 되기 때문입니다.
  * (`/나가기` 는 음악·읽어주기·알람이 **같은 음성 커넥션**을 쓰므로 어느 기능에도 안 속합니다)
  */
@@ -190,7 +188,7 @@ const taggedCommands = [
   ...tag('music', [...musicCommands, ...volumeCommands]),
   ...tag('tts', ttsCommands),
   ...tag('timer', timerCommands),
-  ...tag('images', imageCommands),
+  ...tag('images', imageCommands.filter((command) => !['갤러리수집', '정리'].includes(command.data.toJSON().name))),
   ...tag('poll', pollCommands),
   ...tag('movie', movieCommands),
   ...tag('plan', [...planCommands, ...settleCommands]),
@@ -204,17 +202,15 @@ const taggedCommands = [
  * **맡지 않은 기능의 명령어는 아예 등록하지 않습니다.**
  * 등록해두고 막기만 하면 목록만 지저분해집니다.
  *
- * 태그가 없는 `/도움말` `/기능` `/채널설정` `/나가기` 는 **양쪽 봇에 다 있습니다.**
+ * 태그가 없는 `/도움말` `/관리자` `/나가기` 는 **양쪽 봇에 다 있습니다.**
  * 봇마다 따로 켜고 끄고 설정해야 하고, 음성채널도 각자 들어가기 때문입니다.
  * 대신 각자 **자기 것만** 보여줍니다 (activeKeys / activeFeatures).
- * `/상징이모지`도 태그가 없지만 사람 표시 전체의 설정이라 망고 역할에만 별도로 넣습니다.
+ * `/관리자`의 세부명령어는 봇 역할에 맞는 것만 admin-commands.js 에서 구성합니다.
  */
 export const allCommands = [
   ...basicCommands,
-  ...featureCommands,
-  ...channelCommands,
+  ...adminCommands,
   ...leaveCommands,
-  ...(inRole('stream') ? symbolCommands : []),
   ...taggedCommands.filter((c) => inRole(c.feature)),
 ];
 

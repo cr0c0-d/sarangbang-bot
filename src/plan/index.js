@@ -224,7 +224,7 @@ function formatWhenForEdit(plan) {
 /**
  * 일정 카테고리를 고르는 판.
  *
- * `/채널설정` 의 채널 칸은 텍스트·음성·카테고리를 **한 목록에 섞어** 보여줍니다.
+ * `/관리자 채널설정`의 채널 칸은 텍스트·음성·카테고리를 **한 목록에 섞어** 보여줍니다.
  * 디스코드가 "종류" 선택에 따라 목록을 바꿔주지 못하기 때문입니다.
  * 그래서 여기서는 **카테고리만** 나오는 드롭다운을 씁니다.
  */
@@ -232,7 +232,7 @@ export function buildCategoryPicker() {
   return {
     content:
       '먼저 **일정 채널을 만들 카테고리**를 골라주세요. 한 번만 고르면 됩니다.\n' +
-      '(나중에 바꾸려면 `/채널설정` 에서 「일정 카테고리」 를 고르시면 됩니다)',
+      '(나중에 바꾸려면 `/관리자 채널설정`에서 「일정 카테고리」를 고르시면 됩니다)',
     components: [
       new ActionRowBuilder().addComponents(
         new ChannelSelectMenuBuilder()
@@ -306,7 +306,7 @@ export const commands = [
     async execute(interaction) {
       const categoryId = getSetting(interaction.guildId, 'planCategoryId');
       // 아직 안 정했으면 **여기서 바로 고르게** 합니다.
-      // `/채널설정` 으로 보내면, 그쪽 채널 목록에는 텍스트·음성 채널이 섞여 나와서
+      // `/관리자 채널설정`으로 보내면, 그쪽 채널 목록에는 텍스트·음성 채널이 섞여 나와서
       // "카테고리를 고르라는데 채널만 보인다" 가 됩니다. 여기서는 카테고리만 보여줍니다.
       if (!categoryId) return interaction.reply(buildCategoryPicker());
       await interaction.showModal(buildCreateChannelModal());
@@ -668,7 +668,7 @@ async function createPlanChannel(interaction, { name, when, users, roles }) {
   const categoryId = getSetting(interaction.guildId, 'planCategoryId');
   const category = await guild.channels.fetch(categoryId).catch(() => null);
   if (!category || category.type !== ChannelType.GuildCategory) {
-    return '일정 카테고리를 찾을 수 없습니다. `/채널설정` 으로 다시 지정해주세요.';
+    return '일정 카테고리를 찾을 수 없습니다. `/관리자 채널설정`으로 다시 지정해주세요.';
   }
 
   const me = guild.members.me ?? (await guild.members.fetchMe().catch(() => null));

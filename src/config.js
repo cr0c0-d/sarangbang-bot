@@ -171,12 +171,12 @@ export const config = {
     readAuthor: bool('TTS_READ_AUTHOR', false),
   },
 
-  // 일정 채널을 만들 카테고리. /채널설정 으로 바꿀 수 있습니다.
+  // 일정 채널을 만들 카테고리. /관리자 채널설정으로 바꿀 수 있습니다.
   plan: {
     categoryId: str('PLAN_CATEGORY_ID'),
   },
 
-  // 방송 기록(타임머신). 제어판이 상주할 채널. /채널설정 으로 바꿀 수 있습니다.
+  // 방송 기록(타임머신). 제어판이 상주할 채널. /관리자 채널설정으로 바꿀 수 있습니다.
   // docs/게임방송-기획.md
   stream: {
     channelId: str('STREAM_CHANNEL_ID'),

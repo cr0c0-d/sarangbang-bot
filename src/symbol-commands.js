@@ -1,4 +1,4 @@
-// 사람별 상징 이모지 — 망고가 사용자 멘션을 표시하는 모든 기능에서 함께 씁니다.
+// `/관리자 상징이모지` — 망고가 사용자 멘션을 표시하는 모든 기능에서 함께 씁니다.
 import { SlashCommandBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
 import {
   get as getSetting,

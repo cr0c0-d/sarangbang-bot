@@ -136,7 +136,7 @@ function requireHomeChannel(guildId) {
   if (!channelId) {
     throw userError(
       '방송 채널이 지정되지 않았습니다.\n' +
-        '`/채널설정` 에서 **방송 채널**을 정해주세요. 그 채널에 제어판이 상주합니다.\n' +
+        '`/관리자 채널설정`에서 **방송 채널**을 정해주세요. 그 채널에 제어판이 상주합니다.\n' +
         '(그 채널은 일반 사용자의 "메시지 보내기"를 막아두는 것이 좋습니다 — 제어판이 밀리지 않습니다)'
     );
   }
@@ -154,7 +154,7 @@ function buildStatus(guildId, userId) {
   const lines = [];
 
   lines.push(
-    channelId ? `제어판: <#${channelId}>` : '⚠️ 방송 채널이 없습니다. `/채널설정` 에서 정해주세요.'
+    channelId ? `제어판: <#${channelId}>` : '⚠️ 방송 채널이 없습니다. `/관리자 채널설정`에서 정해주세요.'
   );
   lines.push('');
 
@@ -721,7 +721,7 @@ async function endSession(interaction, client) {
   if (!channel?.isTextBased?.()) {
     return interaction.editReply(
       '방송 채널을 찾지 못해 제어판을 갱신할 수 없습니다. **종료하지 않았습니다.**\n' +
-        '`/채널설정` 에서 방송 채널을 확인한 뒤 다시 눌러주세요. 기록은 그대로 있습니다.'
+        '`/관리자 채널설정`에서 방송 채널을 확인한 뒤 다시 눌러주세요. 기록은 그대로 있습니다.'
     );
   }
 

@@ -159,7 +159,7 @@ async function isAtBottom(channel, messageId) {
 }
 
 /**
- * 이 채널이 **지정된 음악 채팅방**인가. (`/채널설정` 의 음악 채팅방)
+ * 이 채널이 **지정된 음악 채팅방**인가. (`/관리자 채널설정`의 음악 채팅방)
  *
  * 여기에 뜬 제어판은 **지우지 않습니다.** 봇이 음성채널에 없어도, 트는 곡이 없어도
  * "재생 중인 곡이 없습니다" 로 계속 떠 있습니다.
@@ -192,7 +192,7 @@ export async function adoptMusicPanel(channelId, message) {
 /**
  * 지정된 음악 채팅방에 제어판이 **있는지 확인하고, 없으면 띄웁니다.**
  *
- * 켤 때 한 번, 그리고 `/채널설정` 으로 음악 채팅방을 정한 직후에 부릅니다.
+ * 켤 때 한 번, 그리고 `/관리자 채널설정`으로 음악 채팅방을 정한 직후에 부릅니다.
  * (정하자마자 보여야 "항상 보인다" 가 됩니다)
  */
 export async function ensureHomePanel(client, guildId, channelId, audio = null) {

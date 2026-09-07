@@ -64,7 +64,7 @@ async function resolveVoiceChannel(guild, member) {
     const ch = await guild.channels.fetch(configured).catch(() => null);
     if (!ch?.isVoiceBased?.()) {
       throw userError(
-        '지정된 음악 음성채널을 찾을 수 없습니다. /채널설정 으로 다시 지정해주세요.'
+        '지정된 음악 음성채널을 찾을 수 없습니다. /관리자 채널설정 으로 다시 지정해주세요.'
       );
     }
     return ch;
@@ -73,7 +73,7 @@ async function resolveVoiceChannel(guild, member) {
   const ch = member?.voice?.channel;
   if (!ch) {
     throw userError(
-      '먼저 음성채널에 들어간 뒤 다시 시도해주세요. (또는 /채널설정 으로 음악 음성채널을 지정하세요)'
+      '먼저 음성채널에 들어간 뒤 다시 시도해주세요. (또는 /관리자 채널설정 으로 음악 음성채널을 지정하세요)'
     );
   }
   return ch;

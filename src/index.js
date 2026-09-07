@@ -50,7 +50,7 @@ import { isShareComponent, handleShareComponent } from './share.js';
 /** 꺼진 기능을 쓰려 할 때 보여줄 안내. */
 function featureOffMessage(key) {
   const f = FEATURES[key];
-  return `${f.emoji} **${f.label}** 기능이 꺼져 있습니다.\n\`/기능\` 에서 켤 수 있습니다.`;
+  return `${f.emoji} **${f.label}** 기능이 꺼져 있습니다.\n\`/관리자 기능\` 에서 켤 수 있습니다.`;
 }
 
 const client = new Client({
@@ -79,7 +79,7 @@ client.once(Events.ClientReady, (c) => {
     if (inRole('tts')) console.log(`     읽어주기 채팅방: ${s('ttsTextChannelId')}`);
     if (inRole('images')) console.log(`     이미지 채널  : ${s('imageChannelIds')}`);
   }
-  console.log('   설정을 바꾸려면 디스코드에서 /채널설정 을 쓰세요.');
+  console.log('   설정을 바꾸려면 디스코드에서 /관리자 채널설정 을 쓰세요.');
 
   // 저장된 타이머를 되살립니다. (배포로 재시작해도 타이머가 사라지지 않게)
   if (inRole('timer')) initTimers(c).catch((err) => console.error('[timer] 복구 실패:', err.message));

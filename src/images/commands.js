@@ -271,7 +271,7 @@ export async function collectHistory(channel, onProgress = async () => {}) {
   return { messages, saved, failed };
 }
 
-/** /정리 의 확인 버튼. customId 가 `g:` 으로 시작하는 것만 옵니다. */
+/** /관리자 정리의 확인 버튼. customId 가 `g:` 으로 시작하는 것만 옵니다. */
 export async function handleImageComponent(interaction) {
   if (interaction.customId === 'g:cancel') {
     return interaction.update({ content: '취소했습니다. 아무것도 지우지 않았습니다.', components: [] });

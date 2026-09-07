@@ -123,13 +123,27 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 25개 로드 (우클릭 1개 포함)', allCommands.length === 25, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 21개 로드 (우클릭 1개 포함)', allCommands.length === 21, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['채널설정', '나가기', '타이머', '타이머목록', '알람등록', '기능', '목소리', '읽어주기', '폴더', '폴더목록', '정리', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산', '게임']) {
+for (const need of ['관리자', '나가기', '타이머', '타이머목록', '알람등록', '목소리', '읽어주기', '폴더', '폴더목록', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산', '게임']) {
   ok(`/${need} 존재`, names.includes(need));
 }
+const adminCommand = allCommands.find((c) => c.data.toJSON().name === '관리자');
+const adminSchema = adminCommand?.data.toJSON();
+const adminSubcommands = adminSchema?.options?.map((option) => option.name) ?? [];
+ok('/관리자 아래에 관리자 전용 기능 통합',
+  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지'].every((name) => adminSubcommands.includes(name)),
+  adminSubcommands.join(', '));
+ok('기존 관리자 최상위 명령어 제거',
+  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지'].every((name) => !names.includes(name)));
+let adminFeatureReply;
+await adminCommand.execute({
+  guildId: 'admin-route-guild', options: { getSubcommand: () => '기능' },
+  reply: async (payload) => { adminFeatureReply = payload; },
+});
+ok('/관리자 세부명령어가 기존 기능 화면으로 연결', adminFeatureReply?.embeds?.length === 1);
 ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중지'));
 
 // 1a) 서버 설정을 바꾸거나 데이터를 지우는 명령어는 **관리자만**.
@@ -139,9 +153,9 @@ ok('/읽기중지 제거됨 (나가기로 통합)', !names.includes('읽기중�
   const { PermissionFlagsBits } = await import('discord.js');
   const perms = new Map(allCommands.map((c) => [c.data.toJSON().name, c.data.toJSON().default_member_permissions]));
   const MANAGE = String(PermissionFlagsBits.ManageGuild);
-  for (const name of ['채널설정', '기능', '정리']) {
-    ok(`/${name} 은 관리자만`, perms.get(name) === MANAGE, String(perms.get(name)));
-  }
+  ok('/관리자 는 관리자만', perms.get('관리자') === MANAGE, String(perms.get('관리자')));
+  ok('관리자 전용 최상위 명령은 /관리자 하나',
+    [...perms.entries()].filter(([, value]) => value).map(([name]) => name).join() === '관리자');
   // 친구들이 늘 쓰는 것은 막으면 안 됩니다.
   for (const name of ['도움말', '일정', '일정새로', '정산', '투표', '영화', '게임', '타이머', '목소리', '갤러리']) {
     ok(`/${name} 은 누구나`, !perms.get(name), String(perms.get(name)));
@@ -472,11 +486,11 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 // (음성채널은 discord.js 에서 isTextBased() 와 isVoiceBased() 를 둘 다 만족합니다.
 //  예전에 채널 타입 목록으로 검사해서 이걸 거부하는 버그가 있었습니다)
 {
-  const cmd = allCommands.find((c) => c.data.toJSON().name === '채널설정');
+  const cmd = adminSchema.options.find((option) => option.name === '채널설정');
   const src = fs.readFileSync('./src/channel-commands.js', 'utf8');
   ok('타입 목록 하드코딩 대신 isTextBased 사용', src.includes('isTextBased?.()'));
   ok('타입 목록 하드코딩 대신 isVoiceBased 사용', src.includes('isVoiceBased?.()'));
-  const types = cmd.data.toJSON().options[1]['channel_types'];
+  const types = cmd.options.find((option) => option.name === '채널')['channel_types'];
   ok('채널 선택지에 음성채널 포함', Array.isArray(types) && types.includes(2), JSON.stringify(types));
   ok('채널 선택지에 포럼·미디어 채널 포함', types.includes(15) && types.includes(16), JSON.stringify(types));
 }
@@ -1045,9 +1059,9 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   const historyAgain = await imageCommands.collectHistory(historyChannel);
   ok('선택 채널 과거 메시지에서 미디어 일괄 수집', history.messages === 1 && history.saved === 1 && history.failed === 0);
   ok('과거 미디어 수집 재실행도 중복 없음', historyAgain.messages === 1 && historyAgain.saved === 0);
-  const icmd = imageCommands.commands.find((c) => c.data.toJSON().name === '갤러리수집')?.data.toJSON();
-  ok('/갤러리수집은 관리자 전용이고 채널 선택은 선택사항',
-    Boolean(icmd?.default_member_permissions) && icmd.options[0].required === false);
+  const icmd = adminSchema.options.find((option) => option.name === '갤러리수집');
+  ok('/관리자 갤러리수집의 채널 선택은 선택사항',
+    Boolean(adminSchema.default_member_permissions) && icmd.options[0].required === false);
   const collectCommand = imageCommands.commands.find((c) => c.data.toJSON().name === '갤러리수집');
   let currentChannelResult = '';
   const emptyPage = new Map();
@@ -1121,7 +1135,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 
   ok('채널을 비우면 지금 이 채널로 지정', src.includes('const target = channel ?? interaction.channel'));
   ok('그렇게 지정했음을 알려줌', src.includes('**지금 이 채널**로 지정했습니다'));
-  const opt = cc.commands[0].data.toJSON().options.find((o) => o.name === '채널');
+  const opt = adminSchema.options.find((o) => o.name === '채널설정').options.find((o) => o.name === '채널');
   ok('채널 칸 설명이 비웠을 때를 알려줌', opt.description.includes('비우면'), opt.description);
   ok('채널 칸은 여전히 선택 입력', opt.required !== true);
 
@@ -1256,7 +1270,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   }
   // 항상 켜져 있어야 하는 것들 — 다 꺼놓고 되살릴 방법이 없으면 안 됩니다.
   // /나가기 는 음악·읽어주기·알람이 같은 음성 커넥션을 쓰므로 어느 기능에도 안 속합니다.
-  for (const name of ['기능', '채널설정', '도움말', '나가기', '상징이모지']) {
+  for (const name of ['관리자', '도움말', '나가기']) {
     ok(`/${name} 은 항상 동작 (태그 없음)`, byName.get(name)?.feature === undefined);
   }
 
@@ -2765,20 +2779,20 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   await store.initStreams();
 
   // ── 서버별 사람 상징 이모지 ──
-  const symbolCommand = allCommands.find((c) => c.data.toJSON().name === '상징이모지');
-  const symbolSchema = symbolCommand?.data.toJSON();
-  ok('/상징이모지는 관리자 전용', Boolean(symbolSchema?.default_member_permissions));
-  ok('/상징이모지는 사람 필수·이모지 선택',
+  const symbolCommand = (await import('./src/symbol-commands.js')).commands[0];
+  const symbolSchema = adminSchema.options.find((option) => option.name === '상징이모지');
+  ok('/관리자 상징이모지는 관리자 전용', Boolean(adminSchema.default_member_permissions));
+  ok('/관리자 상징이모지는 사람 필수·이모지 선택',
     symbolSchema?.options?.find((o) => o.name === '사람')?.required === true &&
     symbolSchema?.options?.find((o) => o.name === '이모지')?.required !== true);
-  ok('/상징이모지는 25개씩 목록 페이지 선택',
+  ok('/관리자 상징이모지는 25개씩 목록 페이지 선택',
     symbolSchema?.options?.find((o) => o.name === '목록페이지')?.min_value === 1);
   const localEmoji = { id: '123456789012345678', name: '악어', toString: () => '<:악어:123456789012345678>' };
   const emojiCache = new Map([[localEmoji.id, localEmoji]]);
   let symbolReply;
-  await symbolCommand.execute({
+  await adminCommand.execute({
     guildId: 'symbol-guild', guild: { emojis: { cache: emojiCache } },
-    options: { getUser: () => ({ id: 'symbol-user' }), getString: () => localEmoji.id },
+    options: { getSubcommand: () => '상징이모지', getUser: () => ({ id: 'symbol-user' }), getString: () => localEmoji.id },
     reply: async (payload) => { symbolReply = payload; },
   });
   ok('관리자가 고른 서버 이모지를 사람별로 저장',
@@ -2787,8 +2801,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     settings.symbolMention('symbol-guild', 'symbol-user') === `${localEmoji} <@symbol-user>` &&
     settings.symbolMention('other-guild', 'symbol-user') === '<@symbol-user>');
   let symbolChoices = [];
-  await symbolCommand.autocomplete({
-    guild: { emojis: { cache: emojiCache } }, options: { getFocused: () => '악' },
+  await adminCommand.autocomplete({
+    guild: { emojis: { cache: emojiCache } }, options: { getSubcommand: () => '상징이모지', getFocused: () => '악' },
     respond: async (choices) => { symbolChoices = choices; },
   });
   ok('상징 이모지 자동완성은 현재 서버 이모지만 표시',
@@ -2799,15 +2813,15 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   }));
   let fetchedAll = 0;
   const manyGuild = { id: 'many-emoji-guild', emojis: { cache: new Map(), fetch: async () => { fetchedAll++; return manyEmojis; } } };
-  await symbolCommand.autocomplete({
-    guild: manyGuild, options: { getFocused: () => '', getInteger: () => 4 },
+  await adminCommand.autocomplete({
+    guild: manyGuild, options: { getSubcommand: () => '상징이모지', getFocused: () => '', getInteger: () => 4 },
     respond: async (choices) => { symbolChoices = choices; },
   });
   ok('상징 이모지 100개 이상도 25개씩 페이지 탐색',
     fetchedAll === 1 && symbolChoices.length === 25 && symbolChoices.some((choice) => choice.name === ':emoji090:'),
     `fetch ${fetchedAll} · ${symbolChoices.length}개 · 첫 항목 ${symbolChoices[0]?.name}`);
-  await symbolCommand.autocomplete({
-    guild: manyGuild, options: { getFocused: () => '찾는', getInteger: () => 1 },
+  await adminCommand.autocomplete({
+    guild: manyGuild, options: { getSubcommand: () => '상징이모지', getFocused: () => '찾는', getInteger: () => 1 },
     respond: async (choices) => { symbolChoices = choices; },
   });
   ok('상징 이모지 이름 검색은 첫 25개 밖에서도 찾음',
@@ -3651,35 +3665,42 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 덤으로 "그 역할로 모듈이 전부 로드되는가" 까지 같이 검사됩니다.
 {
   const { execFileSync } = await import('node:child_process');
-  const namesFor = (role) => {
+  const commandsFor = (role) => {
     const out = execFileSync(
       process.execPath,
-      ['--input-type=module', '-e', "const m = await import('./src/commands.js'); console.log(JSON.stringify(m.allCommands.map((c) => c.data.toJSON().name)));"],
+      ['--input-type=module', '-e', "const m = await import('./src/commands.js'); const schemas=m.allCommands.map((c)=>c.data.toJSON()); console.log(JSON.stringify({names:schemas.map((c)=>c.name),admin:schemas.find((c)=>c.name==='관리자')?.options.map((o)=>o.name)}));"],
       { env: { ...process.env, BOT_ROLE: role, DATA_DIR: './data/verify-role-' + role }, encoding: 'utf8' }
     );
     return JSON.parse(out.trim().split('\n').pop());
   };
 
-  const mango = namesFor('mango');
-  const music = namesFor('music');
+  const mangoResult = commandsFor('mango');
+  const musicResult = commandsFor('music');
+  const mango = mangoResult.names;
+  const music = musicResult.names;
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 29개', union.length === 29, `${union.length}개`);
+  ok('둘을 합쳐 25개', union.length === 25, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));
   ok('망고에는 음악이 아예 없음',
     !mango.includes('재생') && !mango.includes('대기열') && !mango.includes('음량') && mango.includes('갤러리'),
     mango.join(' '));
+  ok('망고 /관리자에는 전체 관리 기능',
+    JSON.stringify(mangoResult.admin) === JSON.stringify(['기능', '채널설정', '갤러리수집', '정리', '상징이모지']),
+    mangoResult.admin?.join(' '));
+  ok('노래하는 망고 /관리자에는 자기 설정만',
+    JSON.stringify(musicResult.admin) === JSON.stringify(['기능', '채널설정']), musicResult.admin?.join(' '));
 
   // 음성채널에서 나올 방법은 **양쪽 다** 있어야 합니다.
   // 읽어주기도 음성채널에 들어가므로, /나가기 가 음악 쪽에만 있으면 망고가 갇힙니다.
   ok('양쪽 다 음성채널에서 나올 수 있음', mango.includes('나가기') && music.includes('나가기'));
 
-  // 겹치는 것은 **봇마다 따로 있어야 하는 조종 명령어 4개뿐**이어야 합니다.
+  // 겹치는 것은 **봇마다 따로 있어야 하는 조종 명령어 3개뿐**이어야 합니다.
   const shared = music.filter((n) => mango.includes(n)).sort();
-  ok('겹치는 건 조종 명령어 4개뿐',
-    JSON.stringify(shared) === JSON.stringify(['기능', '나가기', '도움말', '채널설정'].sort()), shared.join(' '));
+  ok('겹치는 건 조종 명령어 3개뿐',
+    JSON.stringify(shared) === JSON.stringify(['관리자', '나가기', '도움말'].sort()), shared.join(' '));
 
   // 잘못된 이름은 조용히 넘어가면 안 됩니다 (전부 꺼진 봇이 됩니다)
   const rejects = (value) => {

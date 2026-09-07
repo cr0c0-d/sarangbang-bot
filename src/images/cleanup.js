@@ -76,7 +76,7 @@ async function allFilesOldestFirst() {
 
 /**
  * 무엇을 지울지 계획만 세웁니다. **실제로 지우지 않습니다.**
- * 미리보기(/정리)와 자동 정리가 같은 함수를 쓰므로 결과가 어긋나지 않습니다.
+ * 미리보기(/관리자 정리)와 자동 정리가 같은 함수를 쓰므로 결과가 어긋나지 않습니다.
  */
 export async function planCleanup({ force = false } = {}) {
   const L = limits();
@@ -153,7 +153,7 @@ export async function runCleanup(plan) {
   return deleted;
 }
 
-/** 사람이 읽을 요약. /정리 와 자동 정리 알림이 같이 씁니다. */
+/** 사람이 읽을 요약. /관리자 정리와 자동 정리 알림이 같이 씁니다. */
 export function describe(plan) {
   const { usage: u, limits: L } = plan;
   const pct = ((u.bytes / L.maxBytes) * 100).toFixed(0);
