@@ -40,7 +40,9 @@ function recordTimelineRow(stream, mark, sec) {
   const description = (mark.text || '(설명 없음)')
     .replace(/[\r\n]+/g, ' ')
     .replace(/([\\`*_[\]()~>|])/g, '\\$1');
-  return `${link ? `[${time}](${link})` : time} ${description}`;
+  // Discord는 <URL>로 감싼 개별 링크의 자동 임베드를 만들지 않습니다.
+  // 링크 대상에 꺾쇠를 넣어 시간 텍스트는 그대로 클릭 가능하게 유지합니다.
+  return `${link ? `[${time}](<${link}>)` : time} ${description}`;
 }
 
 /** 헤더와 클릭 가능한 타임라인까지 포함해 Discord 2,000자 안에서 나눕니다. */
@@ -136,7 +138,7 @@ async function refreshRecordPreview(message, payload, url) {
   try {
     const withoutYoutubeLinks = payload.content
       .split('\n').filter((line) => line !== url).join('\n')
-      .replace(/\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\(https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^)\s]+\)/gi, '$1');
+      .replace(/\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\(<https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^>\s]+>\)/gi, '$1');
     await message.edit({ ...payload, content: withoutYoutubeLinks, embeds: [] });
   } finally {
     // 링크 제거 요청이 실패/타임아웃해도 복원을 시도합니다. 복원 실패는 한 번 재시도합니다.

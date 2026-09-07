@@ -3399,8 +3399,10 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
       sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
       !sentContents.join('\n').includes(':F>'));
   ok('녹화방 타임라인 시간마다 YouTube 해당 시점 링크',
-    sentContents.join('\n').includes(`](https://youtu.be/abcdefghijk?t=`) &&
-      sentContents.join('\n').includes('s)'));
+    sentContents.join('\n').includes(`](<https://youtu.be/abcdefghijk?t=`) &&
+      sentContents.join('\n').includes('s>)'));
+  ok('타임라인 시점 링크는 개별 임베드 억제',
+    /\[[0-9:]+\]\(<https:\/\/youtu\.be\/[^>]+>\)/.test(sentContents.join('\n')));
   ok('다시보기 없는 녹화방 타임라인은 링크 없이 표시',
     forum.youtubeTimestampUrl({ url: null, videoId: null }, 39) === null);
   ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
