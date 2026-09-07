@@ -102,12 +102,25 @@ export function stopKeepalive() {
  *
  * `toStream(text, { rate })` 의 기본값이 `1.0` (배수)이므로 **퍼센트를 100으로 나눕니다.**
  * SSML 의 `<prosody rate="1.3">` 로 들어갑니다.
- * 100이면 아무것도 넘기지 않습니다 — 기본 동작을 그대로 두는 편이 안전합니다.
+ * 일반 문장이 100%면 아무것도 넘기지 않습니다 — 기본 동작을 그대로 두는 편이 안전합니다.
  */
-function rateOptions(speedPercent) {
+export function prosodyOptions(text, speedPercent) {
   const p = Number(speedPercent);
+  const baseRate = Number.isFinite(p) ? p / 100 : 1;
+
+  // Edge의 무료 읽어주기 API에는 Azure의 감정 스타일(cheerful, angry 등)이 없습니다.
+  // 대신 느낌표가 3개 이상 이어지면 지원되는 prosody 범위 안에서 빠르고 높고 크게
+  // 읽어, 채팅의 "소리 지르는 느낌"을 살립니다. 일반 문장은 기존 음성을 그대로 둡니다.
+  if (/[!！]{3,}/u.test(String(text ?? ''))) {
+    return {
+      rate: Math.min(2, Math.round(baseRate * 1.12 * 100) / 100),
+      pitch: '+35Hz',
+      volume: '+25',
+    };
+  }
+
   if (!Number.isFinite(p) || p === 100) return undefined;
-  return { rate: p / 100 };
+  return { rate: baseRate };
 }
 
 /**
@@ -127,7 +140,7 @@ export async function synthesize(text, voice, speedPercent = 100) {
 
   // ⚠️ 속도는 **호출할 때마다** 넘깁니다. 연결(engine)에 묶이는 값이 아니라서
   //    사람마다 다른 속도를 써도 연결을 다시 맺지 않습니다 (예열이 그대로 살아 있음).
-  const opts = rateOptions(speedPercent);
+  const opts = prosodyOptions(text, speedPercent);
   try {
     return engine.toStream(text, opts).audioStream;
   } catch (err) {

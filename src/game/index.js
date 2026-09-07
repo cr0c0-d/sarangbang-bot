@@ -1,4 +1,12 @@
-import { SlashCommandBuilder, EmbedBuilder, MessageFlags, PermissionFlagsBits } from 'discord.js';
+import {
+  SlashCommandBuilder,
+  EmbedBuilder,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+  MessageFlags,
+  PermissionFlagsBits,
+} from 'discord.js';
 import { get as getSetting } from '../settings.js';
 import { resolveGame, autocompleteGames } from './steam.js';
 import { bindForumPost } from './store.js';
@@ -33,7 +41,11 @@ export const commands = [
     async execute(interaction) {
       const raw = interaction.options.getString('검색', true);
       const alias = interaction.options.getString('별칭')?.trim();
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      const kind = forumKind(interaction);
+      // 일반 검색 결과는 함께 게임을 고르는 데 쓸 수 있도록 채팅방 전체에 보여줍니다.
+      // 포럼 연결·별칭 변경은 관리 작업이므로 기존처럼 실행한 사람에게만 확인시킵니다.
+      const isPublicSearch = !kind && !alias;
+      await interaction.deferReply(isPublicSearch ? {} : { flags: MessageFlags.Ephemeral });
       const game = await resolveGame(raw, interaction.guildId);
       if (!game) {
         return interaction.editReply(
@@ -41,7 +53,6 @@ export const commands = [
         );
       }
 
-      const kind = forumKind(interaction);
       if (alias && !interaction.memberPermissions?.has(PermissionFlagsBits.ManageThreads)) {
         return interaction.editReply('별칭을 추가하려면 **스레드 관리** 권한이 필요합니다.');
       }
@@ -79,8 +90,21 @@ export const commands = [
       const embed = new EmbedBuilder().setColor(0x5865f2).setTitle(`🎮 ${game.name}`).setDescription(lines.join('\n'));
       if (game.image) embed.setImage(game.image);
       if (game.genres.length) embed.addFields({ name: '장르', value: game.genres.slice(0, 6).join(' · ') });
-      if (game.appid) embed.setURL(`https://store.steampowered.com/app/${game.appid}`);
-      return interaction.editReply({ embeds: [embed] });
+      const components = [];
+      if (game.appid) {
+        const steamUrl = `https://store.steampowered.com/app/${game.appid}`;
+        embed.setURL(steamUrl);
+        components.push(
+          new ActionRowBuilder().addComponents(
+            new ButtonBuilder()
+              .setStyle(ButtonStyle.Link)
+              .setLabel('Steam 상점 열기')
+              .setEmoji('🛒')
+              .setURL(steamUrl)
+          )
+        );
+      }
+      return interaction.editReply({ embeds: [embed], components });
     },
   },
 ];
