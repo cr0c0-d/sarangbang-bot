@@ -2771,6 +2771,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('/상징이모지는 사람 필수·이모지 선택',
     symbolSchema?.options?.find((o) => o.name === '사람')?.required === true &&
     symbolSchema?.options?.find((o) => o.name === '이모지')?.required !== true);
+  ok('/상징이모지는 25개씩 목록 페이지 선택',
+    symbolSchema?.options?.find((o) => o.name === '목록페이지')?.min_value === 1);
   const localEmoji = { id: '123456789012345678', name: '악어', toString: () => '<:악어:123456789012345678>' };
   const emojiCache = new Map([[localEmoji.id, localEmoji]]);
   let symbolReply;
@@ -2791,6 +2793,25 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   });
   ok('상징 이모지 자동완성은 현재 서버 이모지만 표시',
     symbolChoices.length === 1 && symbolChoices[0].value === localEmoji.id);
+  const manyEmojis = new Map(Array.from({ length: 101 }, (_, i) => {
+    const id = String(200000000000000000n + BigInt(i));
+    return [id, { id, name: i === 100 ? '찾는이모지' : `emoji${String(i).padStart(3, '0')}` }];
+  }));
+  let fetchedAll = 0;
+  const manyGuild = { id: 'many-emoji-guild', emojis: { cache: new Map(), fetch: async () => { fetchedAll++; return manyEmojis; } } };
+  await symbolCommand.autocomplete({
+    guild: manyGuild, options: { getFocused: () => '', getInteger: () => 4 },
+    respond: async (choices) => { symbolChoices = choices; },
+  });
+  ok('상징 이모지 100개 이상도 25개씩 페이지 탐색',
+    fetchedAll === 1 && symbolChoices.length === 25 && symbolChoices.some((choice) => choice.name === ':emoji090:'),
+    `fetch ${fetchedAll} · ${symbolChoices.length}개 · 첫 항목 ${symbolChoices[0]?.name}`);
+  await symbolCommand.autocomplete({
+    guild: manyGuild, options: { getFocused: () => '찾는', getInteger: () => 1 },
+    respond: async (choices) => { symbolChoices = choices; },
+  });
+  ok('상징 이모지 이름 검색은 첫 25개 밖에서도 찾음',
+    symbolChoices.length === 1 && symbolChoices[0].name === ':찾는이모지:');
   await symbolCommand.execute({
     guildId: 'symbol-guild', guild: { emojis: { cache: emojiCache } },
     options: { getUser: () => ({ id: 'other-symbol-user' }), getString: () => '<:남의것:999999999999999999>' },
