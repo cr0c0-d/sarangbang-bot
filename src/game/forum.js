@@ -15,23 +15,51 @@ export function recordContent(session, stream) {
   return header;
 }
 
-/** 헤더와 코드블록까지 포함해 Discord 2,000자 안에서 나눕니다. */
+/** 녹화방 타임라인에서 누르면 해당 초부터 재생되는 YouTube 주소입니다. */
+export function youtubeTimestampUrl(stream, sec) {
+  const seconds = Math.max(0, Math.floor(Number(sec) || 0));
+  const videoId = String(stream?.videoId ?? '').trim();
+  if (/^[\w-]{11}$/.test(videoId)) {
+    // 짧은 주소를 써야 타임라인이 많아도 Discord 2,000자 안에 더 많이 담깁니다.
+    return `https://youtu.be/${videoId}?t=${seconds}s`;
+  }
+  if (!stream?.url) return null;
+  try {
+    const url = new URL(stream.url);
+    url.searchParams.set('t', `${seconds}s`);
+    return url.toString();
+  } catch {
+    return null;
+  }
+}
+
+function recordTimelineRow(stream, mark, sec) {
+  const time = hhmmss(sec);
+  const link = youtubeTimestampUrl(stream, sec);
+  // 코드 블록 밖으로 나오므로 설명이 임의의 링크·강조 문법이 되지 않게 이스케이프합니다.
+  const description = (mark.text || '(설명 없음)')
+    .replace(/[\r\n]+/g, ' ')
+    .replace(/([\\`*_[\]()~>|])/g, '\\$1');
+  return `${link ? `[${time}](${link})` : time} ${description}`;
+}
+
+/** 헤더와 클릭 가능한 타임라인까지 포함해 Discord 2,000자 안에서 나눕니다. */
 export function recordPages(session, stream) {
   const header = recordContent(session, stream);
   const rows = timelineFor(session, stream).map(({ mark, sec }) =>
-    `${hhmmss(sec)} ${(mark.text || '(설명 없음)').replace(/`/g, 'ˋ').replace(/[\r\n]+/g, ' ')}`
+    recordTimelineRow(stream, mark, sec)
   );
   if (!rows.length) return [`${header}\n\n이 방송에 남긴 마킹이 없습니다.`];
   const pages = [];
-  let current = `${header}\n\n\`\`\`\n`;
+  let current = `${header}\n\n`;
   for (const row of rows) {
-    if (current.length + row.length + 5 > 2000) {
-      pages.push(`${current}\`\`\``);
-      current = '```\n';
+    if (current.length + row.length + 1 > 2000) {
+      pages.push(current.trimEnd());
+      current = '';
     }
     current += `${row}\n`;
   }
-  pages.push(`${current}\`\`\``);
+  pages.push(current.trimEnd());
   return pages;
 }
 
@@ -106,7 +134,10 @@ async function refreshRecordPreview(message, payload, url) {
   // 기존 무음 플래그는 보존하고 임베드 숨김만 해제합니다. 링크는 첫 페이지에만 있습니다.
   const restored = { ...payload, flags: (message.flags?.bitfield ?? MessageFlags.SuppressNotifications) & ~MessageFlags.SuppressEmbeds };
   try {
-    await message.edit({ ...payload, content: payload.content.split('\n').filter((line) => line !== url).join('\n'), embeds: [] });
+    const withoutYoutubeLinks = payload.content
+      .split('\n').filter((line) => line !== url).join('\n')
+      .replace(/\[([0-9]{2}:[0-9]{2}:[0-9]{2})\]\(https?:\/\/(?:www\.|m\.)?(?:youtube\.com|youtu\.be)\/[^)\s]+\)/gi, '$1');
+    await message.edit({ ...payload, content: withoutYoutubeLinks, embeds: [] });
   } finally {
     // 링크 제거 요청이 실패/타임아웃해도 복원을 시도합니다. 복원 실패는 한 번 재시도합니다.
     try { await message.edit(restored); }

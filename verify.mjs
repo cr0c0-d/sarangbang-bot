@@ -3397,7 +3397,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('녹화 포스트 기록에 방송자·시작 날짜·링크·타임라인',
     sentContents.join('\n').includes('<@broadcaster>') && sentContents.join('\n').includes('방송 시작') &&
       sentContents.join('\n').includes('youtube.com/watch') && sentContents.join('\n').includes(':d>') &&
-      !sentContents.join('\n').includes(':F>') && sentContents.join('\n').includes('```'));
+      !sentContents.join('\n').includes(':F>'));
+  ok('녹화방 타임라인 시간마다 YouTube 해당 시점 링크',
+    sentContents.join('\n').includes(`](https://youtu.be/abcdefghijk?t=`) &&
+      sentContents.join('\n').includes('s)'));
+  ok('다시보기 없는 녹화방 타임라인은 링크 없이 표시',
+    forum.youtubeTimestampUrl({ url: null, videoId: null }, 39) === null);
   ok('녹화 포스트 기록은 디스코드 메시지 길이 상한 안', sentContents.every((x) => x.length <= 2000));
   ok('녹화방 유튜브 링크는 미리보기 억제 괄호 없이 전송',
     sentContents[0].split('\n').includes(stream.url) && !sentContents[0].includes(`<${stream.url}>`));
@@ -3413,7 +3418,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   await forum.publishStreamRecord(fakeClient, session, stream, { refreshPreview: true });
   const previewEdits = recordPayloads.slice(previewStart);
   ok('미리보기 갱신은 링크·임베드를 비운 후 같은 링크 복원', previewEdits.length === 2 &&
-    !previewEdits[0].content.includes(stream.url) && previewEdits[0].embeds.length === 0 &&
+    !previewEdits[0].content.includes('youtube.com') && previewEdits[0].embeds.length === 0 &&
     previewEdits[1].content.split('\n').includes(stream.url) && !('embeds' in previewEdits[1]));
   ok('미리보기 갱신도 새 채팅 없이 무음·멘션 억제 유지', sentContents.length === 1 &&
     previewEdits[1].flags === 4096 && previewEdits.every((p) => p.allowedMentions.parse.length === 0));
