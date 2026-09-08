@@ -306,7 +306,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (interaction.customId.startsWith('m:hist')) await handleHistoryComponent(interaction);
       else await handleMusicComponent(interaction, peekGuildAudio(interaction.guildId));
     } catch (err) {
-      logError('[버튼]', err);
+      // ⚠️ **어느 버튼인지 같이 남깁니다.** "응답하지 않았어요" 만 보고는 원인을 찾을 수
+      //    없었던 일이 있었습니다. 로그에 customId 가 있으면 바로 짚을 수 있습니다.
+      logError(`[버튼 ${interaction.customId}]`, err);
       if (!interaction.replied && !interaction.deferred) {
         await interaction
           .reply({ content: `⚠️ ${err.message}`, flags: MessageFlags.Ephemeral })

@@ -88,20 +88,32 @@ export function layoutTrack(packets, { fromMs, toMs, decode }) {
   return Object.assign(out, { frames: used });
 }
 
-/** 사람별 트랙을 하나로 섞습니다. int16 더하기에 상한을 씌웁니다 (안 씌우면 찢어집니다). */
-export function mixTracks(tracks) {
+/**
+ * 사람별 트랙을 하나로 섞습니다. int16 더하기에 상한을 씌웁니다 (안 씌우면 찢어집니다).
+ *
+ * ⚠️ **이벤트 루프를 오래 막지 않게 조각내서 돕니다.** 30초 6명이면 샘플이 약 290만 개인데,
+ * 한 번에 다 돌면 그동안 봇이 **아무 응답도 못 합니다** — 1코어 서버에서는 그 사이에 눌린
+ * 버튼이 3초를 넘겨 "응답하지 않았어요" 가 됩니다. 하트비트까지 밀릴 수 있습니다.
+ * `yield` 를 받으면 중간중간 숨을 돌립니다.
+ */
+export async function mixTracks(tracks, yieldEvery = 0) {
   const kept = tracks.filter((t) => t?.length);
   if (kept.length === 0) return Buffer.alloc(0);
   if (kept.length === 1) return kept[0];
   const length = Math.max(...kept.map((t) => t.length));
   const out = Buffer.alloc(length - (length % SAMPLE_BYTES));
+  const breath = yieldEvery > 0 ? yieldEvery - (yieldEvery % SAMPLE_BYTES) : 0;
   for (let i = 0; i + 1 < out.length; i += 2) {
     let sum = 0;
     for (const track of kept) if (i + 1 < track.length) sum += track.readInt16LE(i);
     out.writeInt16LE(Math.max(-32_768, Math.min(32_767, sum)), i);
+    if (breath && i > 0 && i % breath === 0) await new Promise((r) => setImmediate(r));
   }
   return out;
 }
+
+/** 한 번에 처리할 양(바이트). 192바이트 = 1ms 이므로 이건 약 1초입니다. */
+const MIX_CHUNK_BYTES = 200 * BYTES_PER_MS;
 
 // ── 링버퍼 상태 ────────────────────────────────────────────
 
@@ -339,6 +351,8 @@ export async function saveLast(guildId, { folder, seconds = null, name = null } 
     } finally {
       decoder.delete?.();
     }
+    // 사람 사이마다 숨을 돌립니다. 디코딩도 동기라 6명을 몰아서 돌면 루프가 막힙니다.
+    await new Promise((r) => setImmediate(r));
   }
 
   if (tracks.length === 0) {
@@ -352,7 +366,7 @@ export async function saveLast(guildId, { folder, seconds = null, name = null } 
   const file = safeClipName(`소리-${name ? `${name}-` : ''}${stamp}`) + '.m4a';
   const outPath = path.join(dir, file);
 
-  await encodeM4a(mixTracks(tracks), outPath);
+  await encodeM4a(await mixTracks(tracks, MIX_CHUNK_BYTES), outPath);
   const stat = await fs.stat(outPath).catch(() => null);
   return { ok: true, file, bytes: stat?.size ?? 0, speakers, seconds: span };
 }

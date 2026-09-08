@@ -3628,6 +3628,19 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('실행한 사람이 음성방에 있어야 함', src.includes('먼저 음성채널에 들어가 주세요'));
   ok('다른 방에 있으면 옮기지 않고 거절', src.includes('옮기지 않았습니다'));
 
+  // ★ "2명 있었는데 1명만 찍혔다" 를 받았는데, 말 안 한 사람이 목록에서 빠져서
+  //   "조용했다" 와 "안 잡힌다" 를 구분할 수 없었다. 방에 있는 사람은 전부 나와야 한다.
+  ok('말 안 한 사람도 목록에 0으로 나옴', src.includes('for (const userId of memberIds) of(userId);'));
+  ok('ssrc 매핑 여부까지 보고 (소리가 아예 안 온 것과 구분)',
+    src.includes('receiver.ssrcMap?.get?.(userId)') && src.includes('ssrc 매핑 없음'));
+  // ★ 나만 보기 메시지는 디스코드가 저장하지 않는다. 새로고침하면 사라져 숫자를 잃는다.
+  ok('결과를 📢 로 남길 수 있음', src.includes('withShareButton({'));
+  ok('결과를 서버 로그에도 한 줄 남김', src.includes("console.log(\n        `[voice-probe]"));
+  ok('사라진다는 것을 화면에서 알려줌', src.includes('새로고침하면 사라집니다'));
+  // 버튼이 조용히 실패했을 때 어느 버튼인지 로그에 남아야 짚을 수 있다.
+  ok('버튼 오류 로그에 customId 를 남김',
+    fs.readFileSync('./src/index.js', 'utf8').includes('logError(`[버튼 ${interaction.customId}]`, err)'));
+
   // ★ 진단 때문에 들어왔으면 나가야 한다. `scheduleLeave()` 는 못 쓴다 —
   //    그건 사람이 있으면 안 나가는 규칙(3.3-1)이라 확인을 켠 사람 때문에 영원히 남고,
   //    애초에 재생이 끝나는 경로에서만 불려서 재생 없이 들어온 이 경우엔 아무도 안 부른다.
@@ -3740,11 +3753,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // 섞기 — 한쪽만 말한 구간은 그 사람 소리만, 겹친 구간은 더해진다.
   const a = layoutTrack(burst(0, 1000), { fromMs: t0, toMs: t0 + 2000, decode: decodeTo(5000) });
   const b = layoutTrack(burst(1000, 2000), { fromMs: t0, toMs: t0 + 2000, decode: decodeTo(3000) });
-  const mixed = mixTracks([a, b]);
+  const mixed = await mixTracks([a, b]);
   ok('섞어도 길이는 그대로', mixed.length === 2000 * BYTES_PER_MS);
   ok('각자 말한 구간이 각자 소리로 남음',
     rms(mixed, 100, 900) === 5000 && rms(mixed, 1100, 1900) === 3000);
-  const both = mixTracks([
+  const both = await mixTracks([
     layoutTrack(burst(0, 100), { fromMs: t0, toMs: t0 + 100, decode: decodeTo(5000) }),
     layoutTrack(burst(0, 100), { fromMs: t0, toMs: t0 + 100, decode: decodeTo(3000) }),
   ]);
@@ -3752,8 +3765,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // 상한을 안 씌우면 int16 을 넘겨 소리가 찢어진다.
   const loud = Buffer.alloc(400);
   for (let i = 0; i + 1 < loud.length; i += 2) loud.writeInt16LE(30_000, i);
-  ok('더해서 넘치면 상한을 씌움', mixTracks([loud, loud]).readInt16LE(0) === 32_767);
-  ok('빈 트랙만 있으면 빈 결과', mixTracks([Buffer.alloc(0), null]).length === 0);
+  ok('더해서 넘치면 상한을 씌움', (await mixTracks([loud, loud])).readInt16LE(0) === 32_767);
+  ok('빈 트랙만 있으면 빈 결과', (await mixTracks([Buffer.alloc(0), null])).length === 0);
+
 
   // 링버퍼 — 이 함수 하나가 메모리를 유지한다.
   const packets = burst(0, 1000);
@@ -3779,6 +3793,24 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('수신 오류는 원문을 남김', vbCode.includes("console.warn('[voice-buffer] 수신 오류:'"));
   // ★ 빈 파일을 남기면 "수신이 막혔다" 를 "조용했다" 로 오해한다.
   ok('받은 게 없으면 파일을 만들지 않음', /reason: 'silent'/.test(vbCode));
+  // ★ 섞기는 30초 6명이면 샘플이 약 290만 개다. 한 번에 다 돌면 그동안 봇이
+  //   **아무 응답도 못 한다** — 1코어 서버에서는 그 사이에 눌린 버튼이 3초를 넘겨
+  //   "응답하지 않았어요" 가 된다. 조각내서 숨을 돌리는지 확인한다.
+  ok('섞을 때 이벤트 루프를 놓아줌',
+    /await new Promise\(\(r\) => setImmediate\(r\)\)/.test(vbCode) &&
+      vbCode.includes('yieldEvery'));
+  ok('사람 사이마다 숨을 돌림 (디코딩도 동기다)',
+    /decoder\.delete\?\.\(\)[\s\S]{0,200}setImmediate/.test(vbCode));
+  {
+    // 숨을 돌려도 결과는 같아야 한다. 조각 경계에서 샘플이 밀리면 소리가 깨진다.
+    const a = Buffer.alloc(4000);
+    const b = Buffer.alloc(4000);
+    for (let i = 0; i + 1 < a.length; i += 2) { a.writeInt16LE(1000, i); b.writeInt16LE(500, i); }
+    const whole = await mixTracks([a, b]);
+    const chunked = await mixTracks([a, b], 192 * 2);
+    ok('조각내도 결과가 같음', Buffer.compare(whole, chunked) === 0);
+  }
+
   ok('길이는 설정 상한을 넘지 못함', /Math\.min\(config\.voice\.clipSec/.test(vbCode));
 
   // ── ★ 방송 기록과 **분리**되어 있어야 한다 ──
@@ -3816,8 +3848,16 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('실행한 사람이 음성방에 있어야 함', voiceSrc.includes('먼저 음성채널에 들어가 주세요'));
   ok('다른 방에 있으면 옮기지 않음', voiceSrc.includes('옮기면 거기서 듣던 소리가 끊기므로'));
   // ⚠️ 답을 먼저 해야 ✂️ 가 즉시 끝난다 (3초를 넘기면 버튼이 실패한다).
-  ok('✂️ 는 답을 먼저 하고 저장은 그 뒤에',
-    voiceSrc.indexOf('await interaction.reply(eph(`✂️ 지난') < voiceSrc.indexOf('await saveLast('));
+  //    ★ 앞서 이 검사를 괄호를 잘못 닫아 `indexOf('...' < indexOf(...))` 로 써서
+  //      **아무것도 검사하지 않고 통과**하고 있었다. 순서를 실제로 비교한다.
+  {
+    const replyAt = voiceSrc.indexOf('await interaction.reply(eph(`✂️ 지난');
+    const saveAt = voiceSrc.indexOf('await saveLast(');
+    ok('✂️ 는 답을 먼저 하고 저장은 그 뒤에', replyAt > 0 && saveAt > 0 && replyAt < saveAt,
+      `reply@${replyAt} save@${saveAt}`);
+  }
+  // ★ 편집 API 는 Ephemeral 플래그를 받지 않는다. 처음 reply 가 이미 나만 보기로 만들어 뒀다.
+  ok('editReply 에 Ephemeral 플래그를 넘기지 않음', !/editReply\(\s*eph\(/.test(voiceSrc));
   ok('개수는 하루 단위로 따로 셈',
     voiceSrc.includes('config.voice.maxClips') && voiceSrc.includes('clipsToday('));
   ok('용량 예산은 클립과 같이 씀 (정리가 소리도 지울 수 있게)',

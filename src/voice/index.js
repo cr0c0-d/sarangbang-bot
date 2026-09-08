@@ -175,17 +175,16 @@ async function saveNow(interaction, client) {
     saved = await saveLast(guildId, { folder });
   } catch (err) {
     // 원문을 그대로 보여줍니다. 원인을 추측하면 그 뒤로 진짜 원인을 못 찾습니다 (3.1-4).
-    return interaction.editReply(eph(`🎙️ 소리를 저장하지 못했습니다: ${err.message}`));
+    return interaction.editReply({ content: `🎙️ 소리를 저장하지 못했습니다: ${err.message}` });
   }
   if (!saved.ok) {
-    if (saved.reason === 'off') return interaction.editReply(eph('소리 기록이 꺼졌습니다.'));
+    if (saved.reason === 'off') return interaction.editReply({ content: '소리 기록이 꺼졌습니다.' });
     // ★ 수신이 막혀 있으면 **이 메시지가 그 신호입니다.** 빈 파일을 남기지 않습니다.
-    return interaction.editReply(
-      eph(
+    return interaction.editReply({
+      content:
         '🎙️ **받은 소리가 없어** 남기지 않았습니다.\n' +
-          '정말 조용했다면 정상입니다. 계속 이러면 `/관리자 음성수신확인` 으로 수신 상태를 봐주세요.'
-      )
-    );
+        '정말 조용했다면 정상입니다. 계속 이러면 `/관리자 음성수신확인` 으로 수신 상태를 봐주세요.',
+    });
   }
 
   addVoiceClip(guildId, {
@@ -197,12 +196,13 @@ async function saveNow(interaction, client) {
     speakers: saved.speakers,
   });
   await cleanupByBudget().catch((err) => console.warn('[voice] 예산 정리 실패:', err.message));
-  await interaction.editReply(
-    eph(
+  // ⚠️ `editReply` 에는 Ephemeral 플래그를 넘기지 않습니다. 편집 API 는 그 플래그를
+  //    받지 않고, 처음 `reply` 가 이미 나만 보기로 만들어 뒀습니다.
+  await interaction.editReply({
+    content:
       `🎧 **지난 ${saved.seconds}초를 남겼습니다** · 말한 사람 ${saved.speakers.length}명\n` +
-        `${saved.file} · ${fmtBytes(saved.bytes)}\n\n듣기: ${clipPageUrl(folder)}`
-    )
-  );
+      `${saved.file} · ${fmtBytes(saved.bytes)}\n\n듣기: ${clipPageUrl(folder)}`,
+  });
   return refreshVoicePanels(client, guildId);
 }
 

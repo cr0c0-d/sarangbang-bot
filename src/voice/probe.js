@@ -21,6 +21,7 @@ import {
 import { AudioPlayerStatus, EndBehaviorType, VoiceConnectionStatus } from '@discordjs/voice';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { userError } from '../user-error.js';
+import { withShareButton } from '../share.js';
 
 const DEFAULT_SEC = 15;
 const MAX_SEC = 30;
@@ -76,9 +77,14 @@ async function listen(connection, guild, memberIds, ms) {
   // 그래서 이 두 숫자가 갈리는 것 자체가 답입니다 (아래 진단 표).
   const tally = new Map();
   const of = (userId) => {
-    if (!tally.has(userId)) tally.set(userId, { speaking: 0, packets: 0, bytes: 0, error: null });
+    if (!tally.has(userId)) tally.set(userId, { speaking: 0, packets: 0, bytes: 0, error: null, ssrc: null });
     return tally.get(userId);
   };
+
+  // ★ **방에 있는 사람은 전부 미리 줄을 만들어 둡니다.**
+  //   말 안 한 사람이 목록에서 아예 빠지면 "조용했다" 와 "안 잡힌다" 를 구분할 수 없습니다.
+  //   실제로 "2명 있었는데 1명만 찍혔다" 를 받았는데, 그게 어느 쪽인지 알 수 없었습니다.
+  for (const userId of memberIds) of(userId);
 
   const streams = [];
   const watch = (userId) => {
@@ -112,6 +118,16 @@ async function listen(connection, guild, memberIds, ms) {
   });
 
   receiver.speaking.off('start', onSpeaking);
+  // ★ ssrc 매핑이 왔는지 = 디스코드가 "이 사람이 이 번호로 보낸다" 를 알려줬는지.
+  //   매핑이 없으면 아직 그 사람 소리는 한 번도 이 방에 오지 않은 것입니다.
+  //   `ssrcMap` 은 라이브러리 내부라 실패해도 조용히 넘깁니다.
+  for (const userId of tally.keys()) {
+    try {
+      of(userId).ssrc = Boolean(receiver.ssrcMap?.get?.(userId));
+    } catch {
+      of(userId).ssrc = null;
+    }
+  }
   for (const stream of streams) {
     try {
       stream.destroy();
@@ -243,9 +259,19 @@ export const commands = [
         .sort((a, b) => b[1].packets - a[1].packets)
         .map(([userId, row]) => {
           const avg = row.packets ? Math.round(row.bytes / row.packets) : 0;
+          // 아무것도 안 온 사람은 **왜** 안 왔는지까지 적습니다.
+          // ssrc 매핑조차 없으면 그 사람 소리가 이 방에 한 번도 오지 않은 것입니다.
+          const why =
+            row.packets || row.speaking
+              ? ''
+              : row.ssrc === false
+                ? ' → **아무 소리도 안 옴** (말을 안 했거나, 마이크가 꺼져 있거나, 이 사람 소리가 봇까지 오지 않음)'
+                : ' → 신호 없음';
           return (
             `<@${userId}> — 말하기 **${row.speaking}**회 · opus 패킷 **${row.packets}**개` +
             (row.packets ? ` (평균 ${avg}바이트, 총 ${(row.bytes / 1024).toFixed(1)}KB)` : '') +
+            (row.ssrc === false ? ' · ssrc 매핑 없음' : row.ssrc === true ? ' · ssrc 있음' : '') +
+            why +
             (row.error ? `\n　　⚠️ 오류 원문: \`${row.error}\`` : '')
           );
         });
@@ -253,8 +279,22 @@ export const commands = [
       const speaking = [...result.tally.values()].reduce((n, r) => n + r.speaking, 0);
       const packets = [...result.tally.values()].reduce((n, r) => n + r.packets, 0);
 
+      // ★ **나만 보기 메시지는 디스코드가 저장하지 않습니다.** 새로고침하거나 앱을 다시
+      //   켜면 사라집니다. 진단 결과가 사라지면 숫자를 옮겨 적을 수도 없습니다.
+      //   그래서 📢 로 채팅방에 남길 수 있게 합니다 (3.6-6a 의 그 버튼입니다).
+      //   또 서버 로그에도 한 줄 남깁니다 — 나중에 `journalctl` 로 찾을 수 있게.
+      console.log(
+        `[voice-probe] ${seconds}초 · 사람 ${humans.length}명 · 말하기 ${speaking} · 패킷 ${packets} · ` +
+          `귀 ${result.deafAfter?.selfDeaf ? '막힘' : '열림'} · 서버차단 ${result.deafAfter?.serverDeaf ? 'Y' : 'N'} · ` +
+          `암호화 ${result.encryptionMode ?? '?'} · DAVE ${result.dave ? 'Y' : 'N'}` +
+          [...result.tally.entries()]
+            .map(([id, r]) => ` | ${id}: 말하기 ${r.speaking} 패킷 ${r.packets} ssrc ${r.ssrc}${r.error ? ` 오류 ${r.error}` : ''}`)
+            .join('')
+      );
+
       return interaction.editReply(
-        [
+        withShareButton({
+          content: [
           `## 🎧 음성 수신 확인 (${seconds}초)`,
           '',
           `**결론** — ${diagnose({ speaking, packets, deaf: result.deafAfter, dave: result.dave })}`,
@@ -272,7 +312,9 @@ export const commands = [
           '',
           '-# 소리는 저장하지 않았습니다. 확인이 끝나 봇은 다시 귀를 막았습니다' +
             (joinedForProbe && !audio.connection ? ' (그리고 음성채널에서 나갔습니다).' : '.'),
-        ].join('\n')
+          '-# 이 화면은 나만 보이고 **새로고침하면 사라집니다.** 남기려면 📢 를 누르세요.',
+          ].join('\n'),
+        })
       );
     },
   },
