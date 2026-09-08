@@ -3180,8 +3180,63 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('개인 요약 재조회는 본인 방송만 선택', si.includes('streamOf(session, interaction.user.id)'));
   ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
   // 채널을 못 찾으면 **닫지 않는다.** 닫아버리면 [이어서 기록] 버튼도 못 그려서 되돌릴 길이 없다.
-  ok('방송 채널을 못 찾으면 종료하지 않음',
-    si.indexOf('const channel = await client.channels.fetch(session.channelId)') < si.indexOf('\n  closeSession(session);'));
+  {
+    const fetchAt = si.indexOf('const channel = await client.channels.fetch(session.channelId)');
+    const endAt = si.indexOf('if (mine) endStream(session, interaction.user.id);');
+    ok('방송 채널을 못 찾으면 종료하지 않음', fetchAt > 0 && endAt > 0 && fetchAt < endAt,
+      `fetch@${fetchAt} end@${endAt}`);
+  }
+
+  // ── ★ 방송 종료는 **사람마다 따로**여야 한다 ──
+  //
+  // 처음에는 세션을 통째로 닫아서, 한 사람이 누르면 **같은 게임의 다른 방송도 다 끝났다.**
+  // 소유자 지적: "한사람이 먼저 종료하고 다른사람은 이어서 계속하는 상황도 있을 수 있으니".
+  // 되돌아가면 남의 기록을 조용히 끊게 되므로 여기서 막는다.
+  {
+    const store = await import('./src/stream/store.js');
+    const s = store.openSession('end-guild', 'end-ch', '협동게임');
+    const base = { url: null, videoId: null, startedAt: store.nowSec() - 600, startSource: 'manual' };
+    store.putStream(s, { ...base, userId: 'a' });
+    store.putStream(s, { ...base, userId: 'b' });
+
+    ok('처음에는 둘 다 기록 중', store.liveStreams(s).length === 2 && !store.allStreamsEnded(s));
+    store.endStream(s, 'a');
+    ok('한 사람을 끝내도 남은 사람은 그대로',
+      store.liveStreams(s).length === 1 && store.liveStreams(s)[0].userId === 'b');
+    ok('끝낸 사람은 내 방송으로 안 잡힘 (마킹이 굳은 타임라인에 안 들어가게)',
+      store.liveStreamOf(s, 'a') === null && store.liveStreamOf(s, 'b')?.userId === 'b');
+    ok('아직 다 끝난 게 아님 (세션을 닫으면 안 된다)', store.allStreamsEnded(s) === false);
+    ok('이미 끝낸 사람을 다시 끝낼 수는 없음', store.endStream(s, 'a') === null);
+    store.endStream(s, 'b');
+    ok('마지막 사람이 끝내면 그때 다 끝남', store.allStreamsEnded(s) === true);
+    store.resumeStream(s, 'a');
+    ok('이어서 기록은 누른 사람 것만 다시 켬',
+      store.liveStreams(s).length === 1 && store.liveStreams(s)[0].userId === 'a');
+
+    // ⚠️ 옛 기록에는 `endedAt` 이 없다. 없으면 **켜져 있는 것**으로 봐야 한다 —
+    //    그래야 지난 방송이 갑자기 "종료됨" 으로 바뀌지 않는다.
+    const old = store.openSession('end-guild2', 'end-ch2', '옛것');
+    store.putStream(old, { ...base, userId: 'z' });
+    delete store.streamOf(old, 'z').endedAt;
+    ok('endedAt 이 없는 옛 기록은 켜진 것으로 봄', store.liveStreams(old).length === 1);
+
+    ok('내 것만 끝낸다고 답이 말해줌', si.includes('**내 방송 기록만** 종료했습니다'));
+    ok('남이 몇 명 계속하는지 알려줌', si.includes('명이 계속 기록 중입니다'));
+    ok('마지막 사람일 때만 세션을 닫음', si.includes('if (lastOne) closeSession(session);'));
+    // 진행 중인 기록을 녹화방에 올리면 반쪽만 담긴 채 굳는다.
+    ok('녹화 포스트에는 끝낸 내 것만 올림', si.includes('for (const stream of mine ? [mine] : session.streams)'));
+    ok('남이 계속하면 제어판을 다시 올리지 않고 그 자리에서 고침',
+      /if \(lastOne\) await repostStreamPanel[\s\S]{0,120}else scheduleStreamPanelRefresh/.test(si));
+    ok('남의 방송은 끄지 못함', si.includes('남의 방송은 끄지 않습니다'));
+    const sp = fs.readFileSync('./src/stream/panel.js', 'utf8');
+    ok('버튼 글자가 "내 방송 종료"', sp.includes(".setLabel('내 방송 종료')"));
+    ok('제어판이 끝낸 사람을 진행 중으로 안 보여줌',
+      sp.includes('const ended = Boolean(s.endedAt);') && sp.includes("`${elapsed} · **종료**`"));
+    ok('몇 명 기록 중 / 몇 명 종료를 한눈에', sp.includes('명 기록 중'));
+    const fo = fs.readFileSync('./src/game/forum.js', 'utf8');
+    ok('보류분은 사람별 종료도 인정',
+      fo.includes('if (!session.closedAt && !stream.endedAt) continue;'));
+  }
   // 세션을 다시 연 뒤 설명을 채우면 요약판이 제어판 아래에 쌓인다. 조건 없이 다시 올려야 한다.
   ok('설명을 채운 뒤에도 제어판을 조건 없이 맨 아래로',
     !/resendSummary[\s\S]{0,600}if \(!activeSession/.test(si));

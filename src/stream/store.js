@@ -167,6 +167,51 @@ export function streamOf(session, userId) {
 }
 
 /**
+ * ★ **방송 종료는 사람마다 따로입니다.** 소유자 지적:
+ *   "한사람이 먼저 종료하고 다른사람은 이어서 계속하는 상황도 있을 수 있으니,
+ *    방송종료도 다 개별적으로 하면 좋겠어"
+ *
+ * 그래서 세션의 `closedAt` 과 별개로 사람마다 `endedAt` 을 둡니다.
+ * 세션은 **마지막 사람이 끝낼 때** 닫힙니다.
+ *
+ * ⚠️ 옛 기록에는 `endedAt` 이 없습니다. `!x.endedAt` 이므로 **켜져 있는 것으로** 봅니다 —
+ *    그래야 지난 방송이 갑자기 "종료됨" 으로 바뀌지 않습니다.
+ */
+export function liveStreams(session) {
+  return (session?.streams ?? []).filter((x) => !x.endedAt);
+}
+
+/** 아직 켜져 있는 내 방송. **끝낸 방송에는 마킹을 넣지 않습니다.** */
+export function liveStreamOf(session, userId) {
+  const found = streamOf(session, userId);
+  return found && !found.endedAt ? found : null;
+}
+
+/** 내 방송만 끝냅니다. 남의 것은 건드리지 않습니다. */
+export function endStream(session, userId) {
+  const stream = streamOf(session, userId);
+  if (!stream || stream.endedAt) return null;
+  stream.endedAt = nowSec();
+  save();
+  return stream;
+}
+
+/** 잘못 눌렀을 때 내 방송만 다시 켭니다. **되돌리는 길이 있어야 비파괴입니다.** */
+export function resumeStream(session, userId) {
+  const stream = streamOf(session, userId);
+  if (!stream) return null;
+  stream.endedAt = null;
+  save();
+  return stream;
+}
+
+/** 등록한 사람이 전부 끝냈는가. 이때 세션을 닫습니다. */
+export function allStreamsEnded(session) {
+  const streams = session?.streams ?? [];
+  return streams.length > 0 && streams.every((x) => x.endedAt);
+}
+
+/**
  * 방송을 등록하거나 링크를 바꿔 끼웁니다.
  * 같은 사람이 다시 실행하면 **새로 만들지 않고 갈아끼웁니다** (오프셋은 초기화).
  */

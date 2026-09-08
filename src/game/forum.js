@@ -152,8 +152,11 @@ export async function publishPendingForGame(client, guildId, gameKey) {
   const { sessionsForGuild } = await import('../stream/store.js');
   let posted = 0;
   for (const session of sessionsForGuild(guildId)) {
-    if (!session.closedAt) continue;
     for (const stream of session.streams) {
+      // ★ 종료는 **사람별**입니다. 판이 아직 열려 있어도 이 사람은 이미 끝냈을 수 있고,
+      //   그 보류분은 포스트를 연결하는 순간 올라가야 합니다.
+      //   반대로 **아직 진행 중인 기록은 올리지 않습니다** — 반쪽만 담긴 채 굳습니다.
+      if (!session.closedAt && !stream.endedAt) continue;
       if (stream.gameKey !== gameKey || (stream.forumPosted?.messageIds?.length && stream.forumPosted.complete !== false)) continue;
       const result = await publishStreamRecord(client, session, stream);
       if (result.status === 'posted' || result.status === 'updated') posted += 1;

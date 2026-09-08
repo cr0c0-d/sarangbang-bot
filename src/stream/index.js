@@ -37,6 +37,11 @@ import {
   putStream,
   linkStreamReplay,
   streamOf,
+  liveStreams,
+  liveStreamOf,
+  endStream,
+  resumeStream,
+  allStreamsEnded,
   setOffset,
   addMark,
   removeLastMark,
@@ -584,7 +589,10 @@ async function markNow(interaction, client) {
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
   const userId = interaction.user.id;
-  const mine = streamOf(session, userId);
+  // ★ **끝낸 방송에는 넣지 않습니다.** 끝낸 사람도 방에 남아 같이 볼 수 있는데,
+  //   그때 찍은 것이 이미 굳은 내 타임라인에 들어가면 녹화방 글과 어긋납니다.
+  //   그런 사람의 마킹은 아래에서 **모두의 타임라인**으로 갑니다.
+  const mine = liveStreamOf(session, userId);
 
   // ★ **내 방송에만** 찍습니다. 동시에 방송을 켜도 각자 다른 게임을 할 수 있습니다.
   //   단 등록을 안 한 사람이 누르면 갈 곳이 없으므로 그때만 모두의 것으로 둡니다.
@@ -612,7 +620,7 @@ async function markNow(interaction, client) {
       }
     : eph(
         `✂️ 찍었습니다 (${count}번째) · **모두의 타임라인**에 넣었습니다.\n` +
-          '(내 방송이 등록되어 있지 않아서입니다. `🎬 지난 게임으로 등록` 또는 `/방송`으로 등록하면 그다음부터는 내 방송에만 찍힙니다)'
+          '(내 방송이 없거나 이미 끝냈기 때문입니다. `🎬 지난 게임으로 등록`·`/방송`으로 등록하거나 `▶️ 이어서 기록` 을 누르면 그다음부터는 내 방송에만 찍힙니다)'
       );
 
   // ⚠️ **답을 먼저 합니다.** 제어판 수정이 앞에 오면 전송 한도에 걸릴 때
@@ -709,9 +717,30 @@ function openOffsetModal(interaction) {
   return interaction.showModal(buildOffsetModal(mine));
 }
 
+/**
+ * ⏹️ **내 방송만** 끝냅니다.
+ *
+ * 처음에는 세션을 통째로 닫아서, 한 사람이 누르면 **같은 게임의 다른 방송도 다 끝났습니다.**
+ * 소유자 지적으로 사람별로 바꿨습니다 — 먼저 끝내고 나가는 사람과 계속하는 사람이 있습니다.
+ *
+ * 세션은 **마지막 사람이 끝낼 때** 닫힙니다. 그때만 제어판이 「종료」 모양이 됩니다.
+ */
 async function endSession(interaction, client) {
   const session = activeSession(interaction.guildId);
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
+
+  const mine = liveStreamOf(session, interaction.user.id);
+  if (!mine && session.streams.length > 0) {
+    // 등록한 사람이 아니거나 이미 끝낸 사람입니다. 남의 방송을 끄게 두면 안 됩니다.
+    return interaction.reply(
+      eph(
+        streamOf(session, interaction.user.id)
+          ? '이미 끝낸 방송입니다. 이어서 하려면 제어판의 **▶️ 이어서 기록** 을 누르세요.'
+          : '끝낼 내 방송이 없습니다. `/방송` 으로 등록한 사람만 자기 방송을 끝낼 수 있습니다.\n' +
+              '남의 방송은 끄지 않습니다 — 각자 자기 것만 끝냅니다.'
+      )
+    );
+  }
 
   await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
@@ -726,26 +755,37 @@ async function endSession(interaction, client) {
     );
   }
 
-  closeSession(session);
+  // ★ 내 것만 끝냅니다. 세션은 **마지막 사람**이 끝낼 때 닫습니다.
+  if (mine) endStream(session, interaction.user.id);
+  const lastOne = allStreamsEnded(session) || session.streams.length === 0;
+  if (lastOne) closeSession(session);
 
-  // 공유 녹화방 기록만 순서대로 보냅니다. 방송 채널에는 공개 요약을 보내지 않습니다.
+  // 공유 녹화방 기록도 **내 것만** 보냅니다. 남의 방송은 아직 진행 중일 수 있고,
+  // 진행 중인 기록을 올리면 타임라인이 반쪽만 담긴 채 굳습니다.
   let forumPosted = 0;
   let forumPending = 0;
   let forumFailed = 0;
-  for (const stream of session.streams) {
+  for (const stream of mine ? [mine] : session.streams) {
     const result = await publishStreamRecord(client, session, stream);
     if (result.status === 'posted' || result.status === 'updated') forumPosted += 1;
     else if (result.status === 'unlinked') forumPending += 1;
     else forumFailed += 1;
   }
 
-  // 제어판을 **맨 마지막에** 다시 올립니다. 그래야 채널 맨 아래에 남습니다.
-  await repostStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
+  // 판이 닫혔을 때만 제어판을 다시 올립니다. 그래야 「종료」 모양이 채널 맨 아래에 남습니다.
+  // 남이 계속 기록 중이면 **그 자리에서 고쳐 씁니다** — 한 사람 끝낼 때마다 제어판이
+  // 아래로 새로 올라오면 계속하는 사람들의 채팅이 밀립니다.
+  if (lastOne) await repostStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
+  else scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
 
+  const stillLive = liveStreams(session).length;
   const resultLines = [
-    '⏹️ 방송 기록을 종료했습니다. 본인 방송의 요약만 나만 보기로 표시합니다.',
+    '⏹️ **내 방송 기록만** 종료했습니다. 아래는 본인 요약입니다 (나만 보기).',
+    stillLive
+      ? `🔴 **${stillLive}명이 계속 기록 중입니다.** 그분들 방송은 그대로 돌아갑니다.`
+      : '모두 끝나서 이 판을 닫았습니다.',
     '다른 참여자는 `/방송`에서 지난 방송을 골라 자기 요약을 확인할 수 있습니다.',
-    '잘못 눌렀다면 방송 채널 제어판의 **▶️ 이어서 기록**으로 되돌릴 수 있습니다.',
+    '잘못 눌렀다면 제어판의 **▶️ 이어서 기록**으로 내 방송만 되돌릴 수 있습니다.',
   ];
   if (forumPosted) resultLines.push(`📺 녹화 포스트에 방송 기록 **${forumPosted}개**를 올렸습니다.`);
   if (forumPending) {
@@ -762,12 +802,23 @@ async function endSession(interaction, client) {
 async function reopen(interaction, client, sessionId) {
   const session = sessionById(sessionId);
   if (!session) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
-  if (activeSession(interaction.guildId)) {
+  const live = activeSession(interaction.guildId);
+  if (live && live.id !== session.id) {
     return interaction.reply(eph('이미 다른 방송을 기록 중입니다. 그걸 먼저 종료해주세요.'));
   }
 
-  reopenSession(session);
-  await interaction.reply(eph(`▶️ 다시 기록합니다. 마킹 ${session.marks.length}개가 그대로 있습니다.`));
+  // 판을 다시 열고, **누른 사람 방송만** 다시 켭니다. 남의 종료는 그대로 둡니다 —
+  // 각자 자기 것만 끝내는 것과 같은 이유입니다.
+  if (session.closedAt) reopenSession(session);
+  const mine = resumeStream(session, interaction.user.id);
+  await interaction.reply(
+    eph(
+      (mine
+        ? '▶️ **내 방송만** 다시 기록합니다.'
+        : '▶️ 다시 기록합니다. (등록한 내 방송이 없어 `/방송` 으로 등록해주세요)') +
+        ` 마킹 ${session.marks.length}개가 그대로 있습니다.`
+    )
+  );
   await ensureStreamPanel(client, interaction.guildId, session.channelId).catch(() => {});
 }
 

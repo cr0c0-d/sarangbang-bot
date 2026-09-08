@@ -60,8 +60,17 @@ export function isStreamHome(guildId, channelId) {
  *   (docs/게임방송-기획.md 2.2a)
  */
 function streamLine(guildId, s, now) {
-  const elapsed = humanDuration(now - s.startedAt - (s.offsetSec ?? 0));
-  const bits = [symbolMention(guildId, s.userId), s.game || '게임 미지정', s.url ? `[라이브](${s.url})` : '⚠️ 링크 연결 전', `시작 <t:${s.startedAt}:t>`, `${elapsed} 진행 중`];
+  // ★ 방송 종료는 **사람마다 따로**입니다. 끝낸 사람을 "진행 중" 으로 보여주면,
+  //   계속하는 사람이 자기 것도 끝난 줄 알고 다시 누릅니다 (3.6-9).
+  const ended = Boolean(s.endedAt);
+  const elapsed = humanDuration((ended ? s.endedAt : now) - s.startedAt - (s.offsetSec ?? 0));
+  const bits = [
+    ended ? `⏹️ ${symbolMention(guildId, s.userId)}` : symbolMention(guildId, s.userId),
+    s.game || '게임 미지정',
+    s.url ? `[라이브](${s.url})` : '⚠️ 링크 연결 전',
+    `시작 <t:${s.startedAt}:t>`,
+    ended ? `${elapsed} · **종료**` : `${elapsed} 진행 중`,
+  ];
   if (s.offsetSec) bits.push(`오프셋 ${s.offsetSec > 0 ? '+' : ''}${s.offsetSec}초`);
   // 시작 시각을 유튜브에서 못 읽었으면 **반드시 말해줘야** 합니다. 그때는 전부 어긋납니다.
   if (s.startSource !== 'release_timestamp') bits.push('⚠️ 시작 시각 추정');
@@ -78,7 +87,13 @@ export function buildStreamPanel(guildId) {
     const now = nowSec();
     const lines = [];
     if (session.game) lines.push(`**${session.game}**`);
-    lines.push(`켠 지 ${humanDuration(now - session.openedAt)} · 마킹 **${session.marks.length}개**`);
+    const liveCount = session.streams.filter((s) => !s.endedAt).length;
+    const endedCount = session.streams.length - liveCount;
+    lines.push(
+      `켠 지 ${humanDuration(now - session.openedAt)} · 마킹 **${session.marks.length}개**` +
+        // 누가 아직 켜져 있고 누가 끝냈는지 한눈에. 종료가 사람별이라 이게 없으면 헷갈립니다.
+        (session.streams.length ? ` · 🔴 ${liveCount}명 기록 중${endedCount ? ` · ⏹️ ${endedCount}명 종료` : ''}` : '')
+    );
     lines.push('');
     lines.push(
       session.streams.length > 0
@@ -132,7 +147,10 @@ export function buildStreamPanel(guildId) {
           .setDisabled(session.streams.length === 0),
         new ButtonBuilder()
           .setCustomId('tm:panel:end')
-          .setLabel('방송 종료')
+          // ★ **"내 방송"** 이라고 적습니다. 예전에는 이 버튼이 세션을 통째로 닫아서
+          //   한 사람이 누르면 남의 방송까지 끝났습니다. 이제 자기 것만 끝납니다 —
+          //   글자로도 그게 보여야 누르는 사람이 망설이지 않습니다.
+          .setLabel('내 방송 종료')
           .setEmoji('⏹️')
           .setStyle(ButtonStyle.Danger)
       )
