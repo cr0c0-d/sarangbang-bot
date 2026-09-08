@@ -18,7 +18,7 @@ import {
   MessageFlags,
   PermissionFlagsBits,
 } from 'discord.js';
-import { EndBehaviorType, VoiceConnectionStatus } from '@discordjs/voice';
+import { AudioPlayerStatus, EndBehaviorType, VoiceConnectionStatus } from '@discordjs/voice';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { userError } from '../user-error.js';
 
@@ -42,6 +42,20 @@ function peekNetworking(connection) {
   } catch {
     return { encryptionMode: null, dave: false };
   }
+}
+
+/**
+ * 진단 때문에 들어왔다면 진단이 끝나면 나가야 합니다.
+ *
+ * `scheduleLeave()` 를 쓸 수 없습니다. 그건 **사람이 있으면 안 나가는** 규칙(3.3-1)이라
+ * 음악에는 맞지만 진단에는 틀립니다 — 확인을 켠 사람이 그 방에 있으니 영원히 남습니다.
+ * 그리고 `scheduleLeave()` 는 재생이 끝나는 경로에서만 불리므로, 재생 없이 들어온 이 경우엔
+ * 아무도 불러주지 않습니다. 그대로 두면 봇이 음성방에 계속 앉아 있습니다.
+ */
+export function idleForProbe(audio) {
+  if (audio.isPlaying || audio.queue.length > 0) return false;
+  // 확인하는 15초 사이에 누가 읽어주기 채팅방에 글을 썼을 수도 있습니다. 그건 끊지 않습니다.
+  return audio.ttsPlayer?.state?.status === AudioPlayerStatus.Idle;
 }
 
 /** 봇이 실제로 귀를 막고 있는지 — 디스코드가 알려주는 값입니다 (우리가 보낸 요청이 아니라). */
@@ -177,6 +191,8 @@ export const commands = [
 
       await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
+      // 진단 때문에 새로 들어왔는지 기억합니다. 그랬다면 끝나고 나가야 합니다.
+      const joinedForProbe = !existing?.connection;
       const audio = getGuildAudio(channel.guild);
       const connection = await audio.connect(channel);
       if (connection.state.status !== VoiceConnectionStatus.Ready) {
@@ -214,6 +230,13 @@ export const commands = [
             console.warn('[voice-probe] 귀 막기 복원 실패:', err.message);
           }
         }
+        if (joinedForProbe && idleForProbe(audio)) {
+          try {
+            audio.destroy();
+          } catch (err) {
+            console.warn('[voice-probe] 음성채널에서 나가기 실패:', err.message);
+          }
+        }
       }
 
       const rows = [...result.tally.entries()]
@@ -247,7 +270,8 @@ export const commands = [
           `**사람별** (음성방 사람 ${humans.length}명)`,
           ...(rows.length ? rows : ['· 아무 신호도 없었습니다.']),
           '',
-          '-# 소리는 저장하지 않았습니다. 확인이 끝나 봇은 다시 귀를 막았습니다.',
+          '-# 소리는 저장하지 않았습니다. 확인이 끝나 봇은 다시 귀를 막았습니다' +
+            (joinedForProbe && !audio.connection ? ' (그리고 음성채널에서 나갔습니다).' : '.'),
         ].join('\n')
       );
     },

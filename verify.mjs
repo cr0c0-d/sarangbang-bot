@@ -3612,9 +3612,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 재생용 `connection.subscribe()` 와 받기용 `receiver.subscribe()` 는 다른 것이다.
   // 불변조건 1 은 재생 쪽 이야기이므로, 진단이 그걸 건드리지 않는지 확인한다.
-  // 주석은 일부러 `connection.subscribe()` 를 언급해 둘을 구분해 설명한다.
-  // 검사 대상은 **실제 호출**이므로 주석을 걷어내고 본다.
-  const probeCode = src.replace(/^\s*\/\/.*$/gm, '');
+  // 주석은 일부러 `connection.subscribe()` 와 `scheduleLeave()` 를 언급해 둘을 구분해 설명한다.
+  // 검사 대상은 **실제 호출**이므로 줄주석과 블록주석을 모두 걷어내고 본다.
+  const probeCode = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   ok('받기는 receiver.subscribe — 재생 구독을 건드리지 않음',
     probeCode.includes('receiver.subscribe(') && !/connection\.subscribe\(/.test(probeCode));
   ok('내부 구조 접근은 실패해도 죽지 않게 감쌈',
@@ -3623,6 +3623,28 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     /finally\s*\{[\s\S]*?selfDeaf: true/.test(src));
   ok('실행한 사람이 음성방에 있어야 함', src.includes('먼저 음성채널에 들어가 주세요'));
   ok('다른 방에 있으면 옮기지 않고 거절', src.includes('옮기지 않았습니다'));
+
+  // ★ 진단 때문에 들어왔으면 나가야 한다. `scheduleLeave()` 는 못 쓴다 —
+  //    그건 사람이 있으면 안 나가는 규칙(3.3-1)이라 확인을 켠 사람 때문에 영원히 남고,
+  //    애초에 재생이 끝나는 경로에서만 불려서 재생 없이 들어온 이 경우엔 아무도 안 부른다.
+  ok('진단 때문에 들어왔으면 끝나고 나감',
+    /joinedForProbe && idleForProbe\(audio\)[\s\S]{0,120}audio\.destroy\(\)/.test(probeCode) &&
+      !/scheduleLeave/.test(probeCode));
+  ok('원래 있던 커넥션은 끊지 않음', probeCode.includes('const joinedForProbe = !existing?.connection'));
+  ok('재생·읽어주기 중이면 안 나감',
+    /isPlaying \|\| audio\.queue\.length > 0/.test(probeCode) &&
+      probeCode.includes('AudioPlayerStatus.Idle'));
+
+  // 세 함수 다 순수하게 떼어져 있어야 검사할 수 있다.
+  const probeIdle = probe.idleForProbe ?? null;
+  if (probeIdle) {
+    const idle = { isPlaying: false, queue: [], ttsPlayer: { state: { status: 'idle' } } };
+    ok('아무것도 안 하면 나갈 수 있음', probeIdle(idle) === true);
+    ok('음악 중이면 안 나감', probeIdle({ ...idle, isPlaying: true }) === false);
+    ok('대기열이 남았으면 안 나감', probeIdle({ ...idle, queue: [1] }) === false);
+    ok('읽어주기 중이면 안 나감',
+      probeIdle({ ...idle, ttsPlayer: { state: { status: 'playing' } } }) === false);
+  }
 
   const d = probe.diagnose;
   ok('서버 차단이면 그것부터 말함',
