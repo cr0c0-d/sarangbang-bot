@@ -141,7 +141,7 @@ function keepMs() {
  * ★ **귀가 실제로 열렸는지 확인하고, 안 열렸으면 켜지 않습니다.**
  * 조용히 켜두면 나중에 버튼을 눌렀을 때 "받은 게 없다" 만 나오고 왜인지 알 수 없습니다.
  */
-export async function arm(audio, channel, userId) {
+export async function arm(audio, channel, userId, reason = 'manual') {
   const guildId = channel.guild.id;
   const existing = armed.get(guildId);
   if (existing) return { already: true, channelId: existing.channelId };
@@ -181,6 +181,9 @@ export async function arm(audio, channel, userId) {
     channelId: channel.id,
     byUserId: new Map(),
     armedBy: userId,
+    // 'manual' = 사람이 버튼으로 켬 · 'auto' = 사람이 들어와 따라 켜짐.
+    // 제어판이 이걸 보고 "자동으로 켜졌다" 를 알려줍니다 — 모르고 켜져 있으면 안 됩니다.
+    reason,
     armedAt: Date.now(),
     wasSelfDeaf,
     receiver,
@@ -215,7 +218,24 @@ export async function arm(audio, channel, userId) {
   for (const member of channel.members.values()) if (!member.user.bot) watch(member.id);
 
   armed.set(guildId, state);
-  return { already: false, channelId: channel.id, people: state.byUserId.size };
+  return { already: false, channelId: channel.id, reason, people: state.byUserId.size };
+}
+
+/**
+ * ★ 봇이 다른 음성방으로 옮겨졌으면 버퍼를 버립니다.
+ *
+ * 읽어주기는 **말한 사람의 방으로 봇을 옮깁니다**(`audio.connect()`). 커넥션은 그대로라
+ * 수신도 계속되는데, 그러면 **새 방 소리가 30초 전 옛 방 소리와 섞입니다.**
+ * 클립을 열어 들어보기 전까지 아무도 모르는 종류의 오류입니다.
+ *
+ * @returns 버렸으면 `true`
+ */
+export function dropIfMoved(guildId, currentChannelId) {
+  const state = armed.get(guildId);
+  if (!state || !currentChannelId || state.channelId === currentChannelId) return false;
+  console.log(`[voice] 봇이 다른 방으로 옮겨져 소리 기록을 껐습니다 (${state.channelId} → ${currentChannelId})`);
+  disarm(guildId, null);
+  return true;
 }
 
 /** 소리 기록을 끕니다. 버퍼는 메모리에만 있었으므로 그대로 사라집니다. */

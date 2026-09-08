@@ -17,11 +17,12 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { config } from '../config.js';
+import { get as getSetting, featureEnabled } from '../settings.js';
 import { userError } from '../user-error.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { rememberPanel, forgetPanel, rememberedPanels, VOICE } from '../panel-registry.js';
 import { clipPageUrl, fmtBytes, cleanupByBudget } from '../stream/clips.js';
-import { arm, disarm, isArmed, armedIn, bufferedInfo, saveLast } from './buffer.js';
+import { arm, disarm, isArmed, armedIn, bufferedInfo, saveLast, dropIfMoved } from './buffer.js';
 import { addVoiceClip, clipsToday, folderFor, recentDays } from './store.js';
 
 const eph = (content) => ({ content, flags: MessageFlags.Ephemeral });
@@ -42,7 +43,10 @@ export function buildVoicePanel(guildId) {
   if (state) {
     const buf = bufferedInfo(guildId);
     embed.setTitle('🎙️ 소리 기록 중');
-    lines.push(`<#${state.channelId}> · 켠 지 ${since(state.armedAt)}`);
+    lines.push(
+      `<#${state.channelId}> · 켠 지 ${since(state.armedAt)}` +
+        (state.reason === 'auto' ? ' · **자동으로 켜졌습니다**' : '')
+    );
     lines.push(`지난 **${config.voice.clipSec}초**를 들고 있습니다 · 말한 사람 **${buf?.people ?? 0}명**`);
     lines.push('');
     lines.push('웃긴 순간에 **✂️ 지금 30초** 를 누르면 그 소리가 남습니다.');
@@ -52,7 +56,14 @@ export function buildVoicePanel(guildId) {
     lines.push('음성채널 대화의 **지난 30초**를 뒤늦게 남기는 기능입니다.');
     lines.push('화면 녹화가 없어도 됩니다. 그냥 대화하다 웃긴 순간을 남기는 용도입니다.');
     lines.push('');
-    lines.push('음성채널에 들어간 다음 **🎙️ 켜기** 를 누르세요.');
+    const auto = getSetting(guildId, 'voiceRecordChannelIds');
+    lines.push(
+      auto?.length
+        ? `${auto.map((id) => `<#${id}>`).join(' ')} 에 **${config.voice.autoMinPeople}명 이상** 모이면 저절로 켜집니다.\n` +
+            '지금 바로 켜려면 음성채널에 들어가 **🎙️ 기록 켜기** 를 누르세요.'
+        : '음성채널에 들어간 다음 **🎙️ 기록 켜기** 를 누르세요.\n' +
+            '-# `/관리자 채널설정 종류:소리 기록 음성채널` 로 지정하면 사람이 모일 때 저절로 켜집니다.'
+    );
   }
 
   if (today.length > 0) {
@@ -193,6 +204,91 @@ async function saveNow(interaction, client) {
     )
   );
   return refreshVoicePanels(client, guildId);
+}
+
+// ── 자동으로 켜기 (사람이 들어오면 따라 들어감) ──────────────────
+
+const humansIn = (channel) => [...(channel?.members?.values?.() ?? [])].filter((m) => !m.user.bot).length;
+
+/** 이 음성채널이 자동 대상인가. **비워두면 아무 방도 아닙니다** (이미지 채널과 반대). */
+function autoTarget(guildId, channelId) {
+  const list = getSetting(guildId, 'voiceRecordChannelIds');
+  return Array.isArray(list) && list.includes(channelId);
+}
+
+/**
+ * 그 음성채널의 채팅에 제어판을 띄웁니다.
+ *
+ * 음성채널도 텍스트 채널입니다(3.4-1). 여기 띄워야 **웃긴 순간에 누를 버튼이 눈앞에**
+ * 있습니다 — 자동으로 켜놓고 버튼이 딴 데 있으면 자동인 의미가 없습니다.
+ */
+async function ensurePanelIn(channel, guildId) {
+  if (!channel?.isTextBased?.()) return;
+  const known = rememberedPanels(VOICE).find(([channelId]) => channelId === channel.id);
+  const payload = { ...buildVoicePanel(guildId), allowedMentions: { parse: [] } };
+  if (known) {
+    try {
+      const message = await channel.messages.fetch(known[1]);
+      await message.edit(payload);
+      return;
+    } catch (err) {
+      if (err.code !== 10008) return void console.warn('[voice] 제어판 갱신 실패:', channel.id, err.message);
+      forgetPanel(VOICE, channel.id);
+    }
+  }
+  try {
+    // 자동으로 뜨는 제어판이라 알림은 끕니다. 방에 들어올 때마다 울리면 곧 끄게 됩니다.
+    const message = await channel.send({ ...payload, flags: MessageFlags.SuppressNotifications });
+    rememberPanel(VOICE, channel.id, message.id);
+  } catch (err) {
+    console.warn('[voice] 제어판 표시 실패:', channel.id, err.message);
+  }
+}
+
+/**
+ * 음성채널 인원이 바뀔 때마다 불립니다. 켜고 끄는 판단이 전부 여기 있습니다.
+ *
+ * ★ **끄는 쪽을 먼저 봅니다.** 켜는 조건만 보면 사람이 빠져나간 뒤에도 계속 켜져 있습니다.
+ */
+export async function syncAutoVoiceRecord(client, oldState, newState) {
+  const guildId = newState.guild.id;
+  if (!config.voice.enabled || !featureEnabled(guildId, 'voice')) return;
+
+  const audio = peekGuildAudio(guildId);
+  const botChannelId = audio?.connection?.joinConfig?.channelId ?? null;
+
+  // ⚠️ 읽어주기가 봇을 다른 방으로 옮겼을 수 있습니다. 그러면 두 방 소리가 섞입니다.
+  if (dropIfMoved(guildId, botChannelId)) await refreshVoicePanels(client, guildId);
+
+  const state = armedIn(guildId);
+  if (state) {
+    // 자동으로 켠 것만 자동으로 끕니다. 사람이 켠 것을 봇이 끄면 안 됩니다.
+    const room = newState.guild.channels.cache.get(state.channelId);
+    if (state.reason === 'auto' && humansIn(room) < config.voice.autoMinPeople) {
+      disarm(guildId, audio);
+      await refreshVoicePanels(client, guildId);
+    }
+    return;
+  }
+
+  const channel = newState.channel;
+  if (!channel?.isVoiceBased?.() || !autoTarget(guildId, channel.id)) return;
+  if (humansIn(channel) < config.voice.autoMinPeople) return;
+  // 다른 방에서 뭔가 재생 중이면 옮기지 않습니다. 옮기면 듣던 사람 소리가 끊깁니다.
+  if (botChannelId && botChannelId !== channel.id) return;
+
+  try {
+    const guildAudio = getGuildAudio(channel.guild);
+    await guildAudio.connect(channel);
+    await arm(guildAudio, channel, null, 'auto');
+  } catch (err) {
+    // 귀가 안 열리거나 권한이 없으면 켜지 않습니다. 원문을 남깁니다 (3.1-4).
+    console.warn('[voice] 자동으로 켜지 못했습니다:', channel.id, err.message);
+    return;
+  }
+  console.log(`[voice] 소리 기록을 자동으로 켰습니다 — ${channel.name} (${humansIn(channel)}명)`);
+  await ensurePanelIn(channel, guildId);
+  await refreshVoicePanels(client, guildId);
 }
 
 /** `vc:` 로 시작하는 버튼만 이 모듈이 받습니다. */

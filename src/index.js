@@ -44,7 +44,7 @@ import {
   disarm as disarmVoiceBuffer,
   forgetSpeaker as forgetVoiceSpeaker,
 } from './voice/buffer.js';
-import { isVoiceComponent, handleVoiceComponent, refreshVoicePanels } from './voice/index.js';
+import { isVoiceComponent, handleVoiceComponent, refreshVoicePanels, syncAutoVoiceRecord } from './voice/index.js';
 import { initVoiceClips, flushVoiceClips } from './voice/store.js';
 import { installQuietStreamReplies } from './stream/quiet.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
@@ -371,15 +371,23 @@ client.on(Events.MessageCreate, async (message) => {
 // ── 아무도 없는 음성채널에 혼자 남으면 나가기 ────────────────
 
 client.on(Events.VoiceStateUpdate, (oldState, newState) => {
-  if (inRole('stream') && oldState.channelId !== newState.channelId) {
+  const moved = oldState.channelId !== newState.channelId;
+  if (inRole('stream') && moved) {
     syncVoiceStreamPanels(client, newState.guild.id)
       .catch((err) => console.warn('[stream] 음성 이동 제어판 갱신 실패:', err.message));
+  }
+  // ⚠️ 아래는 **소리 기록** 몫입니다. 방송 기록 조건 안에 넣으면 안 됩니다 —
+  //    지금은 망고가 둘 다 맡아서 우연히 돌지만, 역할이 갈리면 조용히 멈춥니다.
+  if (inRole('voice') && moved) {
     // 소리 기록 중이던 방에서 나간 사람의 버퍼는 버립니다.
     // 안 버리면 켜둔 동안 나간 사람 몫이 계속 남습니다.
     const armedVoice = voiceArmedIn(newState.guild.id);
     if (armedVoice && oldState.channelId === armedVoice.channelId && newState.channelId !== armedVoice.channelId) {
       forgetVoiceSpeaker(newState.guild.id, (newState.member ?? oldState.member)?.id);
     }
+    // 지정한 방에 사람이 모이면 따라 들어가 켜고, 빠지면 끕니다.
+    syncAutoVoiceRecord(client, oldState, newState)
+      .catch((err) => console.warn('[voice] 자동 켜기/끄기 실패:', err.message));
   }
   // 누군가 음성채널에 들어오면 곧 읽어주기를 쓸 가능성이 높습니다.
   // 그때 미리 데워두면 첫 메시지도 즉시 나옵니다.

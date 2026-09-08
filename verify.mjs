@@ -3794,7 +3794,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('방송 제어판에 소리 버튼이 없음', !streamPanelSrc.includes("tm:panel:voice"));
   ok('소리 기록은 방송 세션을 쓰지 않음 (날짜 폴더)',
     !/stream\/store\.js/.test(fs.readFileSync('./src/voice/index.js', 'utf8')));
-  const { FEATURES: vbFeatures } = await import('./src/settings.js');
+  const { FEATURES: vbFeatures, KEYS: vbKeys } = await import('./src/settings.js');
   ok('기능 토글도 따로 (voice)', Object.keys(vbCfg.voice).length >= 3 && vbFeatures.voice?.label === '소리 기록');
 
   // ── `/음성기록` 명령어와 제어판 ──
@@ -3836,8 +3836,52 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     vStore.folderFor('1111', new Date(2026, 8, 8)) !== vStore.folderFor('2222', new Date(2026, 8, 8)));
 
   // 재시작하면 링버퍼는 꺼진다. 제어판이 "기록 중" 으로 남으면 거짓말이 된다.
-  ok('재시작 때 제어판을 꺼진 상태로 고쳐 씀',
-    fs.readFileSync('./src/index.js', 'utf8').includes("inRole('voice') ? Promise.all"));
+  const indexSrc = fs.readFileSync('./src/index.js', 'utf8');
+  ok('재시작 때 제어판을 꺼진 상태로 고쳐 씀', indexSrc.includes("inRole('voice') ? Promise.all"));
+
+  // ── 자동으로 켜기 (사람이 들어오면 따라 들어감) ──
+  //
+  // ★ 여기 조건이 틀리면 **조용히 틀린다.** 아무 방에서나 켜지거나, 사람이 빠져나간 뒤에도
+  //   계속 켜져 있거나, 남이 듣던 음악을 끊어버린다. 셋 다 사고가 난 뒤에 알게 된다.
+  ok('자동 대상은 비워두면 아무 방도 아님 (이미지 채널과 반대)',
+    vbCfg.voice.autoChannelIds.length === 0 &&
+      voiceSrc.includes('Array.isArray(list) && list.includes(channelId)'));
+  ok('자동 대상은 /관리자 채널설정 으로 지정',
+    vbKeys?.voiceRecordChannelIds?.kind === 'voice' &&
+      vbKeys.voiceRecordChannelIds.multi === true &&
+      vbKeys.voiceRecordChannelIds.feature === 'voice');
+  ok('혼자 있을 때는 켜지 않음 (기본 2명)',
+    vbCfg.voice.autoMinPeople === 2 &&
+      voiceSrc.includes('humansIn(channel) < config.voice.autoMinPeople'));
+  ok('봇은 사람으로 세지 않음', voiceSrc.includes("filter((m) => !m.user.bot).length"));
+  // ★ 끄는 쪽을 먼저 본다. 켜는 조건만 보면 사람이 빠져나간 뒤에도 계속 켜져 있다.
+  ok('사람이 빠지면 자동으로 끔',
+    /state\.reason === 'auto' && humansIn\(room\) < config\.voice\.autoMinPeople/.test(voiceSrc));
+  // 사람이 손으로 켠 것을 봇이 끄면 "왜 꺼졌지" 가 된다.
+  ok('손으로 켠 것은 자동으로 끄지 않음', voiceSrc.includes("state.reason === 'auto' &&"));
+  ok('다른 방에서 재생 중이면 옮기지 않음',
+    /botChannelId && botChannelId !== channel\.id\) return/.test(voiceSrc));
+  ok('자동으로 켜졌으면 제어판이 그렇다고 말함',
+    voiceSrc.includes("state.reason === 'auto' ? ' · **자동으로 켜졌습니다**'"));
+  ok('제어판을 그 음성채널 채팅에 띄움 (버튼이 눈앞에 있어야 함)',
+    voiceSrc.includes('async function ensurePanelIn') && voiceSrc.includes('SuppressNotifications'));
+  ok('자동으로 켜다 실패하면 원문을 남기고 조용히 포기',
+    voiceSrc.includes("console.warn('[voice] 자동으로 켜지 못했습니다:'"));
+  ok('기능이 꺼져 있으면 자동도 안 켜짐',
+    /!config\.voice\.enabled \|\| !featureEnabled\(guildId, 'voice'\)\) return/.test(voiceSrc));
+
+  // ★ 읽어주기는 봇을 **말한 사람 방으로 옮긴다**. 커넥션은 그대로라 수신도 계속되는데,
+  //   그러면 새 방 소리가 30초 전 옛 방 소리와 섞인다. 들어보기 전까지 아무도 모른다.
+  ok('봇이 다른 방으로 옮겨지면 버퍼를 버림',
+    vbCode.includes('export function dropIfMoved') &&
+      /state\.channelId === currentChannelId\) return false/.test(vbCode));
+  ok('옮김 검사를 인원 변화마다 함', voiceSrc.includes('dropIfMoved(guildId, botChannelId)'));
+  ok('같은 방이면 버리지 않음',
+    vb.dropIfMoved('없는길드', 'ch') === false);
+  // 소리 기록 몫을 방송 기록 조건 안에 넣으면 역할이 갈릴 때 조용히 멈춘다.
+  ok('자동 켜기는 voice 역할로 판단 (stream 안에 넣지 않음)',
+    /if \(inRole\('voice'\) && moved\)/.test(indexSrc) &&
+      !/inRole\('stream'\) && moved\)[\s\S]{0,400}syncAutoVoiceRecord/.test(indexSrc));
 }
 
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**

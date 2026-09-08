@@ -90,6 +90,15 @@ export const KEYS = {
     envValue: () => config.stream.screenshotForumId,
     envName: 'SCREENSHOT_FORUM_ID',
   },
+  voiceRecordChannelIds: {
+    label: '소리 기록 음성채널',
+    feature: 'voice',
+    hint: '사람이 들어오면 따라 들어가 자동으로 켭니다. 비워두면 자동으로 켜지지 않습니다',
+    kind: 'voice',
+    multi: true,
+    envValue: () => config.voice.autoChannelIds,
+    envName: 'VOICE_AUTO_CHANNEL_ID',
+  },
   imageChannelIds: {
     label: '이미지 채널',
     feature: 'images',
