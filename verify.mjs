@@ -3669,6 +3669,141 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
       .includes("if (inRole('stream')) actions.set('음성수신확인'"));
 }
 
+// 6s-3) 소리 되돌리기 링버퍼 (`src/stream/voice-buffer.js`)
+//
+// ★ 무음 메우기가 이 기능에서 유일하게 "조용히 틀릴 수 있는" 곳이다.
+//   패킷에는 시간 정보가 없어서 도착 시각으로 위치를 잡는데, 이게 틀리면
+//   사람별 트랙이 서로 밀린다. 그리고 **틀려도 소리는 난다** — 클립을 열어
+//   들어보기 전까지 아무도 모른다. 그래서 순수 함수로 떼어 여기서 확인한다.
+{
+  const vb = await import('./src/stream/voice-buffer.js');
+  const { layoutTrack, mixTracks, pruneTrack, BYTES_PER_MS } = vb;
+
+  ok('1ms = 192바이트 (48kHz 스테레오 int16)', BYTES_PER_MS === 192);
+
+  // 20ms 프레임 하나를 3840바이트 PCM 으로 흉내내는 가짜 디코더.
+  // 실제 opus 디코딩은 이 PC 에서 따로 돌려 확인했다 (실시간의 381배속).
+  const FRAME_BYTES = 20 * BYTES_PER_MS;
+  const fakeFrame = (v) => {
+    const b = Buffer.alloc(FRAME_BYTES);
+    for (let i = 0; i + 1 < b.length; i += 2) b.writeInt16LE(v, i);
+    return b;
+  };
+  const decodeTo = (v) => () => fakeFrame(v);
+  const t0 = 1_000_000;
+  const burst = (fromMs, toMs) => {
+    const out = [];
+    for (let t = fromMs; t < toMs; t += 20) out.push({ at: t0 + t, data: Buffer.from([1]) });
+    return out;
+  };
+  const rms = (buf, fromMs, toMs) => {
+    let sum = 0;
+    let n = 0;
+    for (let i = fromMs * BYTES_PER_MS; i + 1 < toMs * BYTES_PER_MS && i + 1 < buf.length; i += 2) {
+      sum += buf.readInt16LE(i) ** 2;
+      n += 1;
+    }
+    return n ? Math.round(Math.sqrt(sum / n)) : -1;
+  };
+
+  // 0~1000ms 말하고, 1000~3000ms 조용, 3000~4000ms 다시 말함
+  const gappy = [...burst(0, 1000), ...burst(3000, 4000)];
+  const track = layoutTrack(gappy, { fromMs: t0, toMs: t0 + 4000, decode: decodeTo(8000) });
+  ok('길이는 요청한 구간 그대로', track.length === 4000 * BYTES_PER_MS, `${track.length}바이트`);
+  ok('패킷을 하나도 안 버림', track.frames === gappy.length, `${track.frames}/${gappy.length}`);
+  ok('말한 구간에는 소리가 있음', rms(track, 0, 900) === 8000 && rms(track, 3100, 3900) === 8000);
+  // ★ 이것이 핵심이다. 조용한 구간이 **그 자리에** 있어야 뒤 소리가 안 밀린다.
+  ok('조용한 구간은 정확히 그 자리에 무음', rms(track, 1100, 2900) === 0,
+    `RMS ${rms(track, 1100, 2900)}`);
+
+  ok('구간보다 앞선 패킷은 무시',
+    layoutTrack(burst(-5000, -1000), { fromMs: t0, toMs: t0 + 1000, decode: decodeTo(8000) }).frames === 0);
+  ok('구간보다 뒤인 패킷은 무시',
+    layoutTrack(burst(5000, 6000), { fromMs: t0, toMs: t0 + 1000, decode: decodeTo(8000) }).frames === 0);
+  ok('구간을 넘겨 쓰지 않음',
+    layoutTrack(burst(0, 5000), { fromMs: t0, toMs: t0 + 1000, decode: decodeTo(8000) }).length ===
+      1000 * BYTES_PER_MS);
+  // 지터로 뭉쳐 도착하면 덮어쓰지 않고 이어 붙인다 — 덮어쓰면 말소리가 사라진다.
+  const clumped = [0, 0, 0, 0, 0].map(() => ({ at: t0 + 500, data: Buffer.from([1]) }));
+  const clumpedTrack = layoutTrack(clumped, { fromMs: t0, toMs: t0 + 1000, decode: decodeTo(8000) });
+  ok('뭉쳐 도착한 패킷도 버리지 않고 이어 붙임', clumpedTrack.frames === 5);
+  ok('한 프레임이 깨져도 그 자리만 무음',
+    layoutTrack(burst(0, 100), {
+      fromMs: t0, toMs: t0 + 1000,
+      decode: () => { throw new Error('깨진 프레임'); },
+    }).frames === 0);
+
+  // 섞기 — 한쪽만 말한 구간은 그 사람 소리만, 겹친 구간은 더해진다.
+  const a = layoutTrack(burst(0, 1000), { fromMs: t0, toMs: t0 + 2000, decode: decodeTo(5000) });
+  const b = layoutTrack(burst(1000, 2000), { fromMs: t0, toMs: t0 + 2000, decode: decodeTo(3000) });
+  const mixed = mixTracks([a, b]);
+  ok('섞어도 길이는 그대로', mixed.length === 2000 * BYTES_PER_MS);
+  ok('각자 말한 구간이 각자 소리로 남음',
+    rms(mixed, 100, 900) === 5000 && rms(mixed, 1100, 1900) === 3000);
+  const both = mixTracks([
+    layoutTrack(burst(0, 100), { fromMs: t0, toMs: t0 + 100, decode: decodeTo(5000) }),
+    layoutTrack(burst(0, 100), { fromMs: t0, toMs: t0 + 100, decode: decodeTo(3000) }),
+  ]);
+  ok('겹친 구간은 더해짐', rms(both, 0, 90) === 8000);
+  // 상한을 안 씌우면 int16 을 넘겨 소리가 찢어진다.
+  const loud = Buffer.alloc(400);
+  for (let i = 0; i + 1 < loud.length; i += 2) loud.writeInt16LE(30_000, i);
+  ok('더해서 넘치면 상한을 씌움', mixTracks([loud, loud]).readInt16LE(0) === 32_767);
+  ok('빈 트랙만 있으면 빈 결과', mixTracks([Buffer.alloc(0), null]).length === 0);
+
+  // 링버퍼 — 이 함수 하나가 메모리를 유지한다.
+  const packets = burst(0, 1000);
+  pruneTrack(packets, t0 + 500);
+  ok('오래된 패킷을 버려 링버퍼가 유지됨',
+    packets.length === 25 && packets[0].at === t0 + 500, `${packets.length}개`);
+  ok('버릴 게 없으면 그대로', pruneTrack(burst(0, 100), t0 - 1).length === 5);
+
+  // ── 안전장치 ──
+  const vbSrc = fs.readFileSync('./src/stream/voice-buffer.js', 'utf8');
+  const vbCode = vbSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+  const { config: vbCfg } = await import('./src/config.js');
+  ok('기본은 꺼짐 (수신을 아직 확인하지 못했다)', vbCfg.stream.voiceClip === false);
+  ok('되돌릴 길이 기본 30초', vbCfg.stream.voiceClipSec === 30);
+  ok('켤 때 귀가 열렸는지 실제 상태로 확인', vbCode.includes('botDeafState(channel.guild)'));
+  ok('귀가 안 열리면 켜지 않음', vbSrc.includes('소리를 받을 수 없어 켜지 않았습니다'));
+  ok('서버 차단이면 그것부터 알려줌', vbSrc.includes('헤드셋 차단'));
+  ok('받기는 receiver.subscribe — 재생 구독을 건드리지 않음',
+    vbCode.includes('receiver.subscribe(') && !/connection\.subscribe\(/.test(vbCode));
+  ok('끄면 버퍼를 비우고 귀를 다시 막음',
+    /byUserId\.clear\(\)/.test(vbCode) && /selfDeaf: true/.test(vbCode));
+  ok('나간 사람의 버퍼는 버림', vbCode.includes('export function forgetSpeaker'));
+  ok('수신 오류는 원문을 남김', vbCode.includes("console.warn('[voice-buffer] 수신 오류:'"));
+  // ★ 빈 파일을 남기면 "수신이 막혔다" 를 "조용했다" 로 오해한다.
+  ok('받은 게 없으면 파일을 만들지 않음', /reason: 'silent'/.test(vbCode));
+  ok('길이는 설정 상한을 넘지 못함', /Math\.min\(config\.stream\.voiceClipSec/.test(vbCode));
+
+  // 개수 칸은 영상과 따로, 용량 예산은 같이 쓴다.
+  const streamSrc = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('소리 개수는 영상 클립과 따로 셈',
+    streamSrc.includes("(session.clips ?? []).filter((c) => c.kind === 'voice')") &&
+      streamSrc.includes('config.stream.voicePerSession'));
+  ok('용량 예산은 클립과 같이 씀 (정리가 소리도 지울 수 있게)',
+    /saveVoiceAfterMark[\s\S]*?cleanupByBudget\(\)/.test(streamSrc));
+  ok('마킹 칸이 다 차도 소리는 남김', /if \(voiceOn\)[\s\S]{0,200}saveVoiceAfterMark\(interaction, session, null\)/.test(streamSrc));
+  // ⚠️ 답을 먼저 해야 ✂️ 가 즉시 끝난다. 저장은 그 뒤다 (3초를 넘기면 버튼이 실패한다).
+  ok('✂️ 는 답을 먼저 하고 저장은 그 뒤에',
+    streamSrc.indexOf('await interaction.reply(payload);') <
+      streamSrc.indexOf('if (voiceOn) await saveVoiceAfterMark(interaction, session, mark);'));
+  ok('다른 방에 있으면 옮기지 않음', streamSrc.includes('옮기면 거기서 듣던 소리가 끊기므로'));
+
+  // 제어판 — 켜져 있을 때만 버튼이 보이고, 소리만 켜도 ✂️ 를 누를 수 있어야 한다.
+  const panelSrc = fs.readFileSync('./src/stream/panel.js', 'utf8');
+  ok('소리 기록이 꺼진 서버에는 버튼이 없음',
+    panelSrc.includes('if (config.stream.voiceClip) {') &&
+      panelSrc.includes("setCustomId('tm:panel:voice')"));
+  ok('소리만 켜도 ✂️ 를 누를 수 있음',
+    panelSrc.includes('.setDisabled(session.streams.length === 0 && !voiceArmed)'));
+  // ★ 웃긴 순간에 누를 버튼이 **눈앞에** 있어야 한다. 방송 등록자가 없으면
+  //   보조판이 안 뜨므로, 기록 중인 음성채널을 따로 넣어준다.
+  ok('기록 중인 음성채널에 보조 제어판이 뜸',
+    /voiceArmedIn\(guildId\)[\s\S]{0,200}wanted\.add\(voice\.channelId\)/.test(panelSrc));
+}
+
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
 //
 // 디스코드 빌더는 `toJSON()` 안에서 값을 검사한다. 부르지 않으면 아무것도 확인하지 못한다.

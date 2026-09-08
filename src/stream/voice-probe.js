@@ -59,7 +59,7 @@ export function idleForProbe(audio) {
 }
 
 /** 봇이 실제로 귀를 막고 있는지 — 디스코드가 알려주는 값입니다 (우리가 보낸 요청이 아니라). */
-function botDeafState(guild) {
+export function botDeafState(guild) {
   const voice = guild?.members?.me?.voice;
   if (!voice) return null;
   return { selfDeaf: Boolean(voice.selfDeaf), serverDeaf: Boolean(voice.deaf) };

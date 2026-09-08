@@ -39,6 +39,11 @@ import { initGameCatalog, flushGameCatalog } from './game/catalog.js';
 import { installNoticeCleanup } from './notices.js';
 import { initClips } from './stream/clips.js';
 import { ensureStreamPanels, syncVoiceStreamPanels } from './stream/panel.js';
+import {
+  armedIn as voiceArmedIn,
+  disarm as disarmVoiceBuffer,
+  forgetSpeaker as forgetVoiceSpeaker,
+} from './stream/voice-buffer.js';
 import { installQuietStreamReplies } from './stream/quiet.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
@@ -361,6 +366,12 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   if (inRole('stream') && oldState.channelId !== newState.channelId) {
     syncVoiceStreamPanels(client, newState.guild.id)
       .catch((err) => console.warn('[stream] 음성 이동 제어판 갱신 실패:', err.message));
+    // 소리 기록 중이던 방에서 나간 사람의 버퍼는 버립니다.
+    // 안 버리면 켜둔 동안 나간 사람 몫이 계속 남습니다.
+    const armedVoice = voiceArmedIn(newState.guild.id);
+    if (armedVoice && oldState.channelId === armedVoice.channelId && newState.channelId !== armedVoice.channelId) {
+      forgetVoiceSpeaker(newState.guild.id, (newState.member ?? oldState.member)?.id);
+    }
   }
   // 누군가 음성채널에 들어오면 곧 읽어주기를 쓸 가능성이 높습니다.
   // 그때 미리 데워두면 첫 메시지도 즉시 나옵니다.
@@ -377,6 +388,9 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
   const humans = channel.members.filter((m) => !m.user.bot).size;
   if (humans === 0) {
     console.log('[voice] 음성채널에 아무도 없어 나갑니다.');
+    // 커넥션이 사라지면 소리 기록도 계속될 수 없습니다. 먼저 정리해야
+    // 죽은 커넥션에 귀 막기를 요청하지 않습니다.
+    if (inRole('stream')) disarmVoiceBuffer(oldState.guild.id, audio);
     audio.destroy();
   }
 });

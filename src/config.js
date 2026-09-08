@@ -207,6 +207,17 @@ export const config = {
     clipMinKeepDays: Math.max(0, num('STREAM_CLIP_MIN_KEEP_DAYS', 3)),
     // 한 번 정리할 때 예산의 몇 %까지 내려갈지. 경계선에서 매번 재실행되는 것을 막습니다.
     clipCleanupTargetPercent: Math.min(95, Math.max(10, num('STREAM_CLIP_CLEANUP_TARGET_PERCENT', 80))),
+
+    // 🎧 음성채널 소리 되돌리기. **기본 꺼짐** — 실제 수신을 아직 확인하지 못했습니다.
+    // `/관리자 음성수신확인` 으로 먼저 확인하세요. docs/음성녹음-기획.md.
+    voiceClip: bool('STREAM_VOICE_CLIP', false),
+    // 되돌릴 길이(초). 링버퍼가 메모리에 들고 있는 양이라 늘리면 메모리도 늘어납니다.
+    // 6명 30초 = 약 3.6MB. 통째로 녹음하는 것과 200배 차이입니다.
+    voiceClipSec: Math.max(5, Math.min(120, num('STREAM_VOICE_CLIP_SEC', 30))),
+    // 한 세션에서 소리로 남길 수 있는 개수. **영상 클립(clipPerSession)과 따로 셉니다** —
+    // 한 칸을 나눠 쓰면 수다 30번에 그날 영상 클립을 못 뽑게 됩니다.
+    // (용량 예산은 clipMaxGb 를 **같이** 씁니다. 따로 두면 정리가 소리만 못 지웁니다)
+    voicePerSession: Math.max(1, num('STREAM_VOICE_PER_SESSION', 30)),
   },
 
   // 구글 드라이브에 클립 사본 올리기. **선택 기능**이고, 없으면 조용히 꺼집니다.

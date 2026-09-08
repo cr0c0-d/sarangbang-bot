@@ -19,6 +19,7 @@ import {
   MessageFlags,
 } from 'discord.js';
 import { rememberPanel, forgetPanel, rememberedId, rememberedPanels, STREAM } from '../panel-registry.js';
+import { isArmed as isVoiceArmed, armedIn as voiceArmedIn, bufferedInfo as voiceBufferedInfo } from './voice-buffer.js';
 import { get as getSetting, featureEnabled, symbolMention } from '../settings.js';
 import { config } from '../config.js';
 import {
@@ -73,6 +74,7 @@ export function buildStreamPanel(guildId) {
   const session = activeSession(guildId);
   const embed = new EmbedBuilder().setColor(0xe67e22);
   const rows = [];
+  const voiceArmed = config.stream.voiceClip && isVoiceArmed(guildId);
 
   if (session) {
     const now = nowSec();
@@ -107,6 +109,16 @@ export function buildStreamPanel(guildId) {
       );
     }
 
+    if (voiceArmed) {
+      const buf = voiceBufferedInfo(guildId);
+      lines.push('');
+      lines.push(
+        `🎙️ **소리 기록 중** · 지난 ${config.stream.voiceClipSec}초를 들고 있습니다` +
+          (buf ? ` (${buf.people}명)` : '') +
+          '\n✂️ 를 누르면 그 순간의 소리도 함께 남습니다.'
+      );
+    }
+
     embed.setTitle('🎥 방송 기록 중').setDescription(lines.join('\n').slice(0, DESC_LIMIT));
     embed.setFooter({ text: '다시보기를 남기지 않으면 나중에 클립을 뽑을 수 없습니다.' });
 
@@ -117,7 +129,9 @@ export function buildStreamPanel(guildId) {
           .setLabel('지금!')
           .setEmoji('✂️')
           .setStyle(ButtonStyle.Success)
-          .setDisabled(session.streams.length === 0),
+          // 소리 기록만 켜둔 채 아무도 방송을 등록하지 않았을 수도 있습니다.
+          // 그때도 누를 수 있어야 합니다 — 남길 것이 소리뿐이어도 남길 게 있으니까요.
+          .setDisabled(session.streams.length === 0 && !voiceArmed),
         new ButtonBuilder()
           .setCustomId('tm:panel:undo')
           .setLabel('내 마지막 취소')
@@ -138,7 +152,18 @@ export function buildStreamPanel(guildId) {
       )
     );
     // 늦게 켠 사람이 스스로 끼어들 수 있어야 합니다. 저장해둔 고정 주소를 씁니다.
-    rows.push(new ActionRowBuilder().addComponents(joinButton()));
+    const second = [joinButton()];
+    // 🎧 소리 되돌리기. 기본 꺼짐이라 켜둔 서버에만 버튼이 보입니다 (config.stream.voiceClip).
+    if (config.stream.voiceClip) {
+      second.push(
+        new ButtonBuilder()
+          .setCustomId('tm:panel:voice')
+          .setLabel(voiceArmed ? '소리 기록 끄기' : '소리 기록 켜기')
+          .setEmoji('🎙️')
+          .setStyle(voiceArmed ? ButtonStyle.Danger : ButtonStyle.Secondary)
+      );
+    }
+    rows.push(new ActionRowBuilder().addComponents(...second));
     return { embeds: [embed], components: rows };
   }
 
@@ -577,6 +602,11 @@ async function reconcileVoicePanels(client, guildId) {
       const state = guild.voiceStates.cache.get(stream.userId);
       if (state?.channelId && state.channelId !== home && !state.member?.user?.bot) wanted.add(state.channelId);
     }
+    // ★ 소리 기록만 켜고 아무도 방송을 등록하지 않은 경우 — 그냥 수다 떠는 상황입니다.
+    //   그때 보조판이 안 뜨면 **웃긴 순간에 누를 버튼이 눈앞에 없습니다.**
+    //   기록 중인 그 음성채널에 띄웁니다.
+    const voice = config.stream.voiceClip ? voiceArmedIn(guildId) : null;
+    if (voice?.channelId && voice.channelId !== home) wanted.add(voice.channelId);
   }
   // 등록된 방송자가 아무도 남지 않았거나 종료됐으면, 우리가 보낸 보조판만 지웁니다.
   for (const [channelId, messageId] of rememberedPanels(kind)) {
