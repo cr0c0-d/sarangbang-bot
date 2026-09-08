@@ -3588,6 +3588,65 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('오류·버튼 화면으로 바뀌면 보호', removed.join() === 'one');
 }
 
+// 6s-2) 음성 수신 확인 진단 (`/관리자 음성수신확인`)
+//
+// 이건 **진단**이다. 진단이 엉뚱한 결론을 말하면 진단이 없는 것보다 나쁘다 —
+// "수신 안 됨" 이라고 잘못 말하면 될 기능을 접고, "됨" 이라고 잘못 말하면
+// 안 되는 걸 전제로 30초 버퍼를 다 만든 뒤에 알게 된다.
+// 그래서 다섯 갈래 결론을 전부 확인한다.
+{
+  const probe = await import('./src/stream/voice-probe.js');
+  const src = fs.readFileSync('./src/stream/voice-probe.js', 'utf8');
+  const cmd = probe.commands[0];
+  const json = cmd.data.toJSON();
+
+  ok('진단 명령어 이름은 한국어', json.name === '음성수신확인');
+  ok('관리자만 (ManageGuild)', String(json.default_member_permissions) === String(1n << 5n));
+  ok('확인 시간 상한 30초', json.options[0].max_value === 30 && json.options[0].min_value === 5);
+
+  // ★ 소리를 어디에도 안 남기는 것이 이 진단의 전제다. 세는 것만 한다.
+  ok('진단은 파일을 쓰지 않음 (fs 를 아예 안 쓴다)',
+    !/\bfrom 'node:fs|require\('node:fs|writeFile|createWriteStream|pipe\(/.test(src));
+  ok('소리를 저장하지 않는다고 사용자에게 말함',
+    src.includes('저장하지 않습니다'));
+
+  // 재생용 `connection.subscribe()` 와 받기용 `receiver.subscribe()` 는 다른 것이다.
+  // 불변조건 1 은 재생 쪽 이야기이므로, 진단이 그걸 건드리지 않는지 확인한다.
+  // 주석은 일부러 `connection.subscribe()` 를 언급해 둘을 구분해 설명한다.
+  // 검사 대상은 **실제 호출**이므로 주석을 걷어내고 본다.
+  const probeCode = src.replace(/^\s*\/\/.*$/gm, '');
+  ok('받기는 receiver.subscribe — 재생 구독을 건드리지 않음',
+    probeCode.includes('receiver.subscribe(') && !/connection\.subscribe\(/.test(probeCode));
+  ok('내부 구조 접근은 실패해도 죽지 않게 감쌈',
+    /function peekNetworking[\s\S]*?catch/.test(src));
+  ok('귀 막기 복원은 finally 에서 (실패해도 원상복구)',
+    /finally\s*\{[\s\S]*?selfDeaf: true/.test(src));
+  ok('실행한 사람이 음성방에 있어야 함', src.includes('먼저 음성채널에 들어가 주세요'));
+  ok('다른 방에 있으면 옮기지 않고 거절', src.includes('옮기지 않았습니다'));
+
+  const d = probe.diagnose;
+  ok('서버 차단이면 그것부터 말함',
+    d({ speaking: 0, packets: 0, deaf: { serverDeaf: true, selfDeaf: true }, dave: false }).includes('마이크 차단'));
+  ok('귀가 안 열렸으면 rejoin 이 안 된다고 말함',
+    d({ speaking: 0, packets: 0, deaf: { serverDeaf: false, selfDeaf: true }, dave: false }).includes('rejoin'));
+  ok('아무 신호도 없으면 "아무도 말 안 했을 수도" 를 먼저 말함',
+    d({ speaking: 0, packets: 0, deaf: { serverDeaf: false, selfDeaf: false }, dave: false }).includes('아무도 말하지 않았을 수도'));
+  // ★ 이 갈래가 이 진단을 만든 이유다. 말하기 신호는 복호화 **전**, 패킷은 복호화 **후** 라서
+  //    둘이 갈리면 "도착은 하는데 못 푼다" 가 된다. DAVE 를 의심할 근거가 여기서만 나온다.
+  const undecryptable = d({ speaking: 12, packets: 0, deaf: { serverDeaf: false, selfDeaf: false }, dave: true });
+  ok('신호는 있고 패킷이 0이면 복호화 실패로 진단',
+    undecryptable.includes('복호화가 안 됩니다') && undecryptable.includes('DAVE'));
+  ok('DAVE 가 꺼져 있으면 DAVE 를 지목하지 않음',
+    !d({ speaking: 12, packets: 0, deaf: { serverDeaf: false, selfDeaf: false }, dave: false }).includes('DAVE'));
+  ok('패킷이 오면 된다고 말함',
+    d({ speaking: 9, packets: 400, deaf: { serverDeaf: false, selfDeaf: false }, dave: true }).includes('수신됩니다'));
+
+  // 진단은 방송 기록 쪽에만 붙인다 (노래하는 망고의 /관리자 를 늘리지 않는다).
+  ok('진단은 방송 기록 역할에만',
+    fs.readFileSync('./src/admin-commands.js', 'utf8')
+      .includes("if (inRole('stream')) actions.set('음성수신확인'"));
+}
+
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
 //
 // 디스코드 빌더는 `toJSON()` 안에서 값을 검사한다. 부르지 않으면 아무것도 확인하지 못한다.
@@ -3716,7 +3775,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     !mango.includes('재생') && !mango.includes('대기열') && !mango.includes('음량') && mango.includes('갤러리'),
     mango.join(' '));
   ok('망고 /관리자에는 전체 관리 기능',
-    JSON.stringify(mangoResult.admin) === JSON.stringify(['기능', '채널설정', '갤러리수집', '정리', '상징이모지']),
+    JSON.stringify(mangoResult.admin) === JSON.stringify(['기능', '채널설정', '갤러리수집', '정리', '음성수신확인', '상징이모지']),
     mangoResult.admin?.join(' '));
   ok('노래하는 망고 /관리자에는 자기 설정만',
     JSON.stringify(musicResult.admin) === JSON.stringify(['기능', '채널설정']), musicResult.admin?.join(' '));
