@@ -7,7 +7,7 @@ import { commands as featureCommands } from './feature-commands.js';
 import { commands as channelCommands, channelChoices } from './channel-commands.js';
 import { commands as imageCommands } from './images/commands.js';
 import { commands as symbolCommands } from './symbol-commands.js';
-import { commands as voiceProbeCommands } from './stream/voice-probe.js';
+import { commands as voiceProbeCommands } from './voice/probe.js';
 import { inRole } from './settings.js';
 
 const byName = (commands, name) => commands.find((command) => command.data.toJSON().name === name);
@@ -23,9 +23,9 @@ if (inRole('images')) {
 }
 if (inRole('stream')) actions.set('상징이모지', byName(symbolCommands, '상징이모지'));
 // 소리 녹음(30초 되돌리기)을 만들기 전에 **수신이 되는지부터** 확인하는 진단입니다.
-// 커넥션은 양쪽 봇에 다 있지만, 이 진단이 필요한 기능은 방송 기록이므로 그쪽에만 둡니다.
+// 커넥션은 양쪽 봇에 다 있지만, 이 진단이 필요한 기능은 소리 기록이므로 그쪽에만 둡니다.
 // (노래하는 망고의 `/관리자` 를 진단으로 늘리지 않습니다)
-if (inRole('stream')) actions.set('음성수신확인', byName(voiceProbeCommands, '음성수신확인'));
+if (inRole('voice')) actions.set('음성수신확인', byName(voiceProbeCommands, '음성수신확인'));
 
 const data = new SlashCommandBuilder()
   .setName('관리자')

@@ -28,6 +28,15 @@ export const GALLERY = 'gallery';
  */
 export const STREAM = 'stream';
 
+/**
+ * 소리 기록 제어판 (`/음성기록`). **지우지 않고 되찾습니다.**
+ *
+ * ⚠️ 다만 방송 제어판과 사정이 하나 다릅니다 — **링버퍼는 메모리에만 있어
+ * 재시작하면 꺼집니다.** 그래서 시작할 때 이 제어판들을 "꺼진 상태" 로 고쳐 써야
+ * "기록 중" 이 거짓말로 남지 않습니다 (voice/index.js 의 refreshVoicePanels).
+ */
+export const VOICE = 'voice';
+
 /** @type {{ [kind: string]: { [channelId: string]: string } }} 종류 → 채널ID → 메시지ID */
 let store = {};
 let writeChain = Promise.resolve();

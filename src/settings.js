@@ -143,6 +143,7 @@ export const FEATURES = {
   plan: { label: '일정', emoji: '📅', hint: '/일정 · /일정새로 · /정산' },
   ai: { label: '망고야', emoji: '🥭', hint: '/망고야 로 물어보기 (제미나이)' },
   stream: { label: '방송 기록', emoji: '🎥', hint: '/방송 으로 라이브 하이라이트 시간 찍기' },
+  voice: { label: '소리 기록', emoji: '🎧', hint: '/음성기록 으로 음성채널 대화의 지난 30초 남기기' },
 };
 
 /** 이 역할이 켜고 끌 수 있는 기능만 골라 줍니다. */

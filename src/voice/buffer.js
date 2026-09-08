@@ -25,8 +25,8 @@ import ffmpegPath from 'ffmpeg-static';
 import OpusScript from 'opusscript';
 import { EndBehaviorType, VoiceConnectionStatus } from '@discordjs/voice';
 import { config } from '../config.js';
-import { folderPath, safeClipName } from './clips.js';
-import { botDeafState } from './voice-probe.js';
+import { folderPath, safeClipName } from '../stream/clips.js';
+import { botDeafState } from './probe.js';
 import { userError } from '../user-error.js';
 
 const RATE = 48_000;
@@ -132,7 +132,7 @@ export function bufferedInfo(guildId) {
 }
 
 function keepMs() {
-  return config.stream.voiceClipSec * 1_000 + KEEP_SLACK_MS;
+  return config.voice.clipSec * 1_000 + KEEP_SLACK_MS;
 }
 
 /**
@@ -300,7 +300,7 @@ export async function saveLast(guildId, { folder, seconds = null, name = null } 
   const state = armed.get(guildId);
   if (!state) return { ok: false, reason: 'off' };
 
-  const span = Math.max(5, Math.min(config.stream.voiceClipSec, seconds ?? config.stream.voiceClipSec));
+  const span = Math.max(5, Math.min(config.voice.clipSec, seconds ?? config.voice.clipSec));
   const toMs = Date.now();
   const fromMs = toMs - span * 1_000;
 

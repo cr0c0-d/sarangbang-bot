@@ -16,6 +16,7 @@ import { commands as settleCommands } from './plan/settle.js';
 import { commands as aiCommands } from './ai/index.js';
 import { commands as streamCommands } from './stream/index.js';
 import { commands as gameCommands } from './game/index.js';
+import { commands as voiceCommands } from './voice/index.js';
 import { commands as volumeCommands } from './music/volume-commands.js';
 import { commands as leaveCommands } from './leave-commands.js';
 import { commands as adminCommands } from './admin-commands.js';
@@ -133,8 +134,17 @@ const basicCommands = [
               '요약판의 **🎥 클립 만들 순간 고르기** 로 그 구간만 영상으로 잘라 받을 수 있습니다.',
               '잘못 눌러도 **▶️ 이어서 기록** 으로 되돌아갑니다. 기록은 지워지지 않습니다.',
               '`/방송` — 인자 없이 실행하면 상태·내 지난 방송 타임라인을 볼 수 있습니다.',
-              '🎙️ **소리 기록 켜기** — 음성채널 대화의 **지난 30초**를 들고 있다가, ✂️ 를 누르면 그 소리도 남깁니다.',
-              '화면 녹화가 없어도 됩니다. 평소엔 메모리에만 있고 디스크에 남지 않습니다.',
+            ].join('\n'),
+          },
+          {
+            feature: 'voice',
+            name: '🎧 소리 기록',
+            value: [
+              '**`/음성기록`** — 음성채널 대화의 **지난 30초**를 뒤늦게 남깁니다. (방송과 별개입니다)',
+              '음성채널에 들어가 **🎙️ 기록 켜기** 를 누르면, 그때부터 지난 30초를 들고 있습니다.',
+              '웃긴 순간에 **✂️** 만 누르면 그 소리가 파일로 남고 웹페이지에서 들을 수 있습니다.',
+              '**화면 녹화가 없어도 됩니다.** 평소엔 메모리에만 있고 디스크에 남지 않습니다.',
+              '켠 사람이 그 방에 있어야만 기록합니다. 봇이 음성채널에 보이니 **같이 있는 사람들에게 알려주세요.**',
             ].join('\n'),
           },
           {
@@ -196,6 +206,7 @@ const taggedCommands = [
   ...tag('plan', [...planCommands, ...settleCommands]),
   ...tag('ai', aiCommands),
   ...tag('stream', [...streamCommands, ...gameCommands]),
+  ...tag('voice', voiceCommands),
 ];
 
 /**

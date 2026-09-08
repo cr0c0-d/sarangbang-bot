@@ -71,14 +71,6 @@ import {
   DESC_PER_PAGE,
 } from './panel.js';
 import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
-import {
-  arm as armVoice,
-  disarm as disarmVoice,
-  isArmed as isVoiceArmed,
-  armedIn as voiceArmedIn,
-  saveLast as saveLastVoice,
-} from './voice-buffer.js';
-import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { enabled as driveEnabled, uploadClip } from './drive.js';
 import { config } from '../config.js';
 
@@ -546,7 +538,6 @@ export async function handleStreamComponent(interaction, client) {
 
   if (id === 'tm:panel:join') return registerStream(interaction);
   if (id === 'tm:panel:mark') return markNow(interaction, client);
-  if (id === 'tm:panel:voice') return toggleVoiceRecord(interaction, client);
   if (id.startsWith('tm:share:')) return shareMarkNow(interaction, client, id.split(':')[2]);
   if (id.startsWith('tm:replay:')) return openReplayLinkModal(interaction, id);
   if (id === 'tm:panel:undo') return undoMark(interaction, client);
@@ -588,118 +579,17 @@ async function resendPastSummary(interaction, client) {
   }
 }
 
-/**
- * 🎙️ 소리 기록 켜기·끄기.
- *
- * 켜는 순간 **귀가 실제로 열렸는지 확인**하고 안 열렸으면 켜지 않습니다 (voice-buffer.js).
- * 조용히 켜두면 나중에 ✂️ 를 눌렀을 때 "받은 소리가 없다" 만 나오고 왜인지 알 수 없습니다.
- */
-async function toggleVoiceRecord(interaction, client) {
-  if (!config.stream.voiceClip) {
-    return interaction.reply(
-      eph('소리 기록이 꺼져 있습니다. `.env` 의 `STREAM_VOICE_CLIP=true` 로 켜주세요.\n' +
-        '⚠️ 먼저 `/관리자 음성수신확인` 으로 망고가 소리를 받을 수 있는지 확인하세요.')
-    );
-  }
-  const guildId = interaction.guildId;
-  if (isVoiceArmed(guildId)) {
-    disarmVoice(guildId, peekGuildAudio(guildId));
-    await interaction.reply(eph('🎙️ 소리 기록을 껐습니다. 들고 있던 소리는 그대로 사라졌습니다.'));
-    scheduleStreamPanelRefresh(client, guildId, activeSession(guildId)?.channelId);
-    return undefined;
-  }
-
-  const channel = interaction.member?.voice?.channel;
-  if (!channel) {
-    return interaction.reply(
-      eph('먼저 음성채널에 들어가 주세요. 켠 사람이 그 방에 있어야만 기록합니다.')
-    );
-  }
-  const busy = peekGuildAudio(guildId)?.connection?.joinConfig?.channelId;
-  if (busy && busy !== channel.id) {
-    return interaction.reply(
-      eph(`망고가 지금 <#${busy}> 에 있습니다. 옮기면 거기서 듣던 소리가 끊기므로 옮기지 않았습니다.`)
-    );
-  }
-
-  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-  const audio = getGuildAudio(channel.guild);
-  await audio.connect(channel);
-  const result = await armVoice(audio, channel, interaction.user.id);
-  await interaction.editReply(
-    `🎙️ **소리 기록을 켰습니다** — <#${channel.id}> · 지난 **${config.stream.voiceClipSec}초**를 들고 있습니다.\n` +
-      '웃긴 순간에 **✂️ 지금!** 만 누르면 그 소리가 저장됩니다.\n' +
-      '-# 평소에는 메모리에만 있고 디스크에 남지 않습니다. 방에 있는 사람들에게 알려주세요.' +
-      (result.already ? '\n(이미 켜져 있었습니다)' : '')
-  );
-  scheduleStreamPanelRefresh(client, guildId, activeSession(guildId)?.channelId);
-  return undefined;
-}
-
-/** ✂️ 를 누른 뒤에 돕니다. 답은 이미 갔으므로 여기서 늦어져도 버튼은 즉시 끝납니다. */
-async function saveVoiceAfterMark(interaction, session, mark) {
-  const voiceClips = (session.clips ?? []).filter((c) => c.kind === 'voice').length;
-  if (voiceClips >= config.stream.voicePerSession) {
-    return interaction.followUp(
-      eph(`🎙️ 소리는 한 세션에 ${config.stream.voicePerSession}개까지입니다. 이번 것은 남기지 않았습니다.`)
-    );
-  }
-  let saved;
-  try {
-    saved = await saveLastVoice(session.guildId, { folder: session.id, name: mark?.id ?? null });
-  } catch (err) {
-    // 원문을 그대로 보여줍니다. 원인을 추측하면 그 뒤로 진짜 원인을 못 찾습니다 (3.1-4).
-    return interaction.followUp(eph(`🎙️ 소리를 저장하지 못했습니다: ${err.message}`));
-  }
-  if (!saved.ok) {
-    if (saved.reason === 'off') return undefined;
-    // ★ 수신이 막혀 있으면 **이 메시지가 그 신호입니다.** 빈 파일을 남기지 않습니다.
-    return interaction.followUp(
-      eph(
-        '🎙️ **받은 소리가 없어** 남기지 않았습니다.\n' +
-          '정말 조용했다면 정상입니다. 계속 이러면 `/관리자 음성수신확인` 으로 수신 상태를 봐주세요.'
-      )
-    );
-  }
-  if (mark) {
-    addClip(session, {
-      markId: mark.id,
-      userId: interaction.user.id,
-      kind: 'voice',
-      file: saved.file,
-      startSec: 0,
-      endSec: saved.seconds,
-      title: `소리 ${saved.seconds}초`,
-    });
-  }
-  await cleanupByBudget().catch((err) => console.warn('[voice-buffer] 예산 정리 실패:', err.message));
-  return interaction.followUp(
-    eph(
-      `🎧 **지난 ${saved.seconds}초 소리를 남겼습니다** · ${saved.speakers.length}명\n` +
-        `${saved.file} · ${fmtBytes(saved.bytes)}\n\n듣기: ${clipPageUrl(session.id)}`
-    )
-  );
-}
-
 async function markNow(interaction, client) {
   const session = activeSession(interaction.guildId);
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
   const userId = interaction.user.id;
   const mine = streamOf(session, userId);
-  const voiceOn = config.stream.voiceClip && isVoiceArmed(interaction.guildId);
 
   // ★ **내 방송에만** 찍습니다. 동시에 방송을 켜도 각자 다른 게임을 할 수 있습니다.
   //   단 등록을 안 한 사람이 누르면 갈 곳이 없으므로 그때만 모두의 것으로 둡니다.
   const mark = addMark(session, userId, mine ? userId : null);
   if (!mark) {
-    // 마킹 칸이 다 찼어도 **소리는 남길 수 있습니다.** 남길 게 있는데 안 남기면 손해입니다.
-    if (voiceOn) {
-      await interaction.reply(
-        eph(`마킹이 ${MARK_MAX}개를 넘어 타임라인에는 못 넣었습니다. 소리만 남겨봅니다…`)
-      );
-      return saveVoiceAfterMark(interaction, session, null);
-    }
     return interaction.reply(eph(`마킹이 ${MARK_MAX}개를 넘었습니다. 방송을 종료하고 새로 시작해주세요.`));
   }
 
@@ -729,10 +619,6 @@ async function markNow(interaction, client) {
   //    가장 많이 눌리는 버튼에서 "Unknown interaction" 이 납니다. (기획 3.10)
   await interaction.reply(payload);
   scheduleStreamPanelRefresh(client, interaction.guildId, session.channelId);
-
-  // 소리 저장은 디코딩·ffmpeg 를 거쳐 몇 초 걸릴 수 있습니다. **답을 보낸 뒤에** 합니다 —
-  // 여기서 기다리면 ✂️ 가 즉시 끝나지 않고, 3초를 넘기면 버튼 자체가 실패합니다.
-  if (voiceOn) await saveVoiceAfterMark(interaction, session, mark);
   return undefined;
 }
 

@@ -123,7 +123,7 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 21개 로드 (우클릭 1개 포함)', allCommands.length === 21, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 22개 로드 (우클릭 1개 포함)', allCommands.length === 22, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
@@ -467,12 +467,16 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
     ok('속도는 연결이 아니라 호출에 붙음',
       synth.includes('engine.toStream(text, opts)') && !synth.includes('engineSpeed'));
     const { prosodyOptions } = await import('./src/tts/synth.js');
-    ok('느낌표 3개부터 소리 지르는 prosody',
-      prosodyOptions('아아아악!!!!', 100)?.pitch === '+35Hz' &&
-      prosodyOptions('아아아악!!!!', 100)?.volume === '+25' &&
-      prosodyOptions('아아아악!!!!', 100)?.rate === 1.12);
-    ok('느낌표 2개까지는 일반 억양', prosodyOptions('좋아!!', 100) === undefined);
-    ok('소리 지르기도 개인 속도를 기준으로 계산', prosodyOptions('안 돼!!!', 150)?.rate === 1.68);
+    // ⚠️ "느낌표 3개 이상이면 높고 크게" 기능은 **없앴습니다.** 실측해보니
+    //    올라간 것이 46Hz·1.8dB 뿐이라 소유자가 차이를 못 느꼈습니다 (ARCHITECTURE 3.4-3).
+    //    되살리려는 유혹을 막기 위해 **없다는 것**을 검사합니다.
+    ok('느낌표는 억양을 바꾸지 않음',
+      prosodyOptions('아아아악!!!!', 100) === undefined && prosodyOptions('좋아!!', 100) === undefined);
+    ok('느낌표가 많아도 개인 속도만 반영',
+      prosodyOptions('안 돼!!!', 150)?.rate === 1.5 &&
+        prosodyOptions('안 돼!!!', 150)?.pitch === undefined &&
+        prosodyOptions('안 돼!!!', 150)?.volume === undefined);
+    ok('읽어주기 코드에 느낌표 특례가 남아 있지 않음', !/\[!！\]\{3,\}/.test(synth));
     const ttsSrc = fs.readFileSync('./src/tts/index.js', 'utf8');
     ok('읽을 때 그 사람 속도를 씀', ttsSrc.includes('synthesize(spoken, voice, speed)'));
     // 명령어를 새로 만들지 않고 /목소리 에 칸을 더했습니다 (3.6-6).
@@ -1260,7 +1264,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   st.setAllFeatures(G, true);
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
-  ok('기능 목록 9개', Object.keys(st.FEATURES).length === 9, Object.keys(st.FEATURES).join(','));
+  ok('기능 목록 10개', Object.keys(st.FEATURES).length === 10, Object.keys(st.FEATURES).join(','));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -3595,8 +3599,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 안 되는 걸 전제로 30초 버퍼를 다 만든 뒤에 알게 된다.
 // 그래서 다섯 갈래 결론을 전부 확인한다.
 {
-  const probe = await import('./src/stream/voice-probe.js');
-  const src = fs.readFileSync('./src/stream/voice-probe.js', 'utf8');
+  const probe = await import('./src/voice/probe.js');
+  const src = fs.readFileSync('./src/voice/probe.js', 'utf8');
   const cmd = probe.commands[0];
   const json = cmd.data.toJSON();
 
@@ -3664,19 +3668,19 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     d({ speaking: 9, packets: 400, deaf: { serverDeaf: false, selfDeaf: false }, dave: true }).includes('수신됩니다'));
 
   // 진단은 방송 기록 쪽에만 붙인다 (노래하는 망고의 /관리자 를 늘리지 않는다).
-  ok('진단은 방송 기록 역할에만',
+  ok('진단은 소리 기록 역할에만',
     fs.readFileSync('./src/admin-commands.js', 'utf8')
-      .includes("if (inRole('stream')) actions.set('음성수신확인'"));
+      .includes("if (inRole('voice')) actions.set('음성수신확인'"));
 }
 
-// 6s-3) 소리 되돌리기 링버퍼 (`src/stream/voice-buffer.js`)
+// 6s-3) 소리 되돌리기 링버퍼 (`src/voice/buffer.js`) — `/음성기록`
 //
 // ★ 무음 메우기가 이 기능에서 유일하게 "조용히 틀릴 수 있는" 곳이다.
 //   패킷에는 시간 정보가 없어서 도착 시각으로 위치를 잡는데, 이게 틀리면
 //   사람별 트랙이 서로 밀린다. 그리고 **틀려도 소리는 난다** — 클립을 열어
 //   들어보기 전까지 아무도 모른다. 그래서 순수 함수로 떼어 여기서 확인한다.
 {
-  const vb = await import('./src/stream/voice-buffer.js');
+  const vb = await import('./src/voice/buffer.js');
   const { layoutTrack, mixTracks, pruneTrack, BYTES_PER_MS } = vb;
 
   ok('1ms = 192바이트 (48kHz 스테레오 int16)', BYTES_PER_MS === 192);
@@ -3759,11 +3763,11 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('버릴 게 없으면 그대로', pruneTrack(burst(0, 100), t0 - 1).length === 5);
 
   // ── 안전장치 ──
-  const vbSrc = fs.readFileSync('./src/stream/voice-buffer.js', 'utf8');
+  const vbSrc = fs.readFileSync('./src/voice/buffer.js', 'utf8');
   const vbCode = vbSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   const { config: vbCfg } = await import('./src/config.js');
-  ok('기본은 꺼짐 (수신을 아직 확인하지 못했다)', vbCfg.stream.voiceClip === false);
-  ok('되돌릴 길이 기본 30초', vbCfg.stream.voiceClipSec === 30);
+  ok('기본은 꺼짐 (수신을 아직 확인하지 못했다)', vbCfg.voice.enabled === false);
+  ok('되돌릴 길이 기본 30초', vbCfg.voice.clipSec === 30);
   ok('켤 때 귀가 열렸는지 실제 상태로 확인', vbCode.includes('botDeafState(channel.guild)'));
   ok('귀가 안 열리면 켜지 않음', vbSrc.includes('소리를 받을 수 없어 켜지 않았습니다'));
   ok('서버 차단이면 그것부터 알려줌', vbSrc.includes('헤드셋 차단'));
@@ -3775,33 +3779,65 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('수신 오류는 원문을 남김', vbCode.includes("console.warn('[voice-buffer] 수신 오류:'"));
   // ★ 빈 파일을 남기면 "수신이 막혔다" 를 "조용했다" 로 오해한다.
   ok('받은 게 없으면 파일을 만들지 않음', /reason: 'silent'/.test(vbCode));
-  ok('길이는 설정 상한을 넘지 못함', /Math\.min\(config\.stream\.voiceClipSec/.test(vbCode));
+  ok('길이는 설정 상한을 넘지 못함', /Math\.min\(config\.voice\.clipSec/.test(vbCode));
 
-  // 개수 칸은 영상과 따로, 용량 예산은 같이 쓴다.
+  // ── ★ 방송 기록과 **분리**되어 있어야 한다 ──
+  //
+  // 처음에는 방송 제어판의 ✂️ 에 얹었다. 그런데 주 용도가 **방송 없이 그냥 수다** 떠는
+  // 상황이라, 그러면 수다를 떨려고 방송을 켜야 한다. 소유자 지적으로 떼어냈다.
+  // 다시 얽히면 그 문제가 조용히 돌아오므로 여기서 막는다.
   const streamSrc = fs.readFileSync('./src/stream/index.js', 'utf8');
-  ok('소리 개수는 영상 클립과 따로 셈',
-    streamSrc.includes("(session.clips ?? []).filter((c) => c.kind === 'voice')") &&
-      streamSrc.includes('config.stream.voicePerSession'));
-  ok('용량 예산은 클립과 같이 씀 (정리가 소리도 지울 수 있게)',
-    /saveVoiceAfterMark[\s\S]*?cleanupByBudget\(\)/.test(streamSrc));
-  ok('마킹 칸이 다 차도 소리는 남김', /if \(voiceOn\)[\s\S]{0,200}saveVoiceAfterMark\(interaction, session, null\)/.test(streamSrc));
-  // ⚠️ 답을 먼저 해야 ✂️ 가 즉시 끝난다. 저장은 그 뒤다 (3초를 넘기면 버튼이 실패한다).
-  ok('✂️ 는 답을 먼저 하고 저장은 그 뒤에',
-    streamSrc.indexOf('await interaction.reply(payload);') <
-      streamSrc.indexOf('if (voiceOn) await saveVoiceAfterMark(interaction, session, mark);'));
-  ok('다른 방에 있으면 옮기지 않음', streamSrc.includes('옮기면 거기서 듣던 소리가 끊기므로'));
+  const streamPanelSrc = fs.readFileSync('./src/stream/panel.js', 'utf8');
+  ok('방송 기록은 소리 기록을 모른다',
+    !/voice-buffer|voice\/buffer|saveVoiceAfterMark|toggleVoiceRecord/.test(streamSrc) &&
+      !/voice-buffer|voice\/buffer|voiceArmed/.test(streamPanelSrc));
+  ok('방송 제어판에 소리 버튼이 없음', !streamPanelSrc.includes("tm:panel:voice"));
+  ok('소리 기록은 방송 세션을 쓰지 않음 (날짜 폴더)',
+    !/stream\/store\.js/.test(fs.readFileSync('./src/voice/index.js', 'utf8')));
+  const { FEATURES: vbFeatures } = await import('./src/settings.js');
+  ok('기능 토글도 따로 (voice)', Object.keys(vbCfg.voice).length >= 3 && vbFeatures.voice?.label === '소리 기록');
 
-  // 제어판 — 켜져 있을 때만 버튼이 보이고, 소리만 켜도 ✂️ 를 누를 수 있어야 한다.
-  const panelSrc = fs.readFileSync('./src/stream/panel.js', 'utf8');
-  ok('소리 기록이 꺼진 서버에는 버튼이 없음',
-    panelSrc.includes('if (config.stream.voiceClip) {') &&
-      panelSrc.includes("setCustomId('tm:panel:voice')"));
-  ok('소리만 켜도 ✂️ 를 누를 수 있음',
-    panelSrc.includes('.setDisabled(session.streams.length === 0 && !voiceArmed)'));
-  // ★ 웃긴 순간에 누를 버튼이 **눈앞에** 있어야 한다. 방송 등록자가 없으면
-  //   보조판이 안 뜨므로, 기록 중인 음성채널을 따로 넣어준다.
-  ok('기록 중인 음성채널에 보조 제어판이 뜸',
-    /voiceArmedIn\(guildId\)[\s\S]{0,200}wanted\.add\(voice\.channelId\)/.test(panelSrc));
+  // ── `/음성기록` 명령어와 제어판 ──
+  const voiceMod = await import('./src/voice/index.js');
+  const voiceSrc = fs.readFileSync('./src/voice/index.js', 'utf8');
+  const voiceCmd = voiceMod.commands[0].data.toJSON();
+  ok('명령어 이름은 한국어', voiceCmd.name === '음성기록');
+  ok('인자 없이 실행하면 상태·버튼 (인자를 늘리지 않음)', (voiceCmd.options ?? []).length === 0);
+  ok('`vc:` 버튼만 이 모듈이 받음',
+    voiceMod.isVoiceComponent('vc:save') && !voiceMod.isVoiceComponent('tm:panel:mark'));
+
+  const panel = voiceMod.buildVoicePanel('voice-guild');
+  const ids = JSON.stringify(panel.components);
+  ok('제어판에 켜기·✂️ 두 버튼', ids.includes('vc:toggle') && ids.includes('vc:save'));
+  // 꺼져 있을 때 ✂️ 를 누르면 "받은 소리가 없다" 만 나온다. 눌리지 않게 잠근다.
+  ok('꺼져 있으면 ✂️ 는 잠김', /"custom_id":"vc:save"[^}]*"disabled":true/.test(ids));
+  ok('제어판이 화면 규칙을 통과', typeof panel.embeds[0].toJSON === 'function' && !!panel.embeds[0].toJSON().title);
+
+  ok('실행한 사람이 음성방에 있어야 함', voiceSrc.includes('먼저 음성채널에 들어가 주세요'));
+  ok('다른 방에 있으면 옮기지 않음', voiceSrc.includes('옮기면 거기서 듣던 소리가 끊기므로'));
+  // ⚠️ 답을 먼저 해야 ✂️ 가 즉시 끝난다 (3초를 넘기면 버튼이 실패한다).
+  ok('✂️ 는 답을 먼저 하고 저장은 그 뒤에',
+    voiceSrc.indexOf('await interaction.reply(eph(`✂️ 지난') < voiceSrc.indexOf('await saveLast('));
+  ok('개수는 하루 단위로 따로 셈',
+    voiceSrc.includes('config.voice.maxClips') && voiceSrc.includes('clipsToday('));
+  ok('용량 예산은 클립과 같이 씀 (정리가 소리도 지울 수 있게)',
+    /addVoiceClip\([\s\S]{0,400}cleanupByBudget\(\)/.test(voiceSrc));
+  ok('꺼져 있으면 켜는 방법을 알려줌',
+    voiceSrc.includes('VOICE_RECORD=true') && voiceSrc.includes('/관리자 음성수신확인'));
+
+  // 폴더 이름 — 웹 클립 페이지가 `^[a-z0-9]{4,12}$` 만 받는다. 안 맞으면 들으러 갈 수 없다.
+  const vStore = await import('./src/voice/store.js');
+  const folder = vStore.folderFor('123456789012345678', new Date(2026, 8, 8));
+  ok('폴더 이름이 웹페이지 규칙에 맞음', /^[a-z0-9]{4,12}$/.test(folder), folder);
+  ok('날짜가 바뀌면 폴더도 바뀜',
+    vStore.folderFor('1234', new Date(2026, 8, 8)) !== vStore.folderFor('1234', new Date(2026, 8, 9)));
+  // ★ 서버가 여러 개일 때 남의 서버 소리가 같은 폴더에 섞이면 안 된다.
+  ok('서버가 다르면 폴더도 다름',
+    vStore.folderFor('1111', new Date(2026, 8, 8)) !== vStore.folderFor('2222', new Date(2026, 8, 8)));
+
+  // 재시작하면 링버퍼는 꺼진다. 제어판이 "기록 중" 으로 남으면 거짓말이 된다.
+  ok('재시작 때 제어판을 꺼진 상태로 고쳐 씀',
+    fs.readFileSync('./src/index.js', 'utf8').includes("inRole('voice') ? Promise.all"));
 }
 
 // 6x) ★ 화면을 만드는 함수는 **전부 toJSON() 을 불러본다**
@@ -3924,7 +3960,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = musicResult.names;
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 25개', union.length === 25, `${union.length}개`);
+  ok('둘을 합쳐 26개', union.length === 26, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

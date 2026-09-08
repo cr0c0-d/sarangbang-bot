@@ -108,17 +108,21 @@ export function prosodyOptions(text, speedPercent) {
   const p = Number(speedPercent);
   const baseRate = Number.isFinite(p) ? p / 100 : 1;
 
-  // Edge의 무료 읽어주기 API에는 Azure의 감정 스타일(cheerful, angry 등)이 없습니다.
-  // 대신 느낌표가 3개 이상 이어지면 지원되는 prosody 범위 안에서 빠르고 높고 크게
-  // 읽어, 채팅의 "소리 지르는 느낌"을 살립니다. 일반 문장은 기존 음성을 그대로 둡니다.
-  if (/[!！]{3,}/u.test(String(text ?? ''))) {
-    return {
-      rate: Math.min(2, Math.round(baseRate * 1.12 * 100) / 100),
-      pitch: '+35Hz',
-      volume: '+25',
-    };
-  }
-
+  // ⚠️ 여기 있던 **"느낌표 3개 이상이면 높고 크게"** 기능은 없앴습니다.
+  //    소유자: "실제로는 별 차이가 없더라구."
+  //
+  //    왜 차이가 없었는지 실측으로 확인했습니다 (ko-KR-SunHiNeural, `아니 이게 뭐야 진짜`):
+  //
+  //      그냥            기본주파수 208Hz · 평균 -18.4dB
+  //      +35Hz, +25      기본주파수 254Hz · 평균 -16.6dB   ← 이게 그 기능이었습니다
+  //
+  //    올린 건 46Hz(22%)와 1.8dB 뿐입니다. 게다가 **문장 전체에 똑같이** 걸려서
+  //    "조금 다른 목소리" 로 들릴 뿐 "연기" 로는 안 들립니다.
+  //    volume 은 특히 거의 안 먹습니다 — `x-loud` 는 아예 **0dB 변화**였습니다.
+  //
+  //    연기처럼 만들려면 **문장을 나눠 조각마다 다른 prosody 로 합성해 이어붙여야** 합니다.
+  //    이 엔드포인트는 `<break>` · `<emphasis>` · `mstts:express-as` · 중첩 prosody 를
+  //    전부 거부하기 때문입니다 (전부 실측). ARCHITECTURE 3.4-3 에 정리했습니다.
   if (!Number.isFinite(p) || p === 100) return undefined;
   return { rate: baseRate };
 }

@@ -43,7 +43,9 @@ import {
   armedIn as voiceArmedIn,
   disarm as disarmVoiceBuffer,
   forgetSpeaker as forgetVoiceSpeaker,
-} from './stream/voice-buffer.js';
+} from './voice/buffer.js';
+import { isVoiceComponent, handleVoiceComponent, refreshVoicePanels } from './voice/index.js';
+import { initVoiceClips, flushVoiceClips } from './voice/store.js';
 import { installQuietStreamReplies } from './stream/quiet.js';
 import { checkProviders, hasKey as hasTmdbKey } from './movie/tmdb.js';
 import { handleFeatureComponent } from './feature-commands.js';
@@ -105,6 +107,9 @@ client.once(Events.ClientReady, (c) => {
     // 방송 제어판은 **지우지 않고 내용만 새로 고칩니다.** 방송 기록은 재시작을 넘어
     // 디스크에 남아 이어지므로 "기록 중" 이 거짓말이 되지 않습니다.
     .then(() => (inRole('stream') ? ensureStreamPanels(c) : null))
+    // ⚠️ 소리 기록 제어판은 **꺼진 상태로 고쳐 써야** 합니다. 링버퍼는 메모리라
+    //    재시작하면 꺼지는데, 제어판은 그 자리에 남아 "기록 중" 이라고 거짓말을 합니다.
+    .then(() => (inRole('voice') ? Promise.all([...c.guilds.cache.keys()].map((id) => refreshVoicePanels(c, id))) : null))
     .catch((err) => console.error('[panel] 제어판 준비 실패:', err.message));
   // 클립은 한 개가 수 MB 입니다. 예산을 넘으면 오래된 것부터 지우고 **알립니다.**
   // (사진 예산과 따로입니다 — 합치면 클립이 늘 때 사진이 지워집니다)
@@ -257,6 +262,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isMovie = interaction.customId.startsWith('mv:');
     const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
     const isStream = interaction.customId.startsWith('tm:');
+    const isVoice = isVoiceComponent(interaction.customId);
     if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan && !isStream) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
@@ -268,13 +274,14 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (isPoll && !inRole('poll')) ||
       (isMovie && !inRole('movie')) ||
       (isPlan && !inRole('plan')) ||
-      (isStream && !inRole('stream'))
+      (isStream && !inRole('stream')) ||
+      (isVoice && !inRole('voice'))
     ) {
       return;
     }
 
     // 꺼진 기능의 버튼은 막습니다. 기능 패널(f:) 버튼은 항상 통과해야 합니다.
-    const needs = isMusic ? 'music' : isTimer ? 'timer' : isTts ? 'tts' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : isStream ? 'stream' : null;
+    const needs = isMusic ? 'music' : isTimer ? 'timer' : isTts ? 'tts' : isImage ? 'images' : isPoll ? 'poll' : isMovie ? 'movie' : isPlan ? 'plan' : isStream ? 'stream' : isVoice ? 'voice' : null;
     if (needs && !featureEnabled(interaction.guildId, needs)) {
       return interaction
         .reply({ content: featureOffMessage(needs), flags: MessageFlags.Ephemeral })
@@ -290,6 +297,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
       else if (isTimer) await handleTimerComponent(interaction);
       else if (isMovie) await handleMovieComponent(interaction);
       else if (isStream) await handleStreamComponent(interaction, client);
+      else if (isVoice) await handleVoiceComponent(interaction, client);
       else if (interaction.customId.startsWith('st:')) await handleSettleComponent(interaction);
       else if (isPlan) await handlePlanComponent(interaction, client);
       else if (isPoll) await handlePollComponent(interaction);
@@ -390,7 +398,7 @@ client.on(Events.VoiceStateUpdate, (oldState, newState) => {
     console.log('[voice] 음성채널에 아무도 없어 나갑니다.');
     // 커넥션이 사라지면 소리 기록도 계속될 수 없습니다. 먼저 정리해야
     // 죽은 커넥션에 귀 막기를 요청하지 않습니다.
-    if (inRole('stream')) disarmVoiceBuffer(oldState.guild.id, audio);
+    if (inRole('voice')) disarmVoiceBuffer(oldState.guild.id, audio);
     audio.destroy();
   }
 });
@@ -479,6 +487,7 @@ async function shutdown(signal) {
   await flushStreams().catch(() => {});
   await flushForumPosts().catch(() => {});
   await flushGameCatalog().catch(() => {});
+  await flushVoiceClips().catch(() => {});
 
   // 정리 타이머를 멈춥니다. `unref()` 를 걸어둬서 종료를 막지는 않지만,
   // 종료하는 중에 파일을 지우기 시작하면 반쯤 지운 상태로 끝날 수 있습니다.
