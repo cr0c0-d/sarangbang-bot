@@ -2673,6 +2673,22 @@ DAVE 복호화 실패를 확정할 수 없습니다. 진단은 이제 기존 스
 ```
 큐에는 `{ track, requestedBy }` 형태로 들어간다.
 
+### YouTube 공개 인증과 쿠키 예비 경로
+
+`YTDLP_POT_PROVIDER=true`이면 `src/music/ytdlp.js`가 모든 YouTube 메타데이터·다운로드 요청에
+`youtube:player_client=mweb`을 붙이고, 첫 요청에서는 `YTDLP_COOKIES_FILE`을 의도적으로
+빼둔다. 로컬의 `bgutil-ytdlp-pot-provider`가 영상별 PO Token을 공급하므로 공개 영상에 계정
+세션을 노출하지 않는다.
+
+첫 요청이 계정 인증 필요(연령 제한·비공개 초대·회원 전용·로그인 요구) 또는 공급자 장애로
+실패하고 쿠키 파일이 설정돼 있으면, 같은 직렬 추출 큐 안에서 mweb 강제 옵션을 제거하고
+기본 yt-dlp 클라이언트+쿠키로 딱 한 번 재시도한다. 지원하지 않는 URL이나 삭제 영상처럼
+쿠키로 해결되지 않는 오류는 재시도하지 않는다. 기능 플래그가 꺼져 있으면 예전과 완전히 같은
+쿠키 우선 동작이다.
+
+공급자 서버와 Python 플러그인은 주 버전이 맞아야 하므로 설치 스크립트가 둘 다 2.0.0으로
+고정한다. HTTP 서버는 인증이 없으므로 외부 포트로 열지 않고 `127.0.0.1:4416`만 사용한다.
+
 ---
 
 ## 7. 알려진 함정 (Gotchas)
@@ -2681,7 +2697,8 @@ DAVE 복호화 실패를 확정할 수 없습니다. 진단은 이제 기존 스
 |---|---|---|
 | 음악이 갑자기 전부 안 나옴 | 유튜브가 추출 방식을 바꿈 | `npm run update-ytdlp` |
 | `The page needs to be reloaded` | 유튜브의 일시적 거부 | 자동 재시도됨(아래 참고). 계속되면 update-ytdlp |
-| `Sign in to confirm you're not a bot` | 데이터센터 IP 차단 (AWS/GCP/Oracle에서 흔함) | `.env`의 `YTDLP_COOKIES_FILE`에 쿠키 파일 지정 |
+| `Sign in to confirm you're not a bot` | 데이터센터 IP 차단 (AWS/GCP/Oracle에서 흔함) | PO Token 공급자를 켜고, 계정 필요 영상용 쿠키는 예비로 유지 |
+| `youtubepot`·`bgutil`·`127.0.0.1:4416` 오류 | PO Token 공급자 중단 또는 플러그인 불일치 | `systemctl status sarangbang-pot-provider@$USER`; 쿠키가 있으면 자동 예비 시도 |
 | TTS·링크감지가 에러 없이 무반응 | `MessageContent` 인텐트 꺼짐 | 개발자 포털에서 켜고 재시작 |
 | 슬래시 명령어가 안 보임 | `npm run deploy` 안 함 / 봇이 `applications.commands` 없이 초대됨 | 재초대 후 deploy |
 | 명령어 이름이 옛것으로 보임 | 개명 후 deploy 안 함 | `npm run deploy` |

@@ -971,32 +971,59 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 >
 > 쿠키는 시간이 지나면 만료됩니다. 다시 막히면 위 과정을 반복하세요.
 
-### 10-1. 다음 할 일 — 쿠키 교체 횟수 줄이기 (미구현)
+### 10-1. 쿠키 교체 횟수 줄이기 — PO Token 공급자
 
-> **상태: 검토 완료 · 구현 전.** 쿠키 파일의 만료일을 손으로 늘리는 방식은 사용하지 않습니다.
+> **상태: 구현 완료 · 서버 실측 전.** 쿠키 파일의 만료일을 손으로 늘리는 방식은 사용하지 않습니다.
 > YouTube 서버가 세션을 회전·폐기하면 파일의 `expires` 값을 바꿔도 되살아나지 않습니다.
 
-현재 운영 방식은 Oracle 데이터센터 IP의 봇 확인을 로그인 쿠키로 통과합니다. 쿠키 교체가
-잦아졌으므로 다음 작업에서는 **`bgutil-ytdlp-pot-provider`를 붙여 공개 영상의 쿠키 의존도를
-낮추는 것**을 먼저 시험합니다.
+2026-09-12 현재 최신 보안 수정판 `bgutil-ytdlp-pot-provider 2.0.0`을 설치합니다. 이전 버전의
+HTTP 서버에는 외부 요청으로 코드 실행이 가능한 보안 문제가 있었으므로 버전을 낮추지 마세요.
 
-- yt-dlp의 최신 권장안대로 `mweb` GVS 요청에 PO Token 공급자 플러그인을 사용합니다.
-- 공급자 HTTP 서버는 외부에 공개하지 않고 **`127.0.0.1`에만** 바인딩합니다.
-- 현재 pip 설치본(`~/.venv-ytdlp`)과 Node.js JS 런타임은 유지합니다.
-- 망고와 노래하는 망고가 같은 설정을 사용하도록 `.env`와 `.env.music`을 함께 확인합니다.
-- 공개 영상 재생·방송 시각 조회·클립 추출을 Oracle 서버에서 각각 실측한 뒤 기본값으로 전환합니다.
-- PO Token만으로 안 되는 연령 제한·비공개·회원 전용 영상에는 기존 쿠키를 예비 수단으로 남깁니다.
-- 공급자가 있어도 데이터센터 IP 차단을 항상 통과한다고 보장하지 않으므로, 실패하면 주거용
-  프록시 또는 음악 봇을 집 PC에서 실행하는 방안을 검토합니다.
+```bash
+cd ~/sarangbang-bot
+npm run setup:pot
+```
+
+설치 스크립트가 하는 일:
+
+- `~/.local/share/sarangbang-bgutil-provider`에 공급자 2.0.0을 설치·빌드
+- 기존 `~/.venv-ytdlp`에 같은 버전의 yt-dlp 플러그인 설치 및 yt-dlp 갱신
+- `sarangbang-pot-provider@$USER` 서비스를 등록하고 즉시 시작
+- 공급자를 외부에 공개하지 않고 **`127.0.0.1:4416`에만** 바인딩
+
+`.env`와 `.env.music` 양쪽에 다음 값을 추가합니다. 망고는 방송 시각·클립에 `.env`를,
+노래하는 망고는 음악에 `.env.music`을 사용하므로 둘 다 필요합니다.
+
+```ini
+YTDLP_POT_PROVIDER=true
+```
+
+기존 `YTDLP_COOKIES_FILE`은 남겨둡니다. 공개 영상은 쿠키 없이 `mweb + PO Token`으로 먼저
+요청하고, 계정이 필요한 영상이나 공급자 장애일 때만 기본 yt-dlp 클라이언트와 기존 쿠키로
+한 번 더 시도합니다. 즉 쿠키는 기본 인증이 아니라 예비 수단입니다.
+
+```bash
+sudo systemctl status sarangbang-pot-provider@$USER --no-pager
+sudo systemctl restart sarangbang-bot music-sarangbang-bot
+journalctl -u sarangbang-pot-provider@$USER -n 50 --no-pager
+```
+
+되돌리려면 두 환경 파일에서 `YTDLP_POT_PROVIDER=true`를 `false`로 바꾸고 두 봇만
+재시작합니다. 공급자 서비스는 남아 있어도 사용되지 않습니다.
 
 검토 자료:
 
 - yt-dlp PO Token 안내: <https://github.com/yt-dlp/yt-dlp/wiki/PO%20Token%20Guide>
 - bgutil 공급자: <https://github.com/Brainicism/bgutil-ytdlp-pot-provider>
 
-구현 완료 조건은 **쿠키 없이 공개 영상 3종이 정상 동작하고**, 공급자 중단 시 오류가 명확하며,
-기존 쿠키 방식으로 되돌릴 수 있는 것입니다. 설치 명령은 버전이 바뀔 수 있으므로 실제 구현할 때
-당시 릴리스를 다시 확인해 이 절에 확정본을 기록합니다.
+배포 후 남은 실측은 세 가지입니다.
+
+1. 공개 영상 음악 재생
+2. `/방송`의 시작 시각 조회
+3. 종료된 방송의 클립 추출
+
+시작 로그에 `YouTube 공개 영상: PO Token 우선`이 표시되어야 합니다. 공급자를 잠시 멈춘 상태에서
+쿠키 예비 경로가 작동하거나 명확한 서비스 상태 안내가 나오는지도 한 번 확인합니다.
 
 ---
 

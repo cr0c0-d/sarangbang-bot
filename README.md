@@ -1239,7 +1239,36 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 > `.env.music` 의 `YTDLP_JS_RUNTIME` 을 건드리지 않았다면 **쿠키만 넣으면 됩니다.**
 > 쿠키만 넣고 JS 런타임이 없으면 `n challenge solving failed` 가 납니다.
 
-**해결: 쿠키 넣기**
+**권장 해결: PO Token 공급자 사용**
+
+공개 영상은 로그인 쿠키를 보내지 않고 PO Token으로 처리할 수 있습니다. 서버 저장소를
+업데이트한 뒤 한 번만 설치합니다.
+
+```bash
+cd ~/sarangbang-bot
+npm run setup:pot
+```
+
+설치가 끝나면 `.env`와 `.env.music`에 모두 다음 줄을 넣습니다.
+
+```ini
+YTDLP_POT_PROVIDER=true
+```
+
+두 봇을 재시작하면 공개 영상은 `mweb + PO Token`으로 먼저 요청합니다. 기존
+`YTDLP_COOKIES_FILE`은 지우지 않아도 됩니다. 연령 제한·비공개 초대·회원 전용처럼 계정이
+필요하거나 공급자가 일시적으로 실패했을 때만 자동으로 쿠키 방식으로 한 번 더 시도합니다.
+
+공급자 확인:
+
+```bash
+sudo systemctl status sarangbang-pot-provider@$USER --no-pager
+```
+
+공급자는 `127.0.0.1:4416`에서만 받아 외부에 공개되지 않습니다. 현재 고정 버전은 보안 수정이
+포함된 `2.0.0`이며, 버전을 바꿀 때는 서버와 yt-dlp 플러그인을 반드시 함께 갱신합니다.
+
+**예비 해결: 쿠키 넣기**
 
 브라우저에서 유튜브 쿠키를 파일로 뽑아 **`.env.music`** 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
 (음악은 노래하는 망고가 돌립니다. `.env` 에 적어도 동작하지만 나중에 찾기 어렵습니다)
@@ -1255,7 +1284,7 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 
 | 방법 | 장단점 |
 |---|---|
-| **PO Token 제공자 설치** (`bgutil-ytdlp-pot-provider` 플러그인) | 계정 위험 없음. 설정이 더 복잡하고 별도 서비스를 띄워야 함 |
+| **PO Token 제공자 설치** (`npm run setup:pot`) | 공개 영상의 기본 경로. 로그인 쿠키 교체 횟수와 계정 노출을 줄임 |
 | **음악만 집 PC에서 돌리기** | 가장 확실. 가정용 IP는 차단되지 않음. 대신 PC를 켜둬야 함 |
 | **주거용 프록시** (`YTDLP_PROXY`) | 동작하지만 유료이고 느림 |
 

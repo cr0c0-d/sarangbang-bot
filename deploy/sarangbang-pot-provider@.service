@@ -1,0 +1,18 @@
+[Unit]
+Description=Sarangbang YouTube PO Token provider (%i)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=%i
+Environment=HOME=/home/%i
+WorkingDirectory=/home/%i/.local/share/sarangbang-bgutil-provider/server
+ExecStart=/usr/bin/env node build/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

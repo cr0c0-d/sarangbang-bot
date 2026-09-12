@@ -10,6 +10,7 @@
     "start:music": "node --env-file=.env.music src/index.js",
     "deploy": "node src/deploy-commands.js",
     "deploy:music": "node --env-file=.env.music src/deploy-commands.js",
+    "setup:pot": "bash scripts/install-pot-provider.sh",
     "update-ytdlp": "node scripts/update-ytdlp.mjs",
     "verify": "node verify.mjs",
     "verify:q": "node verify.mjs -q"

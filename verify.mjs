@@ -517,11 +517,40 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 // (예전에 stderr.includes('bot') 로 판별해서, 프로젝트 경로에 'bot' 이 들어간
 //  아무 오류나 "유튜브 차단" 으로 오진하는 버그가 있었습니다)
 {
-  const { friendlyError, isTransient } = await import('./src/music/ytdlp.js');
+  const {
+    friendlyError,
+    isTransient,
+    potProviderEnabled,
+    extraArgs,
+    cookieFallbackArgs,
+    needsCookieFallback,
+  } = await import('./src/music/ytdlp.js');
 
   const cookiePathErr = 'ERROR: unable to open /home/ubuntu/sarangbang-bot/cookies.txt';
   const got = friendlyError(cookiePathErr);
   ok('경로에 bot 이 있어도 "차단"으로 오진하지 않음', !got.includes('봇으로 판단'), got);
+
+  const savedPot = process.env.YTDLP_POT_PROVIDER;
+  const savedCookies = process.env.YTDLP_COOKIES_FILE;
+  process.env.YTDLP_POT_PROVIDER = 'true';
+  process.env.YTDLP_COOKIES_FILE = '/tmp/youtube-cookies.txt';
+  const publicArgs = extraArgs();
+  ok('PO Token을 켜면 mweb 클라이언트를 사용',
+    potProviderEnabled() && publicArgs.includes('youtube:player_client=mweb'));
+  ok('PO Token 공개 경로에는 계정 쿠키를 보내지 않음', !publicArgs.includes('--cookies'));
+  const fallback = cookieFallbackArgs(['--simulate', ...publicArgs, 'https://youtube.test/video']);
+  ok('쿠키 예비 경로는 mweb PO 옵션을 제거', !fallback.includes('youtube:player_client=mweb'));
+  ok('쿠키 예비 경로에 기존 쿠키를 추가',
+    fallback.includes('--cookies') && fallback.includes('/tmp/youtube-cookies.txt'));
+  ok('계정 필요 오류만 쿠키로 재시도',
+    needsCookieFallback({ stderr: 'ERROR: Sign in to confirm your age' }) &&
+      !needsCookieFallback({ stderr: 'ERROR: Unsupported URL' }));
+  ok('공급자 장애도 쿠키 예비 경로 대상',
+    needsCookieFallback({ stderr: 'ERROR: youtubepot-bgutilhttp connection refused 127.0.0.1:4416' }));
+  ok('공급자 오류 안내에 서비스 상태 명령 포함',
+    friendlyError('ERROR: youtubepot-bgutilhttp connection refused 127.0.0.1:4416').includes('systemctl status'));
+  process.env.YTDLP_POT_PROVIDER = savedPot ?? '';
+  process.env.YTDLP_COOKIES_FILE = savedCookies ?? '';
 
   ok('실제 차단 메시지는 잡아냄',
     friendlyError('ERROR: Sign in to confirm you are not a bot').includes('봇으로 판단'));
@@ -1509,10 +1538,17 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 
   // ★ 1코어 서버에서 추출을 동시에 돌리면 서로를 굶깁니다.
   //   실측: 미리 뽑기 두 개가 겹쳐 각각 73.2초·62.9초가 걸리고 둘 다 잘렸습니다.
-  ok('추출은 한 번에 하나만', yt.includes('function serializeExtraction(') && yt.includes('serializeExtraction(() => runSerialized('));
+  ok('추출은 한 번에 하나만',
+    yt.includes('function serializeExtraction(') &&
+      yt.includes('return serializeExtraction(async () =>') &&
+      yt.includes('return await runSerialized(args, opts)'));
   // 재생용 스트림은 곡이 끝날 때까지 살아 있어서, 줄에 넣으면 미리 뽑기가 굶습니다.
   // 줄을 타는 곳은 run() 하나뿐이어야 합니다. (정의 1 + 호출 1 = 2)
   ok('줄을 타는 곳은 추출 하나뿐', (yt.match(/serializeExtraction\(/g) ?? []).length === 2);
+  ok('PO Token 스트림도 소리 전 실패 시 쿠키로 전환',
+    yt.includes('const output = new PassThrough()') &&
+      yt.includes('allowCookieFallback && bytes === 0') &&
+      yt.includes('cookieFallbackArgs(launchArgs, cookie)'));
   {
     // 지금 곡이 뽑히는 중에 다음 곡을 뽑으면 지금 듣고 싶은 곡이 더 늦게 나옵니다.
     const playingBlock = ga.slice(

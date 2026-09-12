@@ -21,7 +21,15 @@ import { startWebServer } from './web/server.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 import { handleMusicComponent, adoptMusicPanel, ensureHomePanels } from './music/panel.js';
 import { handleHistoryComponent } from './music/commands.js';
-import { measureStartup as measureYtdlpStartup, ytdlpPath, updateHint, warmUpCache, cacheDir, pickFfmpeg } from './music/ytdlp.js';
+import {
+  measureStartup as measureYtdlpStartup,
+  ytdlpPath,
+  updateHint,
+  warmUpCache,
+  cacheDir,
+  pickFfmpeg,
+  potProviderEnabled,
+} from './music/ytdlp.js';
 import { initHistory, flushHistory } from './music/history.js';
 import { initUsage as initAiUsage, flushUsage as flushAiUsage } from './ai/usage.js';
 import { adoptGalleryPanel } from './images/panel.js';
@@ -135,6 +143,11 @@ client.once(Events.ClientReady, (c) => {
   // 이 시간은 곡을 틀 때마다 그대로 깔립니다. 느린 서버에서는 "왜 느린가" 의 답이
   // 여기서 끝나는 경우가 많아, 서버에 들어가 재보게 하는 대신 봇이 알려줍니다.
   if (inRole('music')) {
+    console.log(
+      potProviderEnabled()
+        ? '   YouTube 공개 영상: PO Token 우선 · 계정 필요 영상: 쿠키 예비 경로'
+        : '   YouTube 인증: 기존 방식 (PO Token 공급자 꺼짐)'
+    );
     measureYtdlpStartup().then((sec) => {
       if (sec === null) {
         return console.warn(

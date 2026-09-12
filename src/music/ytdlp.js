@@ -4,6 +4,7 @@
 import { spawn } from 'node:child_process';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { PassThrough } from 'node:stream';
 import ffmpegPath from 'ffmpeg-static';
 import { ROOT, config } from '../config.js';
 import { userError } from '../user-error.js';
@@ -120,7 +121,22 @@ export function updateHint() {
  */
 const CACHE_DIR = path.join(config.dataDir, 'yt-dlp-cache');
 
-function extraArgs() {
+const POT_EXTRACTOR_ARGS = 'youtube:player_client=mweb';
+
+/** PO Token 공급자를 쓸지. 설치 전에는 기존 동작을 그대로 유지합니다. */
+export function potProviderEnabled() {
+  return (process.env.YTDLP_POT_PROVIDER ?? 'false').toLowerCase() === 'true';
+}
+
+function cookiesFile() {
+  return (process.env.YTDLP_COOKIES_FILE ?? '').trim();
+}
+
+/**
+ * 공급자를 켜면 공개 영상은 로그인 쿠키 없이 먼저 요청합니다.
+ * 계정이 필요한 영상 또는 공급자 장애만 아래 run()에서 기존 쿠키로 한 번 더 시도합니다.
+ */
+export function extraArgs({ includeCookies = !potProviderEnabled(), includePot = potProviderEnabled() } = {}) {
   const args = ['--cache-dir', CACHE_DIR];
 
   // yt-dlp 는 유튜브 추출에 자바스크립트 런타임이 필요합니다.
@@ -133,13 +149,51 @@ function extraArgs() {
     args.push('--js-runtimes', `node:${process.execPath}`);
   }
 
-  const cookies = (process.env.YTDLP_COOKIES_FILE ?? '').trim();
-  if (cookies) args.push('--cookies', cookies);
+  if (includePot) args.push('--extractor-args', POT_EXTRACTOR_ARGS);
+
+  const cookies = cookiesFile();
+  if (includeCookies && cookies) args.push('--cookies', cookies);
   const proxy = (process.env.YTDLP_PROXY ?? '').trim();
   if (proxy) args.push('--proxy', proxy);
   const raw = (process.env.YTDLP_EXTRA_ARGS ?? '').trim();
   if (raw) args.push(...raw.split(/\s+/));
   return args;
+}
+
+/** 계정 인증이 필요하거나 PO Token 공급자가 고장난 경우에만 쿠키 예비 경로를 씁니다. */
+export function needsCookieFallback(error) {
+  const s = `${error?.stderr ?? ''}\n${error?.message ?? ''}`.toLowerCase();
+  return [
+    'sign in',
+    'login_required',
+    'confirm your age',
+    'age-restrict',
+    'members-only',
+    'members only',
+    'private video',
+    'youtubepot',
+    'bgutil',
+    'po token',
+    'po_token',
+    '127.0.0.1:4416',
+    'connection refused',
+    'http error 403',
+    'forbidden',
+  ].some((p) => s.includes(p));
+}
+
+/** mweb+공급자 옵션을 빼고 기존 yt-dlp 클라이언트+쿠키 조합으로 되돌립니다. */
+export function cookieFallbackArgs(args, cookieFile = cookiesFile()) {
+  const result = [];
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--extractor-args' && args[i + 1] === POT_EXTRACTOR_ARGS) {
+      i++;
+      continue;
+    }
+    result.push(args[i]);
+  }
+  if (cookieFile && !result.includes('--cookies')) result.push('--cookies', cookieFile);
+  return result;
 }
 
 /**
@@ -343,7 +397,20 @@ function serializeExtraction(fn) {
 }
 
 async function run(args, opts = {}) {
-  return serializeExtraction(() => runSerialized(args, opts));
+  return serializeExtraction(async () => {
+    try {
+      return await runSerialized(args, opts);
+    } catch (err) {
+      const cookie = cookiesFile();
+      if (!potProviderEnabled() || !cookie || !needsCookieFallback(err)) throw err;
+
+      console.warn(
+        '[yt-dlp] PO Token 공개 경로가 실패해 기존 쿠키로 한 번 더 시도합니다.\n' +
+          `         이유: ${String(err.message ?? err).split('\n')[0]}`
+      );
+      return runSerialized(cookieFallbackArgs(args, cookie), opts);
+    }
+  });
 }
 
 async function runSerialized(args, { timeouts = timeoutLadder() } = {}) {
@@ -404,6 +471,20 @@ async function runSerialized(args, { timeouts = timeoutLadder() } = {}) {
  */
 export function friendlyError(stderr) {
   const s = String(stderr).toLowerCase();
+
+  if (
+    s.includes('youtubepot') ||
+    s.includes('bgutil') ||
+    s.includes('po token') ||
+    s.includes('po_token') ||
+    s.includes('127.0.0.1:4416')
+  ) {
+    return (
+      '유튜브 PO Token 공급자에 연결하지 못했습니다.\n' +
+      '`sudo systemctl status sarangbang-pot-provider@$USER --no-pager` 로 상태를 확인해주세요.\n' +
+      '(기존 쿠키가 설정되어 있으면 봇이 쿠키 방식으로 한 번 더 시도합니다)'
+    );
+  }
 
   // ⚠️ 여기서 'bot' 같은 짧은 단어로 판별하지 말 것.
   //    프로젝트 폴더 이름(sarangbang-bot)에 'bot' 이 들어 있어서,
@@ -944,31 +1025,64 @@ export function createStream(url, { extract = true } = {}) {
     '--ignore-config',
     // 라이브/긴 영상에서 끊김을 줄이는 옵션
     '--buffer-size', '16K',
-    ...extraArgs(),
+    // 이미 뽑은 주소를 받는 1단계는 공개 직접 수신까지 실패한 뒤입니다. 예전처럼 쿠키를
+    // 전달해야 계정으로 뽑은 주소도 재생됩니다. 새로 추출하는 2단계만 PO Token을 먼저 씁니다.
+    ...extraArgs({ includeCookies: !extract || !potProviderEnabled() }),
     '-o', '-',
     url
   );
 
-  const child = spawn(YTDLP, args, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+  // 반환 스트림을 고정해두면 첫 프로세스가 소리를 내기 전에 실패했을 때, 소비자 쪽을
+  // 다시 만들지 않고도 쿠키 예비 프로세스로 갈아 끼울 수 있습니다.
+  const output = new PassThrough();
+  let activeChild = null;
+  let stopped = false;
 
-  let stderr = '';
-  child.stderr.on('data', (d) => {
-    stderr += d;
-    if (stderr.length > 8000) stderr = stderr.slice(-4000);
-  });
-  child.on('close', (code) => {
-    if (code !== 0 && code !== null) {
-      const msg = friendlyError(stderr);
-      if (msg) console.error('[music] yt-dlp:', msg);
-    }
-  });
+  const launch = (launchArgs, allowCookieFallback) => {
+    if (stopped) return;
+    const child = spawn(YTDLP, launchArgs, { stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+    activeChild = child;
+    let stderr = '';
+    let bytes = 0;
 
-  // 스트림이 소비되지 않고 버려질 때 프로세스가 남지 않도록 정리 함수를 붙여둡니다.
-  child.stdout.once('close', () => {
-    if (!child.killed) child.kill();
-  });
+    child.stdout.on('data', (chunk) => (bytes += chunk.length));
+    child.stdout.pipe(output, { end: false });
+    child.stderr.on('data', (d) => {
+      stderr += d;
+      if (stderr.length > 8000) stderr = stderr.slice(-4000);
+    });
+    child.once('error', (err) => {
+      if (stopped) return;
+      console.error('[music] yt-dlp 실행 실패:', err.message);
+      output.destroy(err);
+    });
+    child.once('close', (code) => {
+      if (stopped) return;
+      if (code === 0 || code === null) {
+        output.end();
+        return;
+      }
 
-  return child.stdout;
+      const error = { stderr, message: friendlyError(stderr) };
+      const cookie = cookiesFile();
+      if (allowCookieFallback && bytes === 0 && cookie && needsCookieFallback(error)) {
+        console.warn('[music] PO Token 스트림이 열리기 전에 실패해 기존 쿠키로 다시 엽니다.');
+        launch(cookieFallbackArgs(launchArgs, cookie), false);
+        return;
+      }
+
+      if (error.message) console.error('[music] yt-dlp:', error.message);
+      output.end();
+    });
+  };
+
+  launch(args, extract && potProviderEnabled());
+  // 스트림이 소비되지 않고 버려질 때 yt-dlp 프로세스가 남지 않게 합니다.
+  output.once('close', () => {
+    stopped = true;
+    if (activeChild && !activeChild.killed) activeChild.kill();
+  });
+  return output;
 }
 
 export function formatDuration(sec) {
