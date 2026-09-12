@@ -510,7 +510,7 @@ export function friendlyError(stderr) {
     return hasCookies
       ? '유튜브가 이 서버를 봇으로 판단해 차단했습니다.\n' +
           '쿠키는 설정되어 있으니 **만료된 것으로 보입니다.** 새로 뽑아서 교체해주세요.\n' +
-          '(시크릿 창에서 로그인 → 영상 재생 → 쿠키 저장 → **로그아웃하지 말고** 창 닫기)'
+          '(새 시크릿 창 → 로그인 → `youtube.com/robots.txt` → 쿠키 저장 → **로그아웃하지 말고 창 전체 닫기**)'
       : '유튜브가 이 서버를 봇으로 판단해 차단했습니다. `.env.music` 의 YTDLP_COOKIES_FILE 설정이 필요합니다. (README의 "유튜브가 막힐 때" 항목 참고)';
   }
   // n challenge(서명 계산)는 자바스크립트 런타임이 있어야 풀립니다.

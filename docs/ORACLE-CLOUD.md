@@ -946,21 +946,25 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 
 **해결: 브라우저 쿠키를 서버에 넣어줍니다.**
 
-1. 집 PC 브라우저에서 유튜브에 로그인한 상태로, `Get cookies.txt LOCALLY` 같은
-   확장 프로그램으로 `cookies.txt` 를 저장합니다
-2. 서버로 보냅니다 (집 PC에서 실행):
+1. 집 PC에서 **새 시크릿 창**을 열고 별도 유튜브 계정으로 로그인합니다.
+2. 같은 탭에서 `https://www.youtube.com/robots.txt`를 연 뒤, 시크릿 모드 사용을 허용한
+   `Get cookies.txt LOCALLY` 같은 신뢰할 수 있는 확장 프로그램으로 `youtube.com` 쿠키만
+   Netscape 형식의 `cookies.txt`로 저장합니다.
+3. 로그아웃하거나 유튜브를 다시 열지 말고 **시크릿 창 전체를 즉시 닫습니다.** 일반 영상
+   페이지가 열린 세션을 계속 쓰면 유튜브가 계정 쿠키를 회전시켜 저장 파일이 빨리 무효화됩니다.
+4. 서버로 보냅니다 (집 PC에서 실행):
 
    ```bash
    scp -i ssh-key.key cookies.txt ubuntu@<서버IP>:~/sarangbang-bot/cookies.txt
    ```
 
-3. 서버의 **`.env.music`** 에 경로를 적습니다 (음악은 노래하는 망고가 돌립니다):
+5. 서버의 **`.env.music`** 에 경로를 적습니다 (음악은 노래하는 망고가 돌립니다):
 
    ```ini
    YTDLP_COOKIES_FILE=/home/ubuntu/sarangbang-bot/cookies.txt
    ```
 
-4. 음악 봇을 재시작합니다:
+6. 음악 봇을 재시작합니다:
 
    ```bash
    sudo systemctl restart music-sarangbang-bot
@@ -969,7 +973,8 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 > 🔒 **이 파일은 본인 유튜브 계정의 로그인 정보입니다.**
 > 남에게 주지 말고, git에 올리지 마세요. (`.gitignore` 에 `cookies.txt` 를 추가해두면 안전합니다)
 >
-> 쿠키는 시간이 지나면 만료됩니다. 다시 막히면 위 과정을 반복하세요.
+> 쿠키 파일의 `expires` 숫자를 늘려도 유튜브가 폐기한 세션은 되살아나지 않습니다. 위 방식도
+> 영구 보장은 아니지만, 평소 쓰는 브라우저 세션에서 뽑는 것보다 회전을 피하기 쉽습니다.
 
 ### 10-1. 쿠키 교체 횟수 줄이기 — PO Token 공급자
 
