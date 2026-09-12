@@ -4005,8 +4005,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const voicePage = await fetch(`${base}/v/${voiceGuild}`);
   const voiceHtml = await voicePage.text();
   ok('소리 전체 목록 페이지는 공개로 열림', voicePage.status === 200);
-  ok('전체 목록에 재생기·받기·제목 변경이 있음',
-    voiceHtml.includes('<audio') && voiceHtml.includes('⬇️ 받기') && voiceHtml.includes('제목 바꾸기'));
+  ok('전체 목록에 재생기·받기·제목 변경·삭제가 있음',
+    voiceHtml.includes('<audio') && voiceHtml.includes('⬇️ 받기') &&
+      voiceHtml.includes('제목 바꾸기') && voiceHtml.includes('🗑️ 삭제'));
   const titleNoAuth = await fetch(`${base}/api/voice-title`, {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile, title: '웃긴 이야기' }),
@@ -4018,7 +4019,20 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     (await vStore.setVoiceClipTitle('888888888888888888', voiceFolder, voiceFile, '침범')) === null);
   const webSrc = fs.readFileSync('./src/web/server.js', 'utf8');
   ok('삭제는 계속 WEB_TOKEN으로 보호',
-    webSrc.includes("app.post('/api/clip-delete', requireToken"));
+    webSrc.includes("app.post('/api/voice-delete', requireToken"));
+  const deleteNoAuth = await fetch(`${base}/api/voice-delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile }),
+  });
+  ok('음성 삭제는 암호 없으면 거절', deleteNoAuth.status === 401, String(deleteNoAuth.status));
+  const deleteWithAuth = await fetch(`${base}/api/voice-delete`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
+    body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile }),
+  });
+  ok('음성 삭제는 관리 암호로 파일과 목록을 함께 삭제',
+    deleteWithAuth.status === 200 &&
+      !fs.existsSync(clipStore.filePath(voiceFolder, voiceFile)) &&
+      !vStore.allVoiceClips(voiceGuild).some((c) => c.file === voiceFile));
 
   // 재시작하면 링버퍼는 꺼진다. 제어판이 "기록 중" 으로 남으면 거짓말이 된다.
   const indexSrc = fs.readFileSync('./src/index.js', 'utf8');

@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { inRole } from '../settings.js';
 import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
-import { allVoiceClips, setVoiceClipTitle } from '../voice/store.js';
+import { allVoiceClips, removeVoiceClip, setVoiceClipTitle } from '../voice/store.js';
 import {
   listFolders,
   listFiles,
@@ -227,6 +227,21 @@ export function createWebServer() {
         const changed = await setVoiceClipTitle(guildId, folder, file, title);
         if (!changed) return res.status(404).json({ error: '소리 기록을 찾지 못했습니다.' });
         res.json({ title: changed.title });
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    app.post('/api/voice-delete', requireToken, async (req, res, next) => {
+      try {
+        const { guildId, folder, file } = req.body ?? {};
+        const owned = /^\d{16,22}$/.test(String(guildId ?? '')) &&
+          allVoiceClips(String(guildId)).some((c) => c.folder === folder && c.file === file);
+        if (!owned) return res.status(404).json({ error: '소리 기록을 찾지 못했습니다.' });
+        const deleted = await deleteClip(folder, file);
+        if (!deleted) return res.status(404).json({ error: '파일을 찾지 못했습니다.' });
+        await removeVoiceClip(guildId, folder, file);
+        res.json({ deleted: 1 });
       } catch (e) {
         next(e);
       }
@@ -559,6 +574,7 @@ function voiceClipPage(guildId, items) {
         <div class="voice-actions">
           <a class="btn primary" href="${esc(dl)}">⬇️ 받기</a>
           <button class="btn" data-rename>✏️ 제목 바꾸기</button>
+          <button class="btn danger" data-delete>🗑️ 삭제</button>
         </div>
       </article>`;
     })
@@ -587,6 +603,12 @@ function voiceClipPage(guildId, items) {
 <script>
 (function () {
   var guildId = ${JSON.stringify(guildId)};
+  var token = null;
+  function authHeader() {
+    if (!token) return null;
+    var bytes = new TextEncoder().encode('admin:' + token);
+    return 'Basic ' + btoa(Array.from(bytes, function (b) { return String.fromCharCode(b); }).join(''));
+  }
   async function rename(card, title) {
     var headers = { 'Content-Type': 'application/json' };
     var response = await fetch('/api/voice-title', {
@@ -598,8 +620,27 @@ function voiceClipPage(guildId, items) {
     if (!response.ok) { alert('제목을 바꾸지 못했습니다. 잠시 뒤 다시 시도해주세요.'); return null; }
     return response.json();
   }
+  async function remove(card, retry) {
+    var headers = { 'Content-Type': 'application/json' };
+    var auth = authHeader();
+    if (auth) headers.Authorization = auth;
+    var response = await fetch('/api/voice-delete', {
+      method: 'POST', headers: headers,
+      body: JSON.stringify({ guildId: guildId, folder: card.dataset.folder, file: card.dataset.name }),
+    });
+    if (response.status === 401) {
+      token = null;
+      if (retry) { alert('암호가 틀렸습니다. 다시 삭제를 눌러 입력해주세요.'); return false; }
+      token = window.prompt('관리 암호를 입력해주세요. (봇 .env의 WEB_TOKEN · 아이디는 필요 없습니다)');
+      if (!token) return false;
+      return remove(card, true);
+    }
+    if (!response.ok) { alert('지우지 못했습니다. 페이지를 새로고침한 뒤 다시 시도해주세요.'); return false; }
+    return true;
+  }
   document.querySelectorAll('.voice-clip').forEach(function (card) {
     var button = card.querySelector('[data-rename]');
+    var deleteButton = card.querySelector('[data-delete]');
     var label = card.querySelector('[data-title]');
     button.addEventListener('click', async function () {
       var title = window.prompt('새 제목을 입력해주세요. (최대 80자)', label.textContent);
@@ -610,6 +651,14 @@ function voiceClipPage(guildId, items) {
         if (result) label.textContent = result.title;
       } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
       finally { button.disabled = false; }
+    });
+    deleteButton.addEventListener('click', async function () {
+      if (!confirm(label.textContent + ' 을 지웁니다. 되돌릴 수 없습니다.')) return;
+      deleteButton.disabled = true;
+      try {
+        if (await remove(card, false)) card.remove();
+      } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
+      finally { deleteButton.disabled = false; }
     });
   });
 })();

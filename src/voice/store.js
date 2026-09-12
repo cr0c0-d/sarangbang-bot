@@ -86,6 +86,17 @@ export async function setVoiceClipTitle(guildId, folder, file, title) {
   return { ...clip, folder: day.folder };
 }
 
+/** 파일 삭제가 성공한 뒤 목록에서도 같은 항목을 제거합니다. */
+export async function removeVoiceClip(guildId, folder, file) {
+  const day = store.days[String(folder)];
+  if (!day || day.guildId !== String(guildId)) return false;
+  const index = day.clips.findIndex((c) => c.file === file);
+  if (index < 0) return false;
+  day.clips.splice(index, 1);
+  await save();
+  return true;
+}
+
 export function clipsToday(guildId) {
   return dayOf(guildId).clips;
 }
