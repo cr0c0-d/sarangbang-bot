@@ -2689,6 +2689,11 @@ DAVE 복호화 실패를 확정할 수 없습니다. 진단은 이제 기존 스
 공급자 서버와 Python 플러그인은 주 버전이 맞아야 하므로 설치 스크립트가 둘 다 2.0.0으로
 고정한다. HTTP 서버는 인증이 없으므로 외부 포트로 열지 않고 `127.0.0.1:4416`만 사용한다.
 
+2026-09-12 실제 Oracle 서버에서는 HTTP 공급자와 플러그인이 정상 로드됐지만 `mweb player`
+응답 자체가 `LOGIN_REQUIRED`였다. 이는 GVS PO Token 요청 전 단계라 bgutil로 우회할 수 없다.
+이 IP에서는 `YTDLP_POT_PROVIDER=false`가 운영 권장값이며, 켜면 매 요청에서 첫 실패 뒤 쿠키
+예비 경로로 가므로 지연만 늘어난다. `script-node unavailable`은 HTTP 방식을 쓸 때 정상 표시다.
+
 ---
 
 ## 7. 알려진 함정 (Gotchas)

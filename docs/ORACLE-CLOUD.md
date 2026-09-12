@@ -973,7 +973,7 @@ cd ~/sarangbang-bot && ./bin/yt-dlp --simulate -v "https://www.youtube.com/watch
 
 ### 10-1. 쿠키 교체 횟수 줄이기 — PO Token 공급자
 
-> **상태: 구현 완료 · 서버 실측 전.** 쿠키 파일의 만료일을 손으로 늘리는 방식은 사용하지 않습니다.
+> **상태: 구현 완료 · 현재 Oracle 서버에서는 단독 사용 실패.** 쿠키 파일의 만료일을 손으로 늘리는 방식은 사용하지 않습니다.
 > YouTube 서버가 세션을 회전·폐기하면 파일의 `expires` 값을 바꿔도 되살아나지 않습니다.
 
 2026-09-12 현재 최신 보안 수정판 `bgutil-ytdlp-pot-provider 2.0.0`을 설치합니다. 이전 버전의
@@ -1024,6 +1024,33 @@ journalctl -u sarangbang-pot-provider@$USER -n 50 --no-pager
 
 시작 로그에 `YouTube 공개 영상: PO Token 우선`이 표시되어야 합니다. 공급자를 잠시 멈춘 상태에서
 쿠키 예비 경로가 작동하거나 명확한 서비스 상태 안내가 나오는지도 한 번 확인합니다.
+
+#### 2026-09-12 Oracle 실측 결과
+
+공급자 서비스와 플러그인은 정상입니다.
+
+```text
+Started POT server (v2.0.0) on address [::1]:4416, 127.0.0.1:4416
+PO Token Providers: bgutil:http-2.0.0 (external)
+mweb player response playability status: LOGIN_REQUIRED
+Sign in to confirm you’re not a bot
+```
+
+`script-node`·`script-deno`가 `unavailable`이라는 줄은 오류가 아닙니다. HTTP 공급자 방식만 설치했고
+그 공급자가 정상 선택됐기 때문에 예상된 표시입니다. 실패 지점은 토큰으로 보호하는 영상 파일
+요청(GVS)보다 앞선 **mweb player API**입니다. 이 Oracle IP는 PO Token을 만들 기회가 오기 전에
+로그인을 요구하므로 bgutil만으로 쿠키를 없앨 수 없습니다. yt-dlp에도 같은 증상이 보고돼 있습니다.
+
+따라서 이 서버에서는 다음 값으로 되돌려 불필요한 첫 실패와 대기 시간을 없애는 것을 권장합니다.
+
+```ini
+YTDLP_POT_PROVIDER=false
+```
+
+코드의 PO Token 경로와 공급자 서비스는 다른 IP에서 다시 시험할 수 있도록 남깁니다. 다음 후보는
+Player 토큰도 만들 수 있는 브라우저 기반 WPC 공급자이지만, Chromium 상시 실행 비용과 실험 단계
+안정성 문제가 있어 별도 검토 후 적용합니다. 확실한 해결책은 주거용 프록시 또는 집 PC에서 음악
+봇을 실행하는 것입니다.
 
 ---
 

@@ -1268,6 +1268,10 @@ sudo systemctl status sarangbang-pot-provider@$USER --no-pager
 공급자는 `127.0.0.1:4416`에서만 받아 외부에 공개되지 않습니다. 현재 고정 버전은 보안 수정이
 포함된 `2.0.0`이며, 버전을 바꿀 때는 서버와 yt-dlp 플러그인을 반드시 함께 갱신합니다.
 
+> 2026-09-12 현재 운영 중인 Oracle IP에서는 공급자가 정상이어도 그보다 앞선 player 조회가
+> `LOGIN_REQUIRED`로 차단됐습니다. 같은 증상이면 `YTDLP_POT_PROVIDER=false`로 되돌리세요.
+> 이 경우 PO Token은 쿠키를 대체하지 못하고 첫 실패 시간만 추가합니다.
+
 **예비 해결: 쿠키 넣기**
 
 브라우저에서 유튜브 쿠키를 파일로 뽑아 **`.env.music`** 의 `YTDLP_COOKIES_FILE` 에 경로를 넣습니다.
