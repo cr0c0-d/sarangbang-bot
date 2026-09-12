@@ -67,6 +67,36 @@ export function botDeafState(guild) {
 }
 
 /**
+ * 수신 스트림을 잠깐 관찰합니다.
+ *
+ * 소리 기록 버퍼가 이미 같은 사람을 구독하고 있으면 새 구독을 만들지 않고 그 스트림에
+ * 진단용 리스너만 붙입니다. 진단이 끝날 때는 우리가 붙인 리스너만 떼며, 기존 기록 버퍼가
+ * 소유한 스트림은 절대로 닫지 않습니다.
+ */
+export function observeReceiverStream(receiver, userId, { onData, onError }) {
+  const existing = receiver.subscriptions.get(userId);
+  const stream = existing ?? receiver.subscribe(userId, { end: { behavior: EndBehaviorType.Manual } });
+  const owned = !existing;
+
+  stream.on('data', onData);
+  stream.on('error', onError);
+
+  return {
+    owned,
+    stop() {
+      stream.off('data', onData);
+      stream.off('error', onError);
+      if (!owned) return;
+      try {
+        stream.destroy();
+      } catch {
+        // 이미 닫힌 진단용 스트림입니다.
+      }
+    },
+  };
+}
+
+/**
  * 실제 수신 확인. 세는 것만 하고 오디오는 버립니다.
  *
  * @returns 사람별 집계와 커넥션 진단값
@@ -77,7 +107,16 @@ async function listen(connection, guild, memberIds, ms) {
   // 그래서 이 두 숫자가 갈리는 것 자체가 답입니다 (아래 진단 표).
   const tally = new Map();
   const of = (userId) => {
-    if (!tally.has(userId)) tally.set(userId, { speaking: 0, packets: 0, bytes: 0, error: null, ssrc: null });
+    if (!tally.has(userId)) {
+      tally.set(userId, {
+        speaking: 0,
+        packets: 0,
+        bytes: 0,
+        error: null,
+        ssrc: null,
+        subscription: null,
+      });
+    }
     return tally.get(userId);
   };
 
@@ -86,22 +125,25 @@ async function listen(connection, guild, memberIds, ms) {
   //   실제로 "2명 있었는데 1명만 찍혔다" 를 받았는데, 그게 어느 쪽인지 알 수 없었습니다.
   for (const userId of memberIds) of(userId);
 
-  const streams = [];
+  const observers = [];
+  const watched = new Set();
   const watch = (userId) => {
-    if (receiver.subscriptions.has(userId)) return;
+    if (watched.has(userId)) return;
+    watched.add(userId);
     // ⚠️ `receiver.subscribe()` 는 **재생용** `connection.subscribe()` 와 다른 것입니다.
     // 이쪽은 받기, 그쪽은 보내기입니다. 불변조건 1 의 `subscribeTo()` 를 건드리지 않습니다.
-    const stream = receiver.subscribe(userId, { end: { behavior: EndBehaviorType.Manual } });
-    streams.push(stream);
-    stream.on('data', (chunk) => {
+    const onData = (chunk) => {
       const row = of(userId);
       row.packets += 1;
       row.bytes += chunk.length;
-    });
+    };
     // 복호화 실패는 `stream.destroy(error)` 로 옵니다. 원문을 그대로 남깁니다 (3.1-4).
-    stream.on('error', (err) => {
+    const onError = (err) => {
       of(userId).error = err?.message ?? String(err);
-    });
+    };
+    const observer = observeReceiverStream(receiver, userId, { onData, onError });
+    of(userId).subscription = observer.owned ? '진단 임시 구독' : '기존 기록 버퍼 관찰';
+    observers.push(observer);
   };
 
   const onSpeaking = (userId) => {
@@ -128,13 +170,7 @@ async function listen(connection, guild, memberIds, ms) {
       of(userId).ssrc = null;
     }
   }
-  for (const stream of streams) {
-    try {
-      stream.destroy();
-    } catch {
-      // 이미 닫힌 스트림입니다. 집계는 이미 끝났습니다.
-    }
-  }
+  for (const observer of observers) observer.stop();
   return { tally, deafAfter, ...peekNetworking(connection) };
 }
 
@@ -271,6 +307,7 @@ export const commands = [
             `<@${userId}> — 말하기 **${row.speaking}**회 · opus 패킷 **${row.packets}**개` +
             (row.packets ? ` (평균 ${avg}바이트, 총 ${(row.bytes / 1024).toFixed(1)}KB)` : '') +
             (row.ssrc === false ? ' · ssrc 매핑 없음' : row.ssrc === true ? ' · ssrc 있음' : '') +
+            (row.subscription ? ` · ${row.subscription}` : '') +
             why +
             (row.error ? `\n　　⚠️ 오류 원문: \`${row.error}\`` : '')
           );
@@ -278,6 +315,8 @@ export const commands = [
 
       const speaking = [...result.tally.values()].reduce((n, r) => n + r.speaking, 0);
       const packets = [...result.tally.values()].reduce((n, r) => n + r.packets, 0);
+      const borrowed = [...result.tally.values()].filter((r) => r.subscription === '기존 기록 버퍼 관찰').length;
+      const temporary = [...result.tally.values()].filter((r) => r.subscription === '진단 임시 구독').length;
 
       // ★ **나만 보기 메시지는 디스코드가 저장하지 않습니다.** 새로고침하거나 앱을 다시
       //   켜면 사라집니다. 진단 결과가 사라지면 숫자를 옮겨 적을 수도 없습니다.
@@ -286,7 +325,8 @@ export const commands = [
       console.log(
         `[voice-probe] ${seconds}초 · 사람 ${humans.length}명 · 말하기 ${speaking} · 패킷 ${packets} · ` +
           `귀 ${result.deafAfter?.selfDeaf ? '막힘' : '열림'} · 서버차단 ${result.deafAfter?.serverDeaf ? 'Y' : 'N'} · ` +
-          `암호화 ${result.encryptionMode ?? '?'} · DAVE ${result.dave ? 'Y' : 'N'}` +
+          `암호화 ${result.encryptionMode ?? '?'} · DAVE ${result.dave ? 'Y' : 'N'} · ` +
+          `구독 기존 ${borrowed} 임시 ${temporary}` +
           [...result.tally.entries()]
             .map(([id, r]) => ` | ${id}: 말하기 ${r.speaking} 패킷 ${r.packets} ssrc ${r.ssrc}${r.error ? ` 오류 ${r.error}` : ''}`)
             .join('')
@@ -306,6 +346,7 @@ export const commands = [
           `· 서버 차단: ${result.deafAfter?.serverDeaf ? '⚠️ 차단됨' : '없음'}`,
           `· 암호화 방식: \`${result.encryptionMode ?? '알 수 없음'}\``,
           `· DAVE(종단간 암호화): ${result.dave ? '**켜짐**' : '꺼짐'}`,
+          `· 수신 구독: 기존 기록 버퍼 **${borrowed}명** · 진단 임시 **${temporary}명**`,
           '',
           `**사람별** (음성방 사람 ${humans.length}명)`,
           ...(rows.length ? rows : ['· 아무 신호도 없었습니다.']),

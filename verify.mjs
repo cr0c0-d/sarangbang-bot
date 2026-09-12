@@ -3701,6 +3701,36 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // ★ "2명 있었는데 1명만 찍혔다" 를 받았는데, 말 안 한 사람이 목록에서 빠져서
   //   "조용했다" 와 "안 잡힌다" 를 구분할 수 없었다. 방에 있는 사람은 전부 나와야 한다.
   ok('말 안 한 사람도 목록에 0으로 나옴', src.includes('for (const userId of memberIds) of(userId);'));
+  // 소리 기록 버퍼가 먼저 구독한 사람을 건너뛰면, 실제로 받고 있어도 진단은 항상 0을 낸다.
+  // 기존 구독은 빌려서 관찰하되 진단 종료 시 닫지 않아야 한다.
+  const { EventEmitter } = await import('node:events');
+  const existingStream = new EventEmitter();
+  let existingDestroyed = false;
+  existingStream.destroy = () => { existingDestroyed = true; };
+  let existingPackets = 0;
+  const borrowedObserver = probe.observeReceiverStream(
+    { subscriptions: new Map([['u', existingStream]]), subscribe: () => { throw new Error('새 구독 금지'); } },
+    'u',
+    { onData: () => { existingPackets += 1; }, onError: () => {} }
+  );
+  existingStream.emit('data', Buffer.from([1]));
+  borrowedObserver.stop();
+  existingStream.emit('data', Buffer.from([2]));
+  ok('기존 기록 버퍼의 패킷도 진단함', existingPackets === 1 && borrowedObserver.owned === false);
+  ok('진단 종료가 기존 기록 버퍼를 닫지 않음', existingDestroyed === false);
+
+  const temporaryStream = new EventEmitter();
+  let temporaryDestroyed = false;
+  temporaryStream.destroy = () => { temporaryDestroyed = true; };
+  const temporaryObserver = probe.observeReceiverStream(
+    { subscriptions: new Map(), subscribe: () => temporaryStream },
+    'u',
+    { onData: () => {}, onError: () => {} }
+  );
+  temporaryObserver.stop();
+  ok('진단이 만든 임시 구독만 종료함', temporaryObserver.owned === true && temporaryDestroyed === true);
+  ok('결과에 기존/임시 구독 출처를 표시',
+    src.includes('기존 기록 버퍼 관찰') && src.includes('진단 임시 구독'));
   ok('ssrc 매핑 여부까지 보고 (소리가 아예 안 온 것과 구분)',
     src.includes('receiver.ssrcMap?.get?.(userId)') && src.includes('ssrc 매핑 없음'));
   // ★ 나만 보기 메시지는 디스코드가 저장하지 않는다. 새로고침하면 사라져 숫자를 잃는다.
