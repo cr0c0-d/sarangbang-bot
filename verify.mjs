@@ -3949,6 +3949,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const panel = voiceMod.buildVoicePanel('voice-guild');
   const ids = JSON.stringify(panel.components);
   ok('제어판에 켜기·✂️ 두 버튼', ids.includes('vc:toggle') && ids.includes('vc:save'));
+  ok('과거 소리는 날짜 버튼 대신 전체 목록 하나로 연결',
+    !voiceSrc.includes('오늘 들으러 가기') && voiceSrc.includes('모든 소리 듣기'));
   // 꺼져 있을 때 ✂️ 를 누르면 "받은 소리가 없다" 만 나온다. 눌리지 않게 잠근다.
   ok('꺼져 있으면 ✂️ 는 잠김', /"custom_id":"vc:save"[^}]*"disabled":true/.test(ids));
   ok('제어판이 화면 규칙을 통과', typeof panel.embeds[0].toJSON === 'function' && !!panel.embeds[0].toJSON().title);
@@ -3982,6 +3984,43 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   // ★ 서버가 여러 개일 때 남의 서버 소리가 같은 폴더에 섞이면 안 된다.
   ok('서버가 다르면 폴더도 다름',
     vStore.folderFor('1111', new Date(2026, 8, 8)) !== vStore.folderFor('2222', new Date(2026, 8, 8)));
+  const appIndexSrc = fs.readFileSync('./src/index.js', 'utf8');
+  ok('시작할 때 과거 음성 메타데이터를 불러옴',
+    appIndexSrc.includes("if (inRole('voice')) await initVoiceClips();"));
+
+  // 전체 목록과 제목 변경은 실제 웹 라우트까지 확인한다. 날짜 폴더는 내부 저장에만 남는다.
+  const voiceGuild = '777777777777777777';
+  const clipStore = await import('./src/stream/clips.js');
+  await vStore.initVoiceClips();
+  const voiceFolder = vStore.folderFor(voiceGuild);
+  const voiceFile = '소리-테스트.m4a';
+  fs.mkdirSync(clipStore.folderPath(voiceFolder), { recursive: true });
+  fs.writeFileSync(clipStore.filePath(voiceFolder, voiceFile), Buffer.alloc(1024, 1));
+  vStore.addVoiceClip(voiceGuild, {
+    folder: voiceFolder, file: voiceFile, seconds: 30, bytes: 1024, byUserId: 'u', speakers: ['u'],
+  });
+  await vStore.flushVoiceClips();
+  ok('서버의 모든 날짜 메타데이터를 한 목록으로 조회',
+    vStore.allVoiceClips(voiceGuild).some((c) => c.file === voiceFile));
+  const voicePage = await fetch(`${base}/v/${voiceGuild}`);
+  const voiceHtml = await voicePage.text();
+  ok('소리 전체 목록 페이지는 공개로 열림', voicePage.status === 200);
+  ok('전체 목록에 재생기·받기·제목 변경이 있음',
+    voiceHtml.includes('<audio') && voiceHtml.includes('⬇️ 받기') && voiceHtml.includes('제목 바꾸기'));
+  const titleNoAuth = await fetch(`${base}/api/voice-title`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile, title: '웃긴 이야기' }),
+  });
+  ok('음성 제목 변경은 관리 암호로 보호', titleNoAuth.status === 401, String(titleNoAuth.status));
+  const titleChanged = await fetch(`${base}/api/voice-title`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
+    body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile, title: '웃긴 이야기' }),
+  });
+  ok('관리 암호로 음성 제목 변경', titleChanged.status === 200, String(titleChanged.status));
+  const renamedHtml = await (await fetch(`${base}/v/${voiceGuild}`)).text();
+  ok('바꾼 제목이 전체 목록에 유지됨', renamedHtml.includes('웃긴 이야기'));
+  ok('다른 서버 ID로 제목을 바꿀 수 없음',
+    (await vStore.setVoiceClipTitle('888888888888888888', voiceFolder, voiceFile, '침범')) === null);
 
   // 재시작하면 링버퍼는 꺼진다. 제어판이 "기록 중" 으로 남으면 거짓말이 된다.
   const indexSrc = fs.readFileSync('./src/index.js', 'utf8');

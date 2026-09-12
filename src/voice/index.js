@@ -21,11 +21,12 @@ import { get as getSetting, featureEnabled } from '../settings.js';
 import { userError } from '../user-error.js';
 import { getGuildAudio, peekGuildAudio } from '../audio/guild-audio.js';
 import { rememberPanel, forgetPanel, rememberedPanels, VOICE } from '../panel-registry.js';
-import { clipPageUrl, fmtBytes, cleanupByBudget } from '../stream/clips.js';
+import { fmtBytes, cleanupByBudget } from '../stream/clips.js';
 import { arm, disarm, isArmed, armedIn, bufferedInfo, saveLast, dropIfMoved } from './buffer.js';
-import { addVoiceClip, clipsToday, folderFor, recentDays } from './store.js';
+import { addVoiceClip, allVoiceClips, clipsToday, folderFor } from './store.js';
 
 const eph = (content) => ({ content, flags: MessageFlags.Ephemeral });
+const voicePageUrl = (guildId) => `${config.images.webPublicUrl}/v/${guildId}`;
 
 /** 몇 분 몇 초 켜져 있었는지. */
 function since(ms) {
@@ -87,17 +88,14 @@ export function buildVoicePanel(guildId) {
   );
 
   const rows = [row];
-  const days = recentDays(guildId, 3);
-  if (days.length > 0) {
+  if (allVoiceClips(guildId).length > 0) {
     rows.push(
       new ActionRowBuilder().addComponents(
-        ...days.map((d, i) =>
-          new ButtonBuilder()
-            .setStyle(ButtonStyle.Link)
-            .setEmoji('🎧')
-            .setLabel(i === 0 && d.folder === folderFor(guildId) ? '오늘 들으러 가기' : `${d.folder.slice(-4)} 듣기`)
-            .setURL(clipPageUrl(d.folder))
-        )
+        new ButtonBuilder()
+          .setStyle(ButtonStyle.Link)
+          .setEmoji('🎧')
+          .setLabel('모든 소리 듣기')
+          .setURL(voicePageUrl(guildId))
       )
     );
   }
@@ -201,7 +199,7 @@ async function saveNow(interaction, client) {
   await interaction.editReply({
     content:
       `🎧 **지난 ${saved.seconds}초를 남겼습니다** · 말한 사람 ${saved.speakers.length}명\n` +
-      `${saved.file} · ${fmtBytes(saved.bytes)}\n\n듣기: ${clipPageUrl(folder)}`,
+      `${saved.file} · ${fmtBytes(saved.bytes)}\n\n모든 소리 보기·제목 바꾸기: ${voicePageUrl(guildId)}`,
   });
   return refreshVoicePanels(client, guildId);
 }

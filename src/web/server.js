@@ -12,6 +12,7 @@ import { fileURLToPath } from 'node:url';
 import { config } from '../config.js';
 import { inRole } from '../settings.js';
 import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
+import { allVoiceClips, setVoiceClipTitle } from '../voice/store.js';
 import {
   listFolders,
   listFiles,
@@ -183,6 +184,48 @@ export function createWebServer() {
         let deleted = 0;
         for (const f of files) if (await deleteClip(folder, f)) deleted++;
         res.json({ deleted });
+      } catch (e) {
+        next(e);
+      }
+    });
+  }
+
+  // ── 소리 기록 전체 목록 ──
+  // 파일은 날짜 폴더에 두되, 사용자는 서버별 한 페이지에서 전부 봅니다.
+  if (inRole('voice')) {
+    app.get('/v/:guildId', async (req, res, next) => {
+      try {
+        const guildId = req.params.guildId;
+        if (!/^\d{16,22}$/.test(guildId)) return res.status(400).send('잘못된 서버 주소입니다.');
+        const metadata = allVoiceClips(guildId);
+        const byFolder = new Map();
+        for (const item of metadata) {
+          if (!byFolder.has(item.folder)) {
+            const files = await listClips(item.folder);
+            byFolder.set(item.folder, new Map(files.map((f) => [f.name, f])));
+          }
+        }
+        const items = metadata
+          .map((item) => {
+            const file = byFolder.get(item.folder)?.get(item.file);
+            return file ? { ...item, ...file } : null;
+          })
+          .filter(Boolean);
+        res.type('html').send(layout('소리 기록', voiceClipPage(guildId, items)));
+      } catch (e) {
+        next(e);
+      }
+    });
+
+    app.post('/api/voice-title', requireToken, async (req, res, next) => {
+      try {
+        const { guildId, folder, file, title } = req.body ?? {};
+        if (!/^\d{16,22}$/.test(String(guildId ?? ''))) {
+          return res.status(400).json({ error: '잘못된 서버입니다.' });
+        }
+        const changed = await setVoiceClipTitle(guildId, folder, file, title);
+        if (!changed) return res.status(404).json({ error: '소리 기록을 찾지 못했습니다.' });
+        res.json({ title: changed.title });
       } catch (e) {
         next(e);
       }
@@ -490,6 +533,95 @@ function clipPage(folder, files) {
       button.disabled = true;
       try {
         if (await removeClip(name, false)) card.remove();
+      } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
+      finally { button.disabled = false; }
+    });
+  });
+})();
+</script>`;
+}
+
+/** 소리 기록은 방송별/날짜별로 나누지 않고 서버의 모든 파일을 최신순으로 보여줍니다. */
+function voiceClipPage(guildId, items) {
+  const cards = items
+    .map((item) => {
+      const src = `/clip/${encodeURIComponent(item.folder)}/${encodeURIComponent(item.name)}`;
+      const dl = `/cdl/${encodeURIComponent(item.folder)}/${encodeURIComponent(item.name)}`;
+      const when = new Date((item.at ? item.at * 1_000 : item.mtime)).toLocaleString('ko-KR');
+      const title = item.title || `소리 ${when}`;
+      return `<article class="voice-clip" data-folder="${esc(item.folder)}" data-name="${esc(item.name)}">
+        <audio src="${esc(src)}" controls preload="metadata"></audio>
+        <div class="voice-info">
+          <b data-title>${esc(title)}</b>
+          <span class="muted">${esc(when)} · ${fmtBytes(item.bytes)} · ${Number(item.seconds ?? 0) || '?'}초</span>
+        </div>
+        <div class="voice-actions">
+          <a class="btn primary" href="${esc(dl)}">⬇️ 받기</a>
+          <button class="btn" data-rename>✏️ 제목 바꾸기</button>
+        </div>
+      </article>`;
+    })
+    .join('');
+
+  return `<header>
+  <h1>🎧 소리 기록</h1>
+  <span class="muted">전체 ${items.length}개 · 최신순</span>
+</header>
+<main>
+  ${
+    cards
+      ? `<div class="voice-clips">${cards}</div>`
+      : '<p class="empty">아직 남긴 소리가 없습니다.<br>음성채널 제어판에서 <b>✂️ 지금 30초</b>를 눌러보세요.</p>'
+  }
+</main>
+<style>
+  .voice-clips { display: grid; gap: 12px; max-width: 900px; margin: 0 auto; }
+  .voice-clip { border: 1px solid var(--line); border-radius: 12px; background: var(--card); padding: 14px; }
+  .voice-clip audio { display: block; width: 100%; margin-bottom: 10px; }
+  .voice-info { display: flex; flex-direction: column; gap: 3px; }
+  .voice-info b { font-size: 15px; overflow-wrap: anywhere; }
+  .voice-actions { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+  .voice-actions .btn { text-decoration: none; }
+</style>
+<script>
+(function () {
+  var guildId = ${JSON.stringify(guildId)};
+  var token = null;
+  function authHeader() {
+    if (!token) return null;
+    var bytes = new TextEncoder().encode('admin:' + token);
+    return 'Basic ' + btoa(Array.from(bytes, function (b) { return String.fromCharCode(b); }).join(''));
+  }
+  async function rename(card, title, retry) {
+    var headers = { 'Content-Type': 'application/json' };
+    var auth = authHeader();
+    if (auth) headers.Authorization = auth;
+    var response = await fetch('/api/voice-title', {
+      method: 'POST', headers: headers,
+      body: JSON.stringify({
+        guildId: guildId, folder: card.dataset.folder, file: card.dataset.name, title: title,
+      }),
+    });
+    if (response.status === 401) {
+      token = null;
+      if (retry) { alert('암호가 틀렸습니다. 다시 제목 바꾸기를 눌러주세요.'); return null; }
+      token = window.prompt('관리 암호를 입력해주세요. (봇 .env의 WEB_TOKEN · 아이디는 필요 없습니다)');
+      if (!token) return null;
+      return rename(card, title, true);
+    }
+    if (!response.ok) { alert('제목을 바꾸지 못했습니다. 잠시 뒤 다시 시도해주세요.'); return null; }
+    return response.json();
+  }
+  document.querySelectorAll('.voice-clip').forEach(function (card) {
+    var button = card.querySelector('[data-rename]');
+    var label = card.querySelector('[data-title]');
+    button.addEventListener('click', async function () {
+      var title = window.prompt('새 제목을 입력해주세요. (최대 80자)', label.textContent);
+      if (!title || !title.trim()) return;
+      button.disabled = true;
+      try {
+        var result = await rename(card, title.trim(), false);
+        if (result) label.textContent = result.title;
       } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
       finally { button.disabled = false; }
     });

@@ -431,6 +431,9 @@ if (inRole('stream')) {
   await initForumPosts();
   await initGameCatalog();
 }
+// 제목과 전체 목록은 voice-clips.json에 있습니다. 이 초기화가 빠지면 재시작 뒤 과거 목록이
+// 빈 메모리로 시작해 다음 저장 때 파일을 덮어씁니다.
+if (inRole('voice')) await initVoiceClips();
 // 한도를 세어둔 것을 되살립니다. 재시작하면 초기화되는 한도는 한도가 아닙니다.
 if (inRole('ai')) await initAiUsage();
 
