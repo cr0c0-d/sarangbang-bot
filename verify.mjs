@@ -4011,16 +4011,14 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile, title: '웃긴 이야기' }),
   });
-  ok('음성 제목 변경은 관리 암호로 보호', titleNoAuth.status === 401, String(titleNoAuth.status));
-  const titleChanged = await fetch(`${base}/api/voice-title`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: auth },
-    body: JSON.stringify({ guildId: voiceGuild, folder: voiceFolder, file: voiceFile, title: '웃긴 이야기' }),
-  });
-  ok('관리 암호로 음성 제목 변경', titleChanged.status === 200, String(titleChanged.status));
+  ok('음성 제목은 관리 암호 없이 누구나 변경', titleNoAuth.status === 200, String(titleNoAuth.status));
   const renamedHtml = await (await fetch(`${base}/v/${voiceGuild}`)).text();
   ok('바꾼 제목이 전체 목록에 유지됨', renamedHtml.includes('웃긴 이야기'));
   ok('다른 서버 ID로 제목을 바꿀 수 없음',
     (await vStore.setVoiceClipTitle('888888888888888888', voiceFolder, voiceFile, '침범')) === null);
+  const webSrc = fs.readFileSync('./src/web/server.js', 'utf8');
+  ok('삭제는 계속 WEB_TOKEN으로 보호',
+    webSrc.includes("app.post('/api/clip-delete', requireToken"));
 
   // 재시작하면 링버퍼는 꺼진다. 제어판이 "기록 중" 으로 남으면 거짓말이 된다.
   const indexSrc = fs.readFileSync('./src/index.js', 'utf8');

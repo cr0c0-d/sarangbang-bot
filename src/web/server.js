@@ -217,7 +217,8 @@ export function createWebServer() {
       }
     });
 
-    app.post('/api/voice-title', requireToken, async (req, res, next) => {
+    // 제목은 친구들이 함께 정리하는 표시 정보라 공개합니다. 파일 삭제·이동만 WEB_TOKEN으로 막습니다.
+    app.post('/api/voice-title', async (req, res, next) => {
       try {
         const { guildId, folder, file, title } = req.body ?? {};
         if (!/^\d{16,22}$/.test(String(guildId ?? ''))) {
@@ -586,29 +587,14 @@ function voiceClipPage(guildId, items) {
 <script>
 (function () {
   var guildId = ${JSON.stringify(guildId)};
-  var token = null;
-  function authHeader() {
-    if (!token) return null;
-    var bytes = new TextEncoder().encode('admin:' + token);
-    return 'Basic ' + btoa(Array.from(bytes, function (b) { return String.fromCharCode(b); }).join(''));
-  }
-  async function rename(card, title, retry) {
+  async function rename(card, title) {
     var headers = { 'Content-Type': 'application/json' };
-    var auth = authHeader();
-    if (auth) headers.Authorization = auth;
     var response = await fetch('/api/voice-title', {
       method: 'POST', headers: headers,
       body: JSON.stringify({
         guildId: guildId, folder: card.dataset.folder, file: card.dataset.name, title: title,
       }),
     });
-    if (response.status === 401) {
-      token = null;
-      if (retry) { alert('암호가 틀렸습니다. 다시 제목 바꾸기를 눌러주세요.'); return null; }
-      token = window.prompt('관리 암호를 입력해주세요. (봇 .env의 WEB_TOKEN · 아이디는 필요 없습니다)');
-      if (!token) return null;
-      return rename(card, title, true);
-    }
     if (!response.ok) { alert('제목을 바꾸지 못했습니다. 잠시 뒤 다시 시도해주세요.'); return null; }
     return response.json();
   }
@@ -620,7 +606,7 @@ function voiceClipPage(guildId, items) {
       if (!title || !title.trim()) return;
       button.disabled = true;
       try {
-        var result = await rename(card, title.trim(), false);
+        var result = await rename(card, title.trim());
         if (result) label.textContent = result.title;
       } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
       finally { button.disabled = false; }
