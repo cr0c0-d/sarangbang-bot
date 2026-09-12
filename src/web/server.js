@@ -407,6 +407,7 @@ function layout(title, body) {
     display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
   }
   header h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  .header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
   .muted { color: var(--muted); font-size: 13px; }
   main { padding: 20px; max-width: 1400px; margin: 0 auto; }
   .btn {
@@ -468,6 +469,9 @@ function layout(title, body) {
   .viewer .prev { left: 14px; } .viewer .next { right: 14px; }
   .viewer .position { position: absolute; left: 0; right: 0; bottom: 14px; text-align: center; color: #fff; font-size: 13px; }
   @media (max-width: 600px) {
+    header { padding: 10px 8px; gap: 8px; }
+    .header-actions { width: 100%; margin-left: 0; }
+    .header-actions .btn { width: 100%; min-height: 42px; font-weight: 650; }
     main { padding: 8px; }
     .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 5px; }
     .cell .cap { padding: 4px; font-size: 9px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -741,6 +745,9 @@ function galleryPage(folder, files) {
   return `<header>
   <h1>${esc(folder)}</h1>
   <span class="muted">${files.length}개</span>
+  <div class="header-actions">
+    <button class="btn primary" id="zip" disabled>🗜️ 선택 항목 ZIP 받기</button>
+  </div>
 </header>
 <main>
   ${files.length ? `<div class="grid" id="grid">${cells}</div>` : '<p class="empty">이 폴더에는 사진·동영상이 없습니다.</p>'}
@@ -759,7 +766,6 @@ function galleryPage(folder, files) {
   <button class="btn" id="none">선택 해제</button>
   <span class="count" id="count">0개 선택</span>
   <button class="btn primary" id="dl" disabled>⬇️ 선택한 파일 받기</button>
-  <button class="btn primary" id="zip" disabled>🗜️ ZIP으로 받기</button>
   <input type="text" id="dest" placeholder="옮길 폴더 이름" style="width:150px">
   <button class="btn" id="move" disabled>📂 옮기기</button>
   <button class="btn danger" id="del" disabled>🗑️ 삭제</button>

@@ -1835,7 +1835,11 @@ const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
   const html = await g.text();
   ok('갤러리에 뒤로가기 버튼 없음', !html.includes('← 폴더 목록'));
   ok('갤러리에 다른 폴더 이름 목록 없음', !html.includes('<datalist'));
-  ok('갤러리에 선택 파일 ZIP 받기 버튼', html.includes('id="zip"') && html.includes('/api/download-zip'));
+  ok('갤러리 상단에 선택 파일 ZIP 받기 버튼',
+    html.includes('<header>') &&
+      html.indexOf('id="zip"') < html.indexOf('</header>') &&
+      html.includes('선택 항목 ZIP 받기') &&
+      html.includes('/api/download-zip'));
 
   const zipResponse = await fetch(base + '/api/download-zip', {
     method: 'POST',
