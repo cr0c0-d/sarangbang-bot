@@ -1827,11 +1827,33 @@ const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
 
 // 폴더 안 갤러리: 누구나 (친구들이 링크만 열면 되도록)
 {
+  const zipFixtureDir = './data/verify-images/테스트폴더';
+  fs.mkdirSync(zipFixtureDir, { recursive: true });
+  fs.writeFileSync(`${zipFixtureDir}/zip-test.png`, Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
   const g = await fetch(base + '/f/' + encodeURIComponent('테스트폴더'));
   ok('폴더 갤러리는 암호 없이 200', g.status === 200, String(g.status));
   const html = await g.text();
   ok('갤러리에 뒤로가기 버튼 없음', !html.includes('← 폴더 목록'));
   ok('갤러리에 다른 폴더 이름 목록 없음', !html.includes('<datalist'));
+  ok('갤러리에 선택 파일 ZIP 받기 버튼', html.includes('id="zip"') && html.includes('/api/download-zip'));
+
+  const zipResponse = await fetch(base + '/api/download-zip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ folder: '테스트폴더', files: JSON.stringify(['zip-test.png']) }),
+  });
+  const zipBytes = Buffer.from(await zipResponse.arrayBuffer());
+  ok('ZIP 다운로드는 암호 없이 한 응답으로 제공',
+    zipResponse.status === 200 &&
+      zipResponse.headers.get('content-disposition')?.includes('attachment') &&
+      zipBytes.subarray(0, 2).equals(Buffer.from('PK')));
+
+  const missingZip = await fetch(base + '/api/download-zip', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ folder: '테스트폴더', files: JSON.stringify(['../secret.png']) }),
+  });
+  ok('ZIP 다운로드도 존재하지 않는 파일·경로탈출 차단', missingZip.status === 404, String(missingZip.status));
 }
 
 ok('경로탈출 요청 차단', (await fetch(base + '/img/..%2f..%2f/etc')).status >= 400);

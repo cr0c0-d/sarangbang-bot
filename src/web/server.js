@@ -2,13 +2,13 @@
 //
 // 왜 웹페이지인가:
 //   디스코드에서는 사진을 한 장씩 눌러서 받아야 합니다. 여러 장을 한 번에 받으려면
-//   ZIP으로 묶는 수밖에 없는데, 사용자는 "묶지 말고 여러 장을 한 번에" 받길 원했습니다.
-//   브라우저는 링크를 연달아 클릭해주면 파일을 한 장씩 각각 저장할 수 있으므로,
-//   체크박스로 고르고 버튼 한 번 누르면 전부 개별 파일로 내려받는 페이지를 띄웁니다.
-//   (크롬은 처음 한 번 "여러 파일을 다운로드하시겠습니까?" 를 묻고, 허용하면 그다음부터 조용합니다.)
+//   처음에는 "묶지 말고 여러 장을 한 번에" 받는 요구라 링크를 차례로 눌렀습니다. 하지만 일부
+//   Chrome 환경은 가짜 클릭 자체를 조용히 버립니다. 그래서 개별 파일 받기는 유지하면서,
+//   브라우저 제한을 타지 않는 서버 스트리밍 ZIP도 선택지로 제공합니다.
 import express from 'express';
 import crypto from 'node:crypto';
 import { fileURLToPath } from 'node:url';
+import { ZipArchive } from 'archiver';
 import { config } from '../config.js';
 import { inRole } from '../settings.js';
 import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
@@ -44,6 +44,7 @@ function safeCompare(a, b) {
 export function createWebServer() {
   const app = express();
   app.use(express.json({ limit: '1mb' }));
+  app.use(express.urlencoded({ extended: false, limit: '1mb' }));
   app.disable('x-powered-by');
   // 친구용 공개 안내서. 사용자 데이터나 폴더 목록은 노출하지 않습니다.
   app.get('/guide/stream', (req, res) => {
@@ -136,6 +137,58 @@ export function createWebServer() {
   app.get('/dl/:folder/:file', (req, res, next) => {
     try {
       res.download(filePath(req.params.folder, req.params.file), req.params.file);
+    } catch (e) {
+      next(e);
+    }
+  });
+
+  // ── 선택 파일 ZIP 다운로드 ──
+  // 브라우저의 가짜 연속 클릭을 쓰지 않는 한 번짜리 일반 다운로드입니다. 사진·동영상은 이미
+  // 압축된 형식이라 다시 압축해도 이득이 거의 없으므로 store 모드로 스트리밍해 CPU와 메모리를
+  // 아낍니다. 공개 범위는 개별 /dl 과 같습니다.
+  let activeZipDownloads = 0;
+  app.post('/api/download-zip', async (req, res, next) => {
+    try {
+      if (activeZipDownloads >= 2) {
+        return res.status(429).type('text').send('다른 ZIP을 만들고 있습니다. 잠시 뒤 다시 시도해주세요.');
+      }
+      const folder = String(req.body?.folder ?? '');
+      let requested = req.body?.files;
+      if (typeof requested === 'string') {
+        try { requested = JSON.parse(requested); }
+        catch { return res.status(400).type('text').send('선택한 파일 목록이 올바르지 않습니다.'); }
+      }
+      if (!Array.isArray(requested) || requested.length === 0 || requested.length > 1000) {
+        return res.status(400).type('text').send('1개 이상 1000개 이하로 선택해주세요.');
+      }
+      const names = [...new Set(requested.map(String))];
+      const available = new Set((await listFiles(folder)).map((f) => f.name));
+      if (names.some((name) => !available.has(name))) {
+        return res.status(404).type('text').send('선택한 파일 중 찾을 수 없는 것이 있습니다. 새로고침해주세요.');
+      }
+
+      activeZipDownloads++;
+      let released = false;
+      const release = () => {
+        if (released) return;
+        released = true;
+        activeZipDownloads--;
+      };
+      const zipName = `${String(folder).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 60) || 'gallery'}.zip`;
+      res.attachment(zipName);
+      const archive = new ZipArchive({ store: true });
+      res.once('close', () => {
+        release();
+        if (!res.writableEnded) archive.abort();
+      });
+      archive.once('error', (err) => {
+        release();
+        if (res.headersSent) res.destroy(err);
+        else next(err);
+      });
+      archive.pipe(res);
+      for (const name of names) archive.file(filePath(folder, name), { name });
+      await archive.finalize();
     } catch (e) {
       next(e);
     }
@@ -661,6 +714,7 @@ function voiceClipPage(guildId, items) {
       finally { deleteButton.disabled = false; }
     });
   });
+
 })();
 </script>`;
 }
@@ -705,6 +759,7 @@ function galleryPage(folder, files) {
   <button class="btn" id="none">선택 해제</button>
   <span class="count" id="count">0개 선택</span>
   <button class="btn primary" id="dl" disabled>⬇️ 선택한 파일 받기</button>
+  <button class="btn primary" id="zip" disabled>🗜️ ZIP으로 받기</button>
   <input type="text" id="dest" placeholder="옮길 폴더 이름" style="width:150px">
   <button class="btn" id="move" disabled>📂 옮기기</button>
   <button class="btn danger" id="del" disabled>🗑️ 삭제</button>
@@ -727,7 +782,7 @@ function galleryPage(folder, files) {
     });
     var n = selected.size;
     document.getElementById('count').textContent = n + '개 선택';
-    ['dl', 'move', 'del'].forEach(function (id) {
+    ['dl', 'zip', 'move', 'del'].forEach(function (id) {
       document.getElementById(id).disabled = n === 0;
     });
   }
@@ -824,6 +879,22 @@ function galleryPage(folder, files) {
       // 브라우저가 다운로드를 따라잡을 시간을 줍니다. 너무 빠르면 일부를 놓칩니다.
       setTimeout(next, 350);
     })();
+  });
+
+  // 한 번의 실제 폼 제출로 ZIP 응답을 받습니다. fetch+Blob은 동영상까지 브라우저 메모리에
+  // 전부 올리므로 쓰지 않습니다. Content-Disposition 응답이라 현재 페이지도 그대로 남습니다.
+  document.getElementById('zip').addEventListener('click', function () {
+    var form = document.createElement('form');
+    form.method = 'post';
+    form.action = '/api/download-zip';
+    form.style.display = 'none';
+    [['folder', folder], ['files', JSON.stringify(Array.from(selected))]].forEach(function (pair) {
+      var input = document.createElement('input');
+      input.type = 'hidden'; input.name = pair[0]; input.value = pair[1]; form.appendChild(input);
+    });
+    document.body.appendChild(form);
+    form.submit();
+    form.remove();
   });
 
   document.getElementById('move').addEventListener('click', function () {
