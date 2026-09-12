@@ -1265,6 +1265,20 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('전체 켜기', Object.values(st.featureStates(G)).every(Boolean));
 
   ok('기능 목록 10개', Object.keys(st.FEATURES).length === 10, Object.keys(st.FEATURES).join(','));
+
+  // Discord 버튼은 한 액션 행에 최대 5개입니다. 망고 담당 기능이 9개가 된 뒤
+  // 전부 한 줄에 넣어 `/관리자 기능`이 Invalid Form Body로 열리지 않았습니다.
+  const featureUi = await import('./src/feature-commands.js');
+  const panel = featureUi.buildFeaturePanel(G);
+  const rows = panel.components.map((row) => row.toJSON().components);
+  ok('기능 버튼은 행마다 1~5개', rows.every((buttons) => buttons.length >= 1 && buttons.length <= 5),
+    rows.map((buttons) => buttons.length).join(','));
+  ok('담당 기능 버튼을 빠짐없이 표시',
+    rows.flat().filter((button) => button.custom_id?.startsWith('f:') && !button.custom_id.startsWith('f:all-')).length ===
+      Object.keys(st.activeFeatures()).length);
+  ok('전체 켜기·끄기는 마지막 행',
+    rows.at(-1)?.some((button) => button.custom_id === 'f:all-on') &&
+      rows.at(-1)?.some((button) => button.custom_id === 'f:all-off'));
 }
 
 // 6p) 꺼진 기능이 실제로 막히는가 (태그 + 중앙 차단이 연결됐는지)
@@ -3655,7 +3669,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 // 그래서 다섯 갈래 결론을 전부 확인한다.
 {
   const probe = await import('./src/voice/probe.js');
-  const src = fs.readFileSync('./src/voice/probe.js', 'utf8');
+  // 저장소를 Windows에서 체크아웃하면 CRLF가 되므로 줄바꿈을 정규화한 뒤 소스를 검사합니다.
+  const src = fs.readFileSync('./src/voice/probe.js', 'utf8').replace(/\r\n/g, '\n');
   const cmd = probe.commands[0];
   const json = cmd.data.toJSON();
 

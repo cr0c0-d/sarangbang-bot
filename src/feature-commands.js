@@ -18,7 +18,7 @@ import {
 import { FEATURES, activeFeatures, featureEnabled, setFeature, setAllFeatures } from './settings.js';
 import { peekGuildAudio } from './audio/guild-audio.js';
 
-function panel(guildId) {
+export function buildFeaturePanel(guildId) {
   const embed = new EmbedBuilder()
     .setTitle('⚙️ 기능 켜고 끄기')
     .setColor(0x5865f2)
@@ -32,16 +32,21 @@ function panel(guildId) {
     )
     .setFooter({ text: '버튼을 누르면 바로 바뀝니다. 이 설정은 서버별로 저장됩니다.' });
 
-  const rows = [
-    new ActionRowBuilder().addComponents(
-      Object.entries(activeFeatures()).map(([key, f]) =>
-        new ButtonBuilder()
-          .setCustomId(`f:${key}`)
-          .setEmoji(f.emoji)
-          .setLabel(f.label)
-          .setStyle(featureEnabled(guildId, key) ? ButtonStyle.Success : ButtonStyle.Secondary)
-      )
-    ),
+  // Discord는 액션 행 하나에 버튼을 최대 5개만 받습니다.
+  // 망고 담당 기능이 9개가 된 뒤에도 전부 한 행에 넣어 `/관리자 기능` 자체가 실패했습니다.
+  // 기능 수에 따라 5개씩 나눠야 새 기능을 추가해도 같은 오류가 재발하지 않습니다.
+  const buttons = Object.entries(activeFeatures()).map(([key, f]) =>
+    new ButtonBuilder()
+      .setCustomId(`f:${key}`)
+      .setEmoji(f.emoji)
+      .setLabel(f.label)
+      .setStyle(featureEnabled(guildId, key) ? ButtonStyle.Success : ButtonStyle.Secondary)
+  );
+  const rows = [];
+  for (let i = 0; i < buttons.length; i += 5) {
+    rows.push(new ActionRowBuilder().addComponents(...buttons.slice(i, i + 5)));
+  }
+  rows.push(
     new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId('f:all-on')
@@ -51,8 +56,8 @@ function panel(guildId) {
         .setCustomId('f:all-off')
         .setLabel('전체 끄기')
         .setStyle(ButtonStyle.Danger)
-    ),
-  ];
+    )
+  );
 
   return { embeds: [embed], components: rows };
 }
@@ -77,7 +82,7 @@ export const commands = [
       .setDefaultMemberPermissions(PermissionFlagsBits.ManageGuild)
       .setDescription('음악·읽어주기·타이머·이미지 기능을 켜고 끕니다'),
     async execute(interaction) {
-      await interaction.reply({ ...panel(interaction.guildId), flags: MessageFlags.Ephemeral });
+      await interaction.reply({ ...buildFeaturePanel(interaction.guildId), flags: MessageFlags.Ephemeral });
     },
   },
 ];
@@ -99,5 +104,5 @@ export async function handleFeatureComponent(interaction) {
   }
 
   leaveVoiceIfPointless(guildId);
-  await interaction.update(panel(guildId)).catch(() => {});
+  await interaction.update(buildFeaturePanel(guildId)).catch(() => {});
 }

@@ -2277,6 +2277,12 @@ ffmpeg exited with code -11
 
 `settings.js` 의 `FEATURES` / `featureEnabled()` / `setFeature()`, 패널은 `feature-commands.js`.
 
+Discord는 액션 행 하나에 버튼을 **최대 5개**만 허용합니다. 망고 담당 기능이 9개가 된 뒤에도
+기능 버튼을 한 행에 전부 넣어 `/관리자 기능`이 `BASE_TYPE_BAD_LENGTH`로 열리지 않았습니다.
+`buildFeaturePanel()`은 `activeFeatures()`의 버튼을 5개씩 나누고, 전체 켜기·끄기는 별도 마지막
+행에 둡니다. 기능을 더 추가할 때 고정된 행 배열로 되돌리지 않으며, `verify.mjs`가 각 행의
+버튼 수와 담당 기능 누락 여부를 검사합니다.
+
 **왜 필요한가**: 소유자 서버에 이미 다른 음악봇·TTS봇이 있어서 같은 링크에 둘이 반응해 겹친다.
 그때 서버에 SSH로 들어가 프로세스를 끄는 것은 현실적이지 않다.
 
