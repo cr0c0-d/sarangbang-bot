@@ -745,7 +745,7 @@ npm start
 
 ## 8. 이미지 갤러리에 접속하는 방법 고르기
 
-갤러리 웹페이지를 어떻게 볼지 결정해야 합니다. **A를 권합니다.**
+갤러리 웹페이지를 어떻게 볼지 결정해야 합니다. 혼자만 보면 **A**, 친구들과 함께 쓰면 **B**를 권합니다.
 
 ### A. SSH 터널 (권장 — 포트를 인터넷에 열지 않음)
 
@@ -764,7 +764,48 @@ ssh -i ssh-key.key -L 3000:localhost:3000 ubuntu@<서버IP>
 - 장점: 포트를 열 필요가 없고, 통신이 SSH로 암호화됩니다. 함정 3을 통째로 피합니다.
 - 단점: 갤러리를 볼 때마다 터널을 열어야 하고, 휴대폰에서 보기는 번거롭습니다.
 
-### B. 포트를 인터넷에 여는 방법
+### B. 무료 DuckDNS + Caddy HTTPS (친구들과 쓸 때 권장)
+
+무료 DuckDNS 주소가 서버 공인 IP를 가리키게 한 뒤 Caddy가 80·443에서 HTTPS를 맡고,
+망고의 3000번 포트는 서버 안에서만 받습니다. 브라우저에는 `https://주소`만 노출됩니다.
+
+1. `duckdns.org`에서 서브도메인을 만들고 `current ip`를 Oracle 서버 공인 IP로 갱신합니다.
+2. 인스턴스에서 출발해 Attached VNICs → Subnet → Security Lists로 들어가 TCP 수신 규칙
+   `80`, `443`을 각각 추가합니다(`Source CIDR: 0.0.0.0/0`).
+3. 서버의 `REJECT` 규칙 바로 위에도 80·443 허용 규칙을 넣고 저장합니다. 줄 번호는 먼저
+   `sudo iptables -L INPUT -n --line-numbers`로 확인합니다.
+4. [Caddy 공식 Ubuntu 패키지 절차](https://caddyserver.com/docs/install#debian-ubuntu-raspbian)로
+   설치한 뒤 `/etc/caddy/Caddyfile`을 다음처럼 둡니다.
+
+```caddyfile
+내주소.duckdns.org {
+    reverse_proxy 127.0.0.1:3000
+}
+```
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile
+sudo systemctl reload caddy
+curl -I https://내주소.duckdns.org/guide/stream
+```
+
+`HTTP/2 200`을 확인한 다음 `.env`를 바꾸고 망고를 재시작합니다.
+
+```ini
+WEB_BIND=127.0.0.1
+WEB_PUBLIC_URL=https://내주소.duckdns.org
+```
+
+```bash
+npm run verify
+sudo systemctl restart sarangbang-bot
+```
+
+마지막으로 Oracle Security List의 TCP 3000 수신 규칙과 서버 iptables의 3000 허용 규칙을
+제거합니다. **HTTPS 확인 전에 3000을 먼저 닫지 마세요.** Caddy 패키지는 인증서 발급·갱신과
+HTTP→HTTPS 전환을 자동으로 관리하므로 별도 갱신 cron이 필요 없습니다.
+
+### C. 3000 포트를 인터넷에 직접 여는 방법 (비권장)
 
 휴대폰 등 아무 데서나 바로 접속하고 싶다면 이쪽입니다.
 `.env` 를 이렇게 바꿉니다.
@@ -830,7 +871,7 @@ sudo netfilter-persistent save || (sudo apt install -y iptables-persistent && su
 > 💡 `reject-with icmp-host-prohibited` 때문에 브라우저는 **`ERR_ADDRESS_UNREACHABLE`** 을 띄웁니다.
 > 포트가 그냥 막혀 있을 때 나오는 `ERR_CONNECTION_TIMED_OUT` 과 다르므로 구분에 쓸 수 있습니다.
 
-> ⚠️ **B를 고르면 감수해야 하는 것**
+> ⚠️ **C를 고르면 감수해야 하는 것**
 > - 통신이 HTTPS가 아니라 **평문**입니다. `WEB_TOKEN` 이 인터넷을 그대로 지나갑니다.
 >   반드시 `openssl rand -base64 32` 로 만든 긴 문자열을 쓰세요.
 > - 열린 포트는 자동 스캐너에 곧 발견됩니다.

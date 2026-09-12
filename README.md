@@ -1017,13 +1017,14 @@ GDRIVE_FOLDER_ID=        # 특정 폴더에 넣고 싶으면. 폴더 주소의 �
 
 ## 갤러리를 친구들도 열 수 있게 하기
 
-기본값은 "이 컴퓨터 안에서만" 입니다. 친구들이 링크를 열 수 있게 하려면 두 곳을 바꿔야 합니다.
+기본값은 "이 컴퓨터 안에서만" 입니다. 친구들이 링크를 열 수 있게 하려면
+**무료 DuckDNS 주소 + Caddy HTTPS** 구성을 권장합니다. 전체 순서는 `docs/ORACLE-CLOUD.md` 8절에 있습니다.
 
 **① `.env` 수정**
 
 ```ini
 WEB_BIND=0.0.0.0
-WEB_PUBLIC_URL=http://<서버IP>:3000
+WEB_PUBLIC_URL=https://내주소.duckdns.org
 WEB_TOKEN=길고_아무규칙없는_문자열
 ```
 
