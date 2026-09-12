@@ -263,7 +263,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     const isPlan = interaction.customId.startsWith('pl:') || interaction.customId.startsWith('st:');
     const isStream = interaction.customId.startsWith('tm:');
     const isVoice = isVoiceComponent(interaction.customId);
-    if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan && !isStream) return;
+    if (!isMusic && !isTimer && !isTts && !isShare && !isFeature && !isImage && !isChannel && !isPoll && !isMovie && !isPlan && !isStream && !isVoice) return;
 
     // 맡지 않은 기능의 버튼. 재시작 전에 남은 것일 수 있으므로 조용히 넘깁니다.
     if (

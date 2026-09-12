@@ -3784,6 +3784,14 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('진단은 소리 기록 역할에만',
     fs.readFileSync('./src/admin-commands.js', 'utf8')
       .includes("if (inRole('voice')) actions.set('음성수신확인'"));
+
+  // `isVoice`를 선언하고 실제 처리기만 연결해도 충분하지 않다. 공통 조기 반환 조건에서
+  // `vc:`를 허용하지 않으면 모든 음성 제어판 버튼이 조용히 무시되어 Discord 시간 초과가 뜬다.
+  const dispatcher = fs.readFileSync('./src/index.js', 'utf8').replace(/\r\n/g, '\n');
+  ok('공통 버튼 분배기가 vc: 음성 버튼을 조기 반환하지 않음',
+    /if \(!isMusic[^\n]+&& !isStream && !isVoice\) return;/.test(dispatcher));
+  ok('vc: 음성 버튼을 실제 처리기로 보냄',
+    dispatcher.includes('else if (isVoice) await handleVoiceComponent(interaction, client);'));
 }
 
 // 6s-3) 소리 되돌리기 링버퍼 (`src/voice/buffer.js`) — `/음성기록`

@@ -2436,6 +2436,11 @@ Steam 게임을 확정한 **뒤에만** 그 제목을 별칭으로 기억하므�
 `receiver.subscribe()`(받기)와 `connection.subscribe()`(보내기)는 **다른 API 입니다.**
 불변조건 1 은 보내기 쪽 이야기이므로 수신은 `subscribeTo()` 를 우회하는 것이 아닙니다.
 
+음성 제어판 버튼은 `vc:` 접두사를 씁니다. `src/index.js`의 공통 버튼 분배기는 처리기 연결뿐
+아니라 첫 조기 반환 조건에도 `isVoice`를 포함해야 합니다. 여기서 빠지면 `✂️ 지금 30초`와
+`기록 켜기/끄기`가 모두 아무 응답 없이 무시되어 Discord가 "적시에 응답하지 않았어요"를
+표시합니다. `verify.mjs`가 허용 조건과 실제 처리기 연결을 함께 검사합니다.
+
 **말하기 신호는 복호화 전에, opus 패킷은 복호화 후에 올라옵니다**
 (`VoiceReceiver.onUdpMessage` 는 `speaking.onPacket()` 을 `parsePacket()` 앞에서 부릅니다).
 그래서 둘을 따로 세면 "도착은 하는데 못 푼다"(DAVE 종단간 암호화 의심)와
