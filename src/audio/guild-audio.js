@@ -824,6 +824,14 @@ export class GuildAudio {
         );
         // 0단계(직접 수신)만 "이 서버에서 아예 안 되는 것" 으로 셉니다.
         if (this.srcLevel === SRC_DIRECT) noteDirectFailure(this.lastStreamError);
+        // 새로 뽑은 주소라도 짧은 조각만 내고 끝날 수 있습니다. 1단계에서 실패한 주소를
+        // 그대로 두면 반복·이전곡에서 같은 1초 재생을 다시 겪으므로 즉시 폐기합니다.
+        if (this.srcLevel === SRC_URL) {
+          item.track.streamUrl = null;
+          item.track.extractedAt = 0;
+          item.track.streamProtocol = null;
+          item.track.fragmentCount = null;
+        }
         this.current = null;
         // 듣던 위치를 넘겨줍니다. 안 넘기면 **곡이 처음부터** 다시 시작됩니다.
         this.queue.unshift({ ...item, srcLevel: nextLevel, resumeAt: this.positionSec() });

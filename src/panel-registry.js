@@ -200,7 +200,7 @@ export async function sweepOrphanPanels(client, { perChannel = 50 } = {}) {
  * 시작할 때 한 번 호출합니다.
  *
  * @param {import('discord.js').Client} client
- * @param {(channelId: string, message: import('discord.js').Message) => void} adoptGallery
+ * @param {(channelId: string, message: import('discord.js').Message) => Promise<void>|void} adoptGallery
  *        되찾은 갤러리 버튼을 갤러리 모듈에 넘겨줄 콜백
  */
 export async function cleanupPanelsOnStart(client, adoptGallery, adoptMusic = null) {
@@ -209,7 +209,7 @@ export async function cleanupPanelsOnStart(client, adoptGallery, adoptMusic = nu
     for (const [channelId, messageId] of Object.entries(store[GALLERY] ?? {})) {
       try {
         const { message } = await fetchPanel(client, channelId, messageId);
-        adoptGallery?.(channelId, message);
+        await adoptGallery?.(channelId, message);
       } catch {
         forgetPanel(GALLERY, channelId); // 사라졌으면 기억도 지웁니다
       }

@@ -1405,6 +1405,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   {
     const { sourceLevel, SRC_DIRECT, SRC_URL, SRC_EXTRACT } = await import('./src/music/ytdlp.js');
     const fresh = { streamUrl: 'https://x/a', extractedAt: Date.now(), url: 'https://youtu.be/x' };
+    const segmented = { ...fresh, streamProtocol: 'm3u8_native', fragmentCount: 12 };
     const stale = { streamUrl: 'https://x/a', extractedAt: 1, url: 'https://youtu.be/x' };
     const none = { streamUrl: null, extractedAt: 0, url: 'https://youtu.be/x' };
     const saved = process.env.MUSIC_DIRECT_STREAM;
@@ -1415,6 +1416,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
     ok('1단계도 실패했으면 2단계(전체 추출)', sourceLevel(fresh, SRC_EXTRACT) === SRC_EXTRACT);
     ok('주소가 없으면 곧바로 2단계', sourceLevel(none, SRC_DIRECT) === SRC_EXTRACT);
     ok('주소가 만료됐으면 2단계', sourceLevel(stale, SRC_DIRECT) === SRC_EXTRACT);
+    ok('조각 스트림 주소는 곧바로 전체 추출', sourceLevel(segmented, SRC_DIRECT) === SRC_EXTRACT);
 
     process.env.MUSIC_DIRECT_STREAM = 'false';
     // ⚠️ 직접 수신을 껐다고 2단계로 떨어지면 안 됩니다. 그게 예전의 느린 동작이었습니다.
@@ -1428,6 +1430,10 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   }
   const gaDirect = fs.readFileSync('./src/audio/guild-audio.js', 'utf8');
   ok('실패 원인을 로그에 남김', gaDirect.includes('this.lastStreamError.slice(0, 200)'));
+  ok('짧게 끝난 1단계 주소를 즉시 폐기',
+    /this\.srcLevel === SRC_URL[\s\S]{0,250}?item\.track\.streamUrl = null/.test(gaDirect));
+  ok('직접 주소 스트림의 종료 코드와 바이트를 기록',
+    yt.includes('yt-dlp 스트림 종료 · 코드') && yt.includes('뽑아둔 주소가 짧게 종료됨'));
   const cfg = fs.readFileSync('./src/config.js', 'utf8');
   ok('.env 중복 항목 경고', cfg.includes('warnDuplicateEnvKeys'));
   ok('다음 곡 미리 추출', ga.includes('prefetchNext()'));
@@ -1844,6 +1850,18 @@ const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
       html.includes('/api/download-zip'));
   ok('갤러리 HTML은 배포 전 화면을 캐시하지 않음',
     g.headers.get('cache-control')?.includes('no-store'), g.headers.get('cache-control'));
+
+  const galleryPanel = await import('./src/images/panel.js');
+  const { config: galleryConfig } = await import('./src/config.js');
+  let refreshedGalleryPanel = null;
+  await galleryPanel.adoptGalleryPanel('old-gallery-channel', {
+    components: [{ components: [{ url: 'http://64.110.83.177:3000/f/' + encodeURIComponent('테스트폴더') }] }],
+    edit: async (body) => { refreshedGalleryPanel = body; },
+  });
+  ok('재시작할 때 기존 갤러리 버튼을 현재 공개 주소로 갱신',
+    JSON.stringify(refreshedGalleryPanel).includes(
+      `${galleryConfig.images.webPublicUrl}/f/${encodeURIComponent('테스트폴더')}`
+    ));
 
   const zipResponse = await fetch(base + '/api/download-zip', {
     method: 'POST',

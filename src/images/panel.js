@@ -103,9 +103,34 @@ export function forgetGalleryPanel(channelId) {
 }
 
 /**
- * 재시작 전에 띄워둔 갤러리 버튼을 되찾습니다.
- * 이걸 안 하면 다음 업로드 때 버튼이 하나 더 생겨서 재시작마다 쌓입니다.
+ * 재시작 전에 띄워둔 갤러리 버튼을 되찾고 현재 WEB_PUBLIC_URL로 고칩니다.
+ * 이걸 안 하면 다음 업로드 때 버튼이 하나 더 생기고, 주소를 바꾼 뒤에도 옛 IP 링크가 남습니다.
  */
-export function adoptGalleryPanel(channelId, message) {
+export async function adoptGalleryPanel(channelId, message) {
   panels.set(channelId, message);
+
+  // 버튼에 들어 있던 /f/<폴더> 경로는 그대로 두고 출처만 새 주소로 바꿉니다.
+  // 채널 이름을 나중에 바꿨을 수 있으므로 현재 채널명으로 폴더를 다시 추측하지 않습니다.
+  const oldUrl = message.components
+    ?.flatMap((row) => row.components ?? [])
+    .find((component) => component.url)?.url;
+  if (!oldUrl) return;
+
+  let folder;
+  try {
+    const match = new URL(oldUrl).pathname.match(/^\/f\/([^/]+)$/);
+    if (!match) return;
+    folder = decodeURIComponent(match[1]);
+  } catch {
+    return;
+  }
+
+  try {
+    const files = await listFiles(folder);
+    if (files.length === 0) return;
+    await message.edit(buildPanel(folder, files.length, files.find((file) => file.mediaType === 'image')?.name));
+  } catch (err) {
+    // 주소 갱신 실패가 다른 제어판 복구까지 막으면 안 됩니다. 다음 업로드 때 showNow가 재시도합니다.
+    console.warn(`[images] 기존 갤러리 링크 갱신 실패 (${channelId}): ${err.message}`);
+  }
 }

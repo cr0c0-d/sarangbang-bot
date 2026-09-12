@@ -704,7 +704,10 @@ export async function getTracks(input) {
   //    출력에 줄이 하나라도 더 끼면 순서가 통째로 밀려서 엉뚱한 값이 재생 주소로 들어갔습니다.
   //    (그러면 재생이 즉시 실패하고 "재생 중인 곡 없음" 으로 돌아갑니다)
   const SEP = '|::|';
-  const template = ['%(title)s', '%(duration)s', '%(thumbnail)s', '%(uploader)s', '%(webpage_url)s', '%(urls)s'].join(SEP);
+  const template = [
+    '%(title)s', '%(duration)s', '%(thumbnail)s', '%(uploader)s', '%(webpage_url)s', '%(urls)s',
+    '%(protocol)s', '%(fragment_count)s',
+  ].join(SEP);
 
   const out = await run([
     '-f', AUDIO_FORMAT,
@@ -729,6 +732,8 @@ export async function getTracks(input) {
   // 재생 주소가 http 로 시작하지 않으면 믿지 않습니다.
   // null 이면 재생할 때 yt-dlp 로 다시 뽑습니다 (느리지만 확실).
   const streamUrl = isHttp(na(p[5])) ? na(p[5]).split(/\s+/)[0] : null;
+  const streamProtocol = na(p[6]);
+  const fragmentCount = Number.isFinite(Number(p[7])) ? Number(p[7]) : null;
 
   const result = [
     {
@@ -738,6 +743,8 @@ export async function getTracks(input) {
       uploader: na(p[3]),
       url,
       streamUrl,
+      streamProtocol,
+      fragmentCount,
       extractedAt: Date.now(),
     },
   ];
@@ -929,7 +936,14 @@ export function jsRuntimeEnabled() {
 
 /** 저장된 재생 주소를 아직 써도 되는지. */
 export function hasFreshStreamUrl(track) {
-  return Boolean(track?.streamUrl) && Date.now() - (track.extractedAt ?? 0) < STREAM_URL_TTL_MS;
+  if (!track?.streamUrl || Date.now() - (track.extractedAt ?? 0) >= STREAM_URL_TTL_MS) return false;
+
+  // %(urls)s가 항상 완성 파일 하나를 뜻하지는 않습니다. HLS/DASH와 여러 조각 형식의 주소를
+  // 완성 파일처럼 다시 열면 첫 조각만 잠깐 재생된 뒤 정상 종료할 수 있습니다.
+  const protocol = String(track.streamProtocol ?? '').toLowerCase();
+  if (protocol && protocol !== 'http' && protocol !== 'https') return false;
+  if (Number(track.fragmentCount) > 1) return false;
+  return true;
 }
 
 /**
@@ -1059,6 +1073,9 @@ export function createStream(url, { extract = true } = {}) {
     child.once('close', (code) => {
       if (stopped) return;
       if (code === 0 || code === null) {
+        if (!extract && bytes < 64 * 1024) {
+          console.warn(`[music] 뽑아둔 주소가 짧게 종료됨 · 코드 ${code ?? 'signal'} · ${bytes}바이트`);
+        }
         output.end();
         return;
       }
@@ -1071,7 +1088,8 @@ export function createStream(url, { extract = true } = {}) {
         return;
       }
 
-      if (error.message) console.error('[music] yt-dlp:', error.message);
+      const detail = error.message || stderr.trim().split('\n').filter(Boolean).slice(-1)[0] || `종료 코드 ${code}`;
+      console.error(`[music] yt-dlp 스트림 종료 · 코드 ${code} · ${bytes}바이트: ${detail}`);
       output.end();
     });
   };
