@@ -150,6 +150,7 @@ export function createWebServer() {
   // 아낍니다. 공개 범위는 개별 /dl 과 같습니다.
   let activeZipDownloads = 0;
   app.post('/api/download-zip', async (req, res, next) => {
+    let releaseZipSlot = null;
     try {
       if (activeZipDownloads >= 2) {
         return res.status(429).type('text').send('다른 ZIP을 만들고 있습니다. 잠시 뒤 다시 시도해주세요.');
@@ -174,11 +175,15 @@ export function createWebServer() {
       const release = () => {
         if (released) return;
         released = true;
-        activeZipDownloads--;
+        activeZipDownloads = Math.max(0, activeZipDownloads - 1);
       };
+      releaseZipSlot = release;
       const zipName = `${String(folder).replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').slice(0, 60) || 'gallery'}.zip`;
       res.attachment(zipName);
       const archive = new ZipArchive({ store: true });
+      // finish는 응답을 정상적으로 모두 보낸 때, close는 사용자가 취소하거나 연결이 끊긴 때입니다.
+      // close만 기다리면 Caddy가 연결을 재사용할 때 슬롯이 남아 이후 요청이 계속 429가 됩니다.
+      res.once('finish', release);
       res.once('close', () => {
         release();
         if (!res.writableEnded) archive.abort();
@@ -192,6 +197,7 @@ export function createWebServer() {
       for (const name of names) archive.file(filePath(folder, name), { name });
       await archive.finalize();
     } catch (e) {
+      releaseZipSlot?.();
       next(e);
     }
   });

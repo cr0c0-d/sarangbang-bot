@@ -1856,6 +1856,17 @@ const auth = 'Basic ' + Buffer.from('u:testsecret').toString('base64');
       zipResponse.headers.get('content-disposition')?.includes('attachment') &&
       zipBytes.subarray(0, 2).equals(Buffer.from('PK')));
 
+  // 정상 응답이 끝날 때 슬롯을 즉시 반환해야 프록시 keep-alive에서도 다음 요청이 막히지 않습니다.
+  for (let i = 0; i < 3; i++) {
+    const repeatedZip = await fetch(base + '/api/download-zip', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: new URLSearchParams({ folder: '테스트폴더', files: JSON.stringify(['zip-test.png']) }),
+    });
+    await repeatedZip.arrayBuffer();
+    ok(`ZIP 완료 뒤 작업 슬롯 반환 ${i + 1}`, repeatedZip.status === 200, String(repeatedZip.status));
+  }
+
   const missingZip = await fetch(base + '/api/download-zip', {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
