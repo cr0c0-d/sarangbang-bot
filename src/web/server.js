@@ -116,6 +116,8 @@ export function createWebServer() {
     try {
       const folder = req.params.folder;
       const files = await listFiles(folder);
+      // 갤러리 조작 버튼을 배포한 뒤에도 브라우저·프록시가 예전 HTML을 재사용하지 않게 합니다.
+      res.set('Cache-Control', 'no-store, max-age=0');
       res.type('html').send(layout(folder, galleryPage(folder, files)));
     } catch (e) {
       next(e);
@@ -746,7 +748,7 @@ function galleryPage(folder, files) {
   <h1>${esc(folder)}</h1>
   <span class="muted">${files.length}개</span>
   <div class="header-actions">
-    <button class="btn primary" id="zip" disabled>🗜️ 선택 항목 ZIP 받기</button>
+    <button class="btn primary" data-zip disabled>🗜️ 선택 항목 ZIP 받기</button>
   </div>
 </header>
 <main>
@@ -766,6 +768,7 @@ function galleryPage(folder, files) {
   <button class="btn" id="none">선택 해제</button>
   <span class="count" id="count">0개 선택</span>
   <button class="btn primary" id="dl" disabled>⬇️ 선택한 파일 받기</button>
+  <button class="btn primary" id="zip" data-zip disabled>🗜️ ZIP 파일로 받기</button>
   <input type="text" id="dest" placeholder="옮길 폴더 이름" style="width:150px">
   <button class="btn" id="move" disabled>📂 옮기기</button>
   <button class="btn danger" id="del" disabled>🗑️ 삭제</button>
@@ -788,8 +791,11 @@ function galleryPage(folder, files) {
     });
     var n = selected.size;
     document.getElementById('count').textContent = n + '개 선택';
-    ['dl', 'zip', 'move', 'del'].forEach(function (id) {
+    ['dl', 'move', 'del'].forEach(function (id) {
       document.getElementById(id).disabled = n === 0;
+    });
+    document.querySelectorAll('[data-zip]').forEach(function (button) {
+      button.disabled = n === 0;
     });
   }
 
@@ -889,18 +895,20 @@ function galleryPage(folder, files) {
 
   // 한 번의 실제 폼 제출로 ZIP 응답을 받습니다. fetch+Blob은 동영상까지 브라우저 메모리에
   // 전부 올리므로 쓰지 않습니다. Content-Disposition 응답이라 현재 페이지도 그대로 남습니다.
-  document.getElementById('zip').addEventListener('click', function () {
-    var form = document.createElement('form');
-    form.method = 'post';
-    form.action = '/api/download-zip';
-    form.style.display = 'none';
-    [['folder', folder], ['files', JSON.stringify(Array.from(selected))]].forEach(function (pair) {
-      var input = document.createElement('input');
-      input.type = 'hidden'; input.name = pair[0]; input.value = pair[1]; form.appendChild(input);
+  document.querySelectorAll('[data-zip]').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var form = document.createElement('form');
+      form.method = 'post';
+      form.action = '/api/download-zip';
+      form.style.display = 'none';
+      [['folder', folder], ['files', JSON.stringify(Array.from(selected))]].forEach(function (pair) {
+        var input = document.createElement('input');
+        input.type = 'hidden'; input.name = pair[0]; input.value = pair[1]; form.appendChild(input);
+      });
+      document.body.appendChild(form);
+      form.submit();
+      form.remove();
     });
-    document.body.appendChild(form);
-    form.submit();
-    form.remove();
   });
 
   document.getElementById('move').addEventListener('click', function () {
