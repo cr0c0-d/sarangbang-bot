@@ -80,6 +80,7 @@ import {
 import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
 import { enabled as driveEnabled, uploadClip } from './drive.js';
 import { config } from '../config.js';
+import { handleAdminRecordComponent } from './admin-records.js';
 
 /** 오프셋을 이 범위 밖으로 두면 실수입니다. 6시간이면 어떤 방송이든 덮습니다. */
 const OFFSET_LIMIT_SEC = 6 * 3600;
@@ -542,6 +543,8 @@ export function stopClipCleanup() {
 export async function handleStreamComponent(interaction, client) {
   const id = interaction.customId;
   const guildId = interaction.guildId;
+
+  if (id.startsWith('tm:adminrecord')) return handleAdminRecordComponent(interaction);
 
   if (id === 'tm:panel:join') return registerStream(interaction);
   if (id === 'tm:panel:mark') return markNow(interaction, client);

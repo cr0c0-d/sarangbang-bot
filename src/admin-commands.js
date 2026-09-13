@@ -8,6 +8,7 @@ import { commands as channelCommands, channelChoices } from './channel-commands.
 import { commands as imageCommands } from './images/commands.js';
 import { commands as symbolCommands } from './symbol-commands.js';
 import { commands as voiceProbeCommands } from './voice/probe.js';
+import { executeAdminRecords } from './stream/admin-records.js';
 import { inRole } from './settings.js';
 
 const byName = (commands, name) => commands.find((command) => command.data.toJSON().name === name);
@@ -21,7 +22,10 @@ if (inRole('images')) {
   actions.set('갤러리수집', byName(imageCommands, '갤러리수집'));
   actions.set('정리', byName(imageCommands, '정리'));
 }
-if (inRole('stream')) actions.set('상징이모지', byName(symbolCommands, '상징이모지'));
+if (inRole('stream')) {
+  actions.set('상징이모지', byName(symbolCommands, '상징이모지'));
+  actions.set('방송기록', { execute: executeAdminRecords });
+}
 // 소리 녹음(30초 되돌리기)을 만들기 전에 **수신이 되는지부터** 확인하는 진단입니다.
 // 커넥션은 양쪽 봇에 다 있지만, 이 진단이 필요한 기능은 소리 기록이므로 그쪽에만 둡니다.
 // (노래하는 망고의 `/관리자` 를 진단으로 늘리지 않습니다)
@@ -59,6 +63,15 @@ if (actions.has('상징이모지')) {
     .addUserOption((option) => option.setName('사람').setDescription('상징 이모지를 지정할 사람').setRequired(true))
     .addIntegerOption((option) => option.setName('목록페이지').setDescription('이름을 모를 때 25개씩 넘겨보기').setMinValue(1).setMaxValue(100))
     .addStringOption((option) => option.setName('이모지').setDescription('이름으로 서버 전체 검색 (비우면 해제)').setAutocomplete(true)));
+}
+if (actions.has('방송기록')) {
+  data.addSubcommand((sub) => sub.setName('방송기록').setDescription('진행 중이거나 연결이 덜 된 방송 기록을 확인합니다')
+    .addStringOption((option) => option.setName('범위').setDescription('어떤 상태를 볼지 (기본: 확인 필요)').addChoices(
+      { name: '확인 필요', value: 'attention' },
+      { name: '전체 기록', value: 'all' },
+      { name: '진행 중', value: 'live' },
+      { name: '정리 완료', value: 'complete' },
+    )));
 }
 
 export const commands = [{

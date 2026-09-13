@@ -134,10 +134,10 @@ const adminCommand = allCommands.find((c) => c.data.toJSON().name === '관리자
 const adminSchema = adminCommand?.data.toJSON();
 const adminSubcommands = adminSchema?.options?.map((option) => option.name) ?? [];
 ok('/관리자 아래에 관리자 전용 기능 통합',
-  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지'].every((name) => adminSubcommands.includes(name)),
+  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지', '방송기록'].every((name) => adminSubcommands.includes(name)),
   adminSubcommands.join(', '));
 ok('기존 관리자 최상위 명령어 제거',
-  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지'].every((name) => !names.includes(name)));
+  ['기능', '채널설정', '갤러리수집', '정리', '상징이모지', '방송기록'].every((name) => !names.includes(name)));
 let adminFeatureReply;
 await adminCommand.execute({
   guildId: 'admin-route-guild', options: { getSubcommand: () => '기능' },
@@ -2895,8 +2895,57 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const store = await import('./src/stream/store.js');
   const panel = await import('./src/stream/panel.js');
   const stream = await import('./src/stream/index.js');
+  const adminRecords = await import('./src/stream/admin-records.js');
   const settings = await import('./src/settings.js');
   await store.initStreams();
+
+  // ── 관리자 방송 기록 점검 ──
+  const auditSession = store.openSession('admin-audit-guild', 'admin-audit-channel', '연결 확인 게임');
+  const auditStream = store.putStream(auditSession, {
+    userId: 'audit-user', startedAt: store.nowSec() - 600, game: '연결 확인 게임', gameKey: 'unlinked-game',
+  });
+  store.endStream(auditSession, auditStream.userId);
+  store.closeSession(auditSession);
+  const auditState = adminRecords.streamRecordState(auditSession, auditStream);
+  ok('관리자 확인 필요에 다시보기·녹화방 미연결을 함께 표시',
+    auditState.attention && auditState.labels.includes('🔗 다시보기 미연결') && auditState.labels.includes('🟠 녹화방 미연결'));
+  const auditList = adminRecords.buildAdminRecordList('admin-audit-guild');
+  ok('관리자 방송기록은 상태 목록·필터·상세 선택 제공',
+    auditList.content.includes('연결 확인 게임') && auditList.content.includes('최근 180일') &&
+    JSON.stringify(auditList).includes('tm:adminrecordfilter') && JSON.stringify(auditList).includes('tm:adminrecordpick:'));
+  const adminRecordSchema = adminSchema.options.find((option) => option.name === '방송기록');
+  ok('/관리자 방송기록은 상태 범위 선택',
+    adminRecordSchema?.options?.find((option) => option.name === '범위')?.choices?.length === 4);
+  let adminRecordReply;
+  await adminCommand.execute({
+    guildId: 'admin-audit-guild',
+    options: { getSubcommand: () => '방송기록', getString: () => 'attention' },
+    reply: async (payload) => { adminRecordReply = payload; },
+  });
+  ok('/관리자 방송기록은 나만 보기로 실행',
+    Boolean(adminRecordReply.flags & (await import('discord.js')).MessageFlags.Ephemeral));
+  let deniedAdminRecordReply;
+  await adminRecords.handleAdminRecordComponent({
+    customId: 'tm:adminrecords:all:0', guildId: 'admin-audit-guild',
+    memberPermissions: { has: () => false },
+    reply: async (payload) => { deniedAdminRecordReply = payload; },
+  });
+  ok('방송기록 구성요소도 관리자 권한 재확인', deniedAdminRecordReply.content.includes('서버 관리자만'));
+  let refreshedAdminRecords;
+  await adminRecords.handleAdminRecordComponent({
+    customId: 'tm:adminrecordfilter', guildId: 'admin-audit-guild', values: ['all'],
+    memberPermissions: { has: () => true },
+    update: async (payload) => { refreshedAdminRecords = payload; },
+  });
+  ok('관리자 방송기록 필터는 기존 나만 보기 목록을 갱신', refreshedAdminRecords.content.includes('전체 기록'));
+  let adminRecordDetail;
+  await adminRecords.handleAdminRecordComponent({
+    customId: 'tm:adminrecordpick:attention:0', guildId: 'admin-audit-guild',
+    values: [`${auditSession.id}:${auditStream.userId}`], memberPermissions: { has: () => true },
+    reply: async (payload) => { adminRecordDetail = payload; }, followUp: async () => {},
+  });
+  ok('관리자가 방송 상세 요약에서 연결·편집을 이어감',
+    adminRecordDetail.content.includes('연결 확인 게임') && JSON.stringify(adminRecordDetail).includes('tm:replay:'));
 
   // ── 서버별 사람 상징 이모지 ──
   const symbolCommand = (await import('./src/symbol-commands.js')).commands[0];
@@ -4326,7 +4375,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     !mango.includes('재생') && !mango.includes('대기열') && !mango.includes('음량') && mango.includes('갤러리'),
     mango.join(' '));
   ok('망고 /관리자에는 전체 관리 기능',
-    JSON.stringify(mangoResult.admin) === JSON.stringify(['기능', '채널설정', '갤러리수집', '정리', '음성수신확인', '상징이모지']),
+    JSON.stringify(mangoResult.admin) === JSON.stringify(['기능', '채널설정', '갤러리수집', '정리', '음성수신확인', '상징이모지', '방송기록']),
     mangoResult.admin?.join(' '));
   ok('노래하는 망고 /관리자에는 자기 설정만',
     JSON.stringify(musicResult.admin) === JSON.stringify(['기능', '채널설정']), musicResult.admin?.join(' '));
