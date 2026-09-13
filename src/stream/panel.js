@@ -379,6 +379,36 @@ export function buildTimelineTimeModal(session, stream, mark) {
     );
 }
 
+/** 방송이 끝난 뒤 놓친 장면의 영상 시각과 설명을 직접 추가하는 창. */
+export function buildTimelineAddModal(session, stream) {
+  return new ModalBuilder()
+    .setCustomId(`tm:tmaddm:${session.id}:${stream.userId}`)
+    .setTitle('타임라인 추가')
+    .addLabelComponents(
+      new LabelBuilder()
+        .setLabel('영상 시각')
+        .setDescription('영상에서 보이는 정확한 시:분:초를 적어주세요.')
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('time')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('01:20:30')
+        ),
+      new LabelBuilder()
+        .setLabel('설명')
+        .setDescription('무슨 장면인지 적어주세요. 나중에 다시 고칠 수 있습니다.')
+        .setTextInputComponent(
+          new TextInputBuilder()
+            .setCustomId('text')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setMaxLength(200)
+            .setPlaceholder('재미있었던 순간')
+        )
+    );
+}
+
 /**
  * 클립 구간을 받는 창. 마킹을 중심으로 기본값을 채워둡니다.
  *
@@ -451,8 +481,7 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
     (stream.url ? `<${stream.url}>` : '⚠️ 다시보기 링크 연결 대기');
 
   if (rows.length === 0) {
-    const buttons = [];
-    if (editableRows.length) buttons.push(buildTimelineEditEntry(session, stream));
+    const buttons = [buildTimelineEditEntry(session, stream)];
     if (!stream.url) buttons.push(buildReplayLinkEntry(session, stream));
     const emptyText = editableRows.length
       ? '표시 중인 마킹이 없습니다. 삭제한 마킹은 타임라인 수정에서 복원할 수 있습니다.'
@@ -517,10 +546,17 @@ export function buildTimelineEditEntry(session, stream) {
 /** 시간 수정·삭제·복원을 위한 나만 보기 선택 화면. */
 export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkId = null, notice = '') {
   const rows = editableTimelineFor(session, stream);
+  const addButton = new ButtonBuilder()
+    .setCustomId(`tm:tmadd:${session.id}:${stream.userId}`)
+    .setLabel('새 타임라인 추가').setEmoji('➕').setStyle(ButtonStyle.Success);
   const pages = Math.max(1, Math.ceil(rows.length / SELECT_LIMIT));
   const current = Math.min(Math.max(0, Number(page) || 0), pages - 1);
   const slice = rows.slice(current * SELECT_LIMIT, current * SELECT_LIMIT + SELECT_LIMIT);
-  if (!rows.length) return { content: '수정할 타임라인 마킹이 없습니다.', components: [], allowedMentions: { parse: [] } };
+  if (!rows.length) return {
+    content: `${notice ? `${notice}\n` : ''}아직 타임라인이 없습니다. 놓친 장면의 영상 시각을 직접 추가할 수 있습니다.`,
+    components: [new ActionRowBuilder().addComponents(addButton)],
+    allowedMentions: { parse: [] },
+  };
 
   const select = new StringSelectMenuBuilder()
     .setCustomId(`tm:tmeditpick:${session.id}:${stream.userId}:${current}`)
@@ -531,7 +567,7 @@ export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkI
       value: mark.id,
     })));
   const components = [new ActionRowBuilder().addComponents(select)];
-  const buttons = [];
+  const buttons = [addButton];
   const selected = rows.find((x) => x.mark.id === selectedMarkId);
   if (selected) {
     buttons.push(
@@ -557,7 +593,7 @@ export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkI
     ? `\n선택: **${hhmmss(selected.sec)}** · ${selected.mark.text || '(설명 없음)'}${selected.hidden ? ' · 삭제됨' : ''}`
     : '';
   return {
-    content: `${notice ? `${notice}\n` : ''}🛠️ 시간을 고치거나 잘못 찍은 마킹을 삭제할 수 있습니다. 삭제한 마킹은 여기서 다시 복원할 수 있습니다.${selectedLine}`,
+    content: `${notice ? `${notice}\n` : ''}🛠️ 놓친 장면을 추가하거나, 시간을 고치고 잘못 찍은 마킹을 삭제할 수 있습니다. 삭제한 마킹은 여기서 다시 복원할 수 있습니다.${selectedLine}`,
     components,
     allowedMentions: { parse: [] },
   };

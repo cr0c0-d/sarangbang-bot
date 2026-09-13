@@ -303,6 +303,32 @@ export function addMark(session, byUserId, forUserId = byUserId) {
   return mark;
 }
 
+/**
+ * 방송 뒤에 놓친 장면을 영상 시각으로 직접 추가합니다.
+ *
+ * 수동 항목은 해당 방송자에게만 속합니다. 공용 마킹으로 만들면 협동 방송에 참여한 다른 사람의
+ * 타임라인에도 갑자기 나타납니다. `timelineEdits.sec`에도 입력값을 고정해 다시보기 연결로
+ * `startedAt`이 바뀌더라도 사용자가 찾은 영상 시각이 움직이지 않게 합니다.
+ */
+export function addTimelineMark(session, userId, byUserId, sec, text = '') {
+  const stream = streamOf(session, userId);
+  const second = Math.floor(Number(sec));
+  if (!stream || session.marks.length >= MARK_MAX || !Number.isFinite(second) || second < 0) return null;
+  const mark = {
+    id: newId(4),
+    at: stream.startedAt + (stream.offsetSec ?? 0) + second,
+    byUserId,
+    forUserId: userId,
+    text: String(text ?? '').trim().slice(0, 200),
+    manual: true,
+  };
+  session.marks.push(mark);
+  stream.timelineEdits ??= {};
+  stream.timelineEdits[mark.id] = { sec: second };
+  save();
+  return mark;
+}
+
 /** 이 마킹을 **모두의 타임라인**으로 넓힙니다. (다 같이 하던 순간) */
 export function shareMark(session, markId) {
   const mark = session.marks.find((m) => m.id === markId);

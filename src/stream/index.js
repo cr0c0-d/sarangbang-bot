@@ -44,6 +44,7 @@ import {
   allStreamsEnded,
   setOffset,
   addMark,
+  addTimelineMark,
   removeLastMark,
   shareMark,
   markSecondsFor,
@@ -67,6 +68,7 @@ import {
   buildDescModal,
   buildTimelineEditPicker,
   buildTimelineTimeModal,
+  buildTimelineAddModal,
   buildClipModal,
   buildSessionPicker,
   buildReplayLinkModal,
@@ -553,6 +555,7 @@ export async function handleStreamComponent(interaction, client) {
   if (id.startsWith('tm:tmedit:')) return openTimelineEditPicker(interaction, id);
   if (id.startsWith('tm:tmeditpick:')) return selectTimelineEdit(interaction, id);
   if (id.startsWith('tm:tmeditpage:')) return openTimelineEditPicker(interaction, id, true);
+  if (id.startsWith('tm:tmadd:')) return openTimelineAddModal(interaction, id);
   if (id.startsWith('tm:tmtime:')) return openTimelineTimeModal(interaction, id);
   if (id.startsWith('tm:tmhide:')) return toggleTimelineMark(interaction, client, id, true);
   if (id.startsWith('tm:tmrestore:')) return toggleTimelineMark(interaction, client, id, false);
@@ -873,6 +876,13 @@ function openTimelineTimeModal(interaction, customId) {
   return modal ? interaction.showModal(modal) : interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
 }
 
+function openTimelineAddModal(interaction, customId) {
+  const { session, stream, userId } = timelineEditTarget(interaction, customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  return interaction.showModal(buildTimelineAddModal(session, stream));
+}
+
 async function toggleTimelineMark(interaction, client, customId, hidden) {
   const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
   if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
@@ -932,6 +942,7 @@ export async function handleStreamModal(interaction, client) {
   const id = interaction.customId;
   if (id === 'tm:offsetm') return submitOffset(interaction, client);
   if (id.startsWith('tm:descm:')) return submitDesc(interaction, client);
+  if (id.startsWith('tm:tmaddm:')) return submitTimelineAdd(interaction, client);
   if (id.startsWith('tm:tmtimem:')) return submitTimelineTime(interaction, client);
   if (id.startsWith('tm:clipm:')) return submitClip(interaction, client);
   if (id.startsWith('tm:replaym:')) return submitReplayLink(interaction, client);
@@ -945,6 +956,35 @@ export function parseTimelineTime(text) {
   const [, h, m, s] = match.map(Number);
   if (m >= 60 || s >= 60) return null;
   return h * 3600 + m * 60 + s;
+}
+
+async function submitTimelineAdd(interaction, client) {
+  const { session, stream, userId } = timelineEditTarget(interaction, interaction.customId);
+  if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
+  if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
+  const raw = interaction.fields.getTextInputValue('time');
+  const sec = parseTimelineTime(raw);
+  if (sec === null) throw userError(`"${raw}" 를 알아볼 수 없습니다. \`01:20:30\`처럼 **시:분:초**로 적어주세요.`);
+  if (session.marks.length >= MARK_MAX) throw userError(`한 방송 세션에는 타임라인을 최대 ${MARK_MAX}개까지 저장할 수 있습니다.`);
+  const text = interaction.fields.getTextInputValue('text') ?? '';
+  const mark = addTimelineMark(session, userId, interaction.user.id, sec, text);
+  if (!mark) return interaction.reply(eph('타임라인을 추가하지 못했습니다. 방송 기록을 다시 열어 시도해주세요.'));
+
+  const notice = `➕ **${hhmmss(sec)}** 타임라인을 추가했습니다.`;
+  const payload = buildTimelineEditPicker(session, stream, 0, mark.id, notice);
+  await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  let syncFailed = false;
+  try {
+    const result = await updateSummary(client, session, stream, { refreshPreview: true });
+    if (result && !['posted', 'updated'].includes(result.status)) syncFailed = true;
+  } catch { syncFailed = true; }
+  if (syncFailed) {
+    await interaction.editReply({
+      content: `${payload.content}\n⚠️ 추가는 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.`,
+      components: payload.components,
+      allowedMentions: { parse: [] },
+    });
+  }
 }
 
 async function submitTimelineTime(interaction, client) {
@@ -1207,7 +1247,7 @@ async function sendOwnSummary(interaction, session) {
 
 /** 개인 요약은 다시 열 때 최신 내용으로 만들고, 공유 녹화방만 동기화합니다. */
 async function updateSummary(client, session, stream, options) {
-  if (session.closedAt && stream.forumPosted?.messageIds?.length) {
+  if (stream.forumPosted?.messageIds?.length) {
     return publishStreamRecord(client, session, stream, options);
   }
   return null;

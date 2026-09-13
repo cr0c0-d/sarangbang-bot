@@ -3226,6 +3226,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clipsopen:')) &&
     !idsOf(summary.at(-1)).some((x) => x.startsWith('tm:clip:')));
   ok('요약판에 타임라인 수정 버튼', idsOf(summary.at(-1)).some((x) => x.startsWith('tm:tmedit:')));
+  const emptySummary = panel.buildSummary({ ...s, marks: [] }, u1);
+  ok('마킹이 없어도 타임라인 수정에서 직접 추가 가능',
+    idsOf(emptySummary.at(-1)).some((x) => x.startsWith('tm:tmedit:')));
   ok('요약판이 2000자를 넘지 않음', summary.every((m) => m.content.length <= 2000));
 
   // 마킹이 많아도 나뉘어야 한다. 6명 × 여러 개가 한 장에 안 들어간다.
@@ -3255,8 +3258,22 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const editPicker = panel.buildTimelineEditPicker(s, u1, 0, s.marks[0].id);
   ok('타임라인 편집에서 시간 수정·삭제 선택',
     idsOf(editPicker).some((x) => x.startsWith('tm:tmtime:')) && idsOf(editPicker).some((x) => x.startsWith('tm:tmhide:')));
+  ok('타임라인 편집에서 놓친 장면 추가', idsOf(editPicker).some((x) => x.startsWith('tm:tmadd:')));
   const timeModal = panel.buildTimelineTimeModal(s, u1, s.marks[0]);
   ok('타임라인 시간 수정 창에 현재 시각', JSON.stringify(timeModal.toJSON()).includes('tm:tmtimem:'));
+  const addModal = panel.buildTimelineAddModal(s, u1);
+  const addModalJson = JSON.stringify(addModal.toJSON());
+  ok('타임라인 추가 창에 시각·설명 입력',
+    addModalJson.includes('tm:tmaddm:') && addModalJson.includes('"custom_id":"time"') && addModalJson.includes('"custom_id":"text"'));
+  const manual = store.addTimelineMark(s, 'u1', 'admin-user', 83, '뒤늦게 찾은 장면');
+  ok('수동 타임라인은 지정 방송에만 정확한 시각으로 추가',
+    store.timelineFor(s, u1).some((x) => x.mark.id === manual.id && x.sec === 83 && x.mark.text === '뒤늦게 찾은 장면') &&
+    !store.timelineFor(s, u2).some((x) => x.mark.id === manual.id));
+  const beforeRelink = u1.startedAt;
+  u1.startedAt += 30;
+  ok('다시보기 시작 시각이 바뀌어도 수동 타임라인 시각 유지',
+    store.timelineFor(s, u1).find((x) => x.mark.id === manual.id)?.sec === 83);
+  u1.startedAt = beforeRelink;
 
   // ── 배선 ──
   const idx = fs.readFileSync('./src/index.js', 'utf8');
@@ -3273,6 +3290,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     !/deleteMusicPanels[\s\S]{0,600}STREAM/.test(reg));
 
   const si = fs.readFileSync('./src/stream/index.js', 'utf8');
+  ok('타임라인 추가 제출은 저장 후 기존 녹화방을 갱신',
+    si.includes('addTimelineMark(session, userId, interaction.user.id, sec, text)') &&
+    si.includes("id.startsWith('tm:tmaddm:')") && si.includes('updateSummary(client, session, stream'));
   // 제어판 수정이 답보다 앞에 오면 가장 많이 눌리는 버튼에서 "Unknown interaction" 이 난다.
   // ⚠️ 이 검사는 **소스 글자에 의존한다.** 답변 문구를 고치면 여기가 깨진다.
   //    깨지면 순서가 아직 맞는지 눈으로 확인하고 아래 문자열을 맞춰줄 것.
