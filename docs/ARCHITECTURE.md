@@ -2171,11 +2171,17 @@ ffmpeg exited with code -11
 
 ##### 웹페이지는 갤러리와 같은 경계
 
-`/c/:folder`(목록) · `/clip/:folder/:file`(재생) · `/cdl/:folder/:file`(받기) ·
+`/clips/:guildId`(서버의 전체 목록) · `/c/:folder`(방송별 목록) · `/clip/:folder/:file`(재생) · `/cdl/:folder/:file`(받기) ·
 `POST /api/clip-delete`(삭제, `WEB_TOKEN`).
 
 보기·받기는 주소를 알면 누구나 — 라이브 자체가 일부공개라서 클립을 더 잠글 이유가 없다(소유자 확인).
 `res.sendFile` 을 쓰면 **Range 요청이 자동 처리**되어 재생 중 건너뛰기가 된다(206 확인).
+
+`/클립`은 현재 Discord 서버 ID가 들어간 전체 목록 링크를 나만 보기·무음으로 돌려준다.
+`listGuildClips()`는 `sessionsForGuild()`에 속한 세션 폴더만 훑고 실제로 남아 있는 파일을 최신순으로 합친다.
+따라서 다른 Discord 서버의 클립이 섞이지 않는다. `streams.json`의 클립 메타데이터가 있으면 제목·게임·방송
+시작일을 카드에 붙이고, 옛 파일처럼 메타데이터가 없으면 파일명과 세션 게임으로 안전하게 대체한다.
+통합 페이지도 재생·받기는 공개하고 삭제만 같은 `WEB_TOKEN` API를 사용한다.
 
 일괄 선택·일괄 다운로드는 만들지 않았다. 한 개가 수 MB 라 여러 개를 한꺼번에 받을 일이 없다.
 (사진과 다르다 — 3.5 의 ZIP 논쟁이 여기엔 해당하지 않는다)

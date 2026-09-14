@@ -77,7 +77,7 @@ import {
   scheduleStreamPanelRefresh,
   DESC_PER_PAGE,
 } from './panel.js';
-import { makeClip, clipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
+import { makeClip, clipPageUrl, allClipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
 import { enabled as driveEnabled, uploadClip } from './drive.js';
 import { config } from '../config.js';
 import { handleAdminRecordComponent } from './admin-records.js';
@@ -262,6 +262,23 @@ export const commands = [
       }
 
       return registerStream(interaction, { link, game });
+    },
+  },
+  {
+    data: new SlashCommandBuilder()
+      .setName('클립')
+      .setDescription('이 서버의 모든 게임 방송 클립을 모아봅니다')
+      .setDMPermission(false),
+    async execute(interaction) {
+      const url = allClipPageUrl(interaction.guildId);
+      return interaction.reply({
+        content: '🎥 이 서버의 모든 게임 방송 클립을 최신순으로 모아봅니다.',
+        components: [new ActionRowBuilder().addComponents(
+          new ButtonBuilder().setLabel('모든 클립 보기').setEmoji('🎞️').setStyle(ButtonStyle.Link).setURL(url)
+        )],
+        flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
+        allowedMentions: { parse: [] },
+      });
     },
   },
 ];

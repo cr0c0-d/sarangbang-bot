@@ -123,11 +123,11 @@ const { allCommands } = await import('./src/commands.js');
 const names = allCommands.map((c) => c.data.toJSON().name);
 // 검증은 기본 봇(망고)으로 돕니다. 노래하는 망고 쪽은 아래 6t) 에서
 // 따로 프로세스를 띄워 검사합니다 (config 가 import 시점에 한 번만 읽히므로).
-ok('망고 명령어 22개 로드 (우클릭 1개 포함)', allCommands.length === 22, `(${allCommands.length}개) ${names.join(' ')}`);
+ok('망고 명령어 23개 로드 (우클릭 1개 포함)', allCommands.length === 23, `(${allCommands.length}개) ${names.join(' ')}`);
 ok('명령어 이름 중복 없음', new Set(names).size === names.length);
 ok('영문 명령어 잔존 없음',
   !names.some((n) => /^[a-z]/.test(n)), names.filter((n) => /^[a-z]/.test(n)).join(',') || '없음');
-for (const need of ['관리자', '나가기', '타이머', '타이머목록', '알람등록', '목소리', '읽어주기', '폴더', '폴더목록', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산', '게임']) {
+for (const need of ['관리자', '나가기', '타이머', '타이머목록', '알람등록', '목소리', '읽어주기', '폴더', '폴더목록', '갤러리', '도움말', '투표', '영화', '일정', '일정새로', '정산', '게임', '클립']) {
   ok(`/${need} 존재`, names.includes(need));
 }
 const adminCommand = allCommands.find((c) => c.data.toJSON().name === '관리자');
@@ -1937,7 +1937,8 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 클립 만들기 창 — 기본값이 시:분:초여야 한다.
   // parseElapsed 는 숫자만 적으면 **분**으로 보므로(90 → 90분) 기본값으로 그 길을 막는다.
-  const cs = st2.openSession('gc', 'chc', '테스트');
+  const clipGuildId = '123456789012345678';
+  const cs = st2.openSession(clipGuildId, 'chc', '테스트');
   st2.putStream(cs, { userId: 'u1', url: 'https://www.youtube.com/watch?v=' + 'A'.repeat(11), videoId: 'A'.repeat(11), startedAt: st2.nowSec() - 3600, startSource: 'release_timestamp' });
   const cm = st2.addMark(cs, 'u1');
   cm.at = st2.nowSec() - 3600 + 60; // 영상 60초 지점
@@ -2117,12 +2118,30 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const listed = await clips.listClips(fakeFolder);
   ok('클립 목록은 .mp4 만 (반쪽 파일 제외)', listed.length === 1 && listed[0].name === fakeName, listed.map((x) => x.name).join());
 
+  const globalName = '000100-모아보기.mp4';
+  fs.mkdirSync(clips.folderPath(cs.id), { recursive: true });
+  fs.writeFileSync(clips.filePath(cs.id, globalName), Buffer.alloc(2048, 1));
+  st2.addClip(cs, { markId: 'global-mark', userId: 'u1', file: globalName, startSec: 60, endSec: 70, title: '모아보기 장면' });
+  const guildClips = await clips.listGuildClips(clipGuildId);
+  ok('서버의 모든 방송 클립을 세션에서 모아 최신순 정렬',
+    guildClips.some((item) => item.folder === cs.id && item.name === globalName && item.game === '테스트'));
+  ok('/클립 통합 페이지 주소는 현재 공개 주소와 서버 ID 사용',
+    clips.allClipPageUrl(clipGuildId).endsWith(`/clips/${clipGuildId}`));
+
   const cp = await fetch(`${base}/c/${fakeFolder}`);
   ok('클립 페이지는 암호 없이 200 (갤러리와 같은 경계)', cp.status === 200, String(cp.status));
   const cpHtml = await cp.text();
   ok('클립 페이지에 재생기', cpHtml.includes('<video'));
   ok('클립 페이지에 받기 링크', cpHtml.includes(`/cdl/${fakeFolder}/`));
   ok('클립 페이지에 반쪽 파일이 안 보임', !cpHtml.includes('.part'));
+
+  const allCp = await fetch(`${base}/clips/${clipGuildId}`);
+  const allCpHtml = await allCp.text();
+  ok('모든 방송 클립 페이지는 암호 없이 200', allCp.status === 200, String(allCp.status));
+  ok('모든 방송 클립은 게임·제목·재생·받기를 한 페이지에 표시',
+    allCpHtml.includes('모든 방송 클립') && allCpHtml.includes('모아보기 장면') &&
+    allCpHtml.includes('테스트') && allCpHtml.includes(`/clip/${cs.id}/`) && allCpHtml.includes(`/cdl/${cs.id}/`));
+  ok('다른 서버 형식의 통합 클립 주소 거부', (await fetch(`${base}/clips/not-a-guild`)).status === 400);
 
   // 실제 페이지 스크립트를 실행해서 401 이후 입력·재시도까지 확인합니다.
   const { runInNewContext } = await import('node:vm');
@@ -2132,7 +2151,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     let listener, removed = 0, prompts = 0;
     const requests = [], alerts = [];
     const button = { disabled: false, addEventListener: (_, fn) => { listener = fn; } };
-    const card = { dataset: { name: fakeName }, querySelector: () => button, remove: () => removed++ };
+    const card = { dataset: { folder: fakeFolder, name: fakeName }, querySelector: () => button, remove: () => removed++ };
     runInNewContext(clipScript, {
       document: { querySelectorAll: () => [card] }, TextEncoder,
       btoa: (s) => Buffer.from(s, 'binary').toString('base64'),
@@ -2261,6 +2280,15 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('만든 마킹에 ✅ 표시', wcJson.includes('✅'));
   ok('요약판에 [클립 보기] 링크', wcJson.includes(`/c/${cs.id}`));
 
+  let allClipReply;
+  await allCommands.find((command) => command.data.toJSON().name === '클립').execute({
+    guildId: clipGuildId,
+    reply: async (payload) => { allClipReply = payload; },
+  });
+  ok('/클립은 모든 방송 클립 공개 페이지를 나만 보기로 안내',
+    JSON.stringify(allClipReply).includes(`/clips/${clipGuildId}`) &&
+    Boolean(allClipReply.flags & (await import('discord.js')).MessageFlags.Ephemeral));
+
   // 마킹이 25개를 넘으면 드롭다운을 나눠야 한다 (디스코드 제한).
   for (let i = 0; i < 30; i++) {
     const m = st2.addMark(cs, 'u1');
@@ -2275,7 +2303,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   // 지난 방송의 요약판을 다시 부를 길 (종료 뒤 클립으로 가는 유일한 입구가 밀려 올라가므로)
   st2.closeSession(cs);
-  const sp = pn2.buildSessionPicker('gc');
+  const sp = pn2.buildSessionPicker(clipGuildId);
   ok('지난 방송 요약판 다시 올리기 드롭다운', Boolean(sp) && JSON.stringify(sp.toJSON()).includes('tm:resum'));
   ok('지난 방송이 없으면 드롭다운도 없음', pn2.buildSessionPicker('없는서버') === null);
 
@@ -4367,7 +4395,7 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const music = musicResult.names;
   const union = [...new Set([...mango, ...music])];
 
-  ok('둘을 합쳐 26개', union.length === 26, `${union.length}개`);
+  ok('둘을 합쳐 27개', union.length === 27, `${union.length}개`);
   ok('노래하는 망고 = 음악만',
     music.includes('재생') && music.includes('음량') && !music.includes('읽어주기') && !music.includes('갤러리'),
     music.join(' '));

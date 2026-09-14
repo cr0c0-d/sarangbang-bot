@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { ZipArchive } from 'archiver';
 import { config } from '../config.js';
 import { inRole } from '../settings.js';
-import { listClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
+import { listClips, listGuildClips, filePath as clipFilePath, deleteClip } from '../stream/clips.js';
 import { allVoiceClips, removeVoiceClip, setVoiceClipTitle } from '../voice/store.js';
 import {
   listFolders,
@@ -210,6 +210,19 @@ export function createWebServer() {
   // ⚠️ `res.sendFile` 을 쓰면 Range 요청이 자동으로 처리됩니다.
   //    그래야 브라우저에서 재생 중 앞뒤로 건너뛸 수 있습니다.
   if (inRole('stream')) {
+    app.get('/clips/:guildId', async (req, res, next) => {
+      try {
+        const guildId = req.params.guildId;
+        if (!/^\d{16,22}$/.test(guildId)) {
+          return res.status(400).send('잘못된 서버 주소입니다.');
+        }
+        const files = await listGuildClips(guildId);
+        res.type('html').send(layout('모든 방송 클립', clipPage(null, files, true)));
+      } catch (e) {
+        next(e);
+      }
+    });
+
     app.get('/c/:folder', async (req, res, next) => {
       try {
         const folder = req.params.folder;
@@ -526,11 +539,12 @@ function foldersPage(folders) {
  * 사진 갤러리와 다르게 **여러 개를 한꺼번에 받을 일이 거의 없습니다** (한 개가 수 MB 라서).
  * 그래서 체크박스·일괄 다운로드를 만들지 않고, 카드마다 재생기와 받기 버튼만 둡니다.
  */
-function clipPage(folder, files) {
+function clipPage(folder, files, allBroadcasts = false) {
   const cards = files
     .map((f) => {
-      const src = `/clip/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
-      const dl = `/cdl/${encodeURIComponent(folder)}/${encodeURIComponent(f.name)}`;
+      const itemFolder = f.folder || folder;
+      const src = `/clip/${encodeURIComponent(itemFolder)}/${encodeURIComponent(f.name)}`;
+      const dl = `/cdl/${encodeURIComponent(itemFolder)}/${encodeURIComponent(f.name)}`;
       const when = new Date(f.mtime).toLocaleString('ko-KR');
       // ⚠️ 소리만인 클립을 `<video>` 로 보여주면 **검은 화면**이 나옵니다.
       //    사람은 "재생이 안 된다" 고 생각합니다. 종류에 맞는 태그를 씁니다.
@@ -538,10 +552,14 @@ function clipPage(folder, files) {
         ? `<div class="audio-wrap"><span class="audio-badge">🎧 소리만</span>
              <audio src="${esc(src)}" controls preload="metadata"></audio></div>`
         : `<video src="${esc(src)}" controls preload="metadata" playsinline></video>`;
-      return `<div class="clip" data-name="${esc(f.name)}">
+      const context = allBroadcasts
+        ? `<span>${esc(f.game || '게임 미지정')} · 방송 시작 ${esc(new Date((f.startedAt || f.mtime / 1000) * 1000).toLocaleDateString('ko-KR'))}</span>`
+        : '';
+      return `<div class="clip" data-folder="${esc(itemFolder)}" data-name="${esc(f.name)}">
         ${player}
         <div class="clip-info">
-          <b>${esc(f.name.replace(/\.[a-z0-9]+$/i, ''))}</b>
+          <b>${esc(f.title || f.name.replace(/\.[a-z0-9]+$/i, ''))}</b>
+          ${context}
           <span class="muted">${fmtBytes(f.bytes)} · ${esc(when)}${f.audio ? ' · 화면 없음' : ''}</span>
         </div>
         <div class="clip-actions">
@@ -553,14 +571,14 @@ function clipPage(folder, files) {
     .join('');
 
   return `<header>
-  <h1>🎥 방송 클립</h1>
+  <h1>${allBroadcasts ? '🎞️ 모든 방송 클립' : '🎥 방송 클립'}</h1>
   <span class="muted">${files.length}개 · ${fmtBytes(files.reduce((a, f) => a + f.bytes, 0))}</span>
 </header>
 <main>
   ${
     files.length
       ? `<div class="clips">${cards}</div>`
-      : '<p class="empty">이 방송에는 아직 만든 클립이 없습니다.<br>디스코드의 요약판에서 <b>🎥 클립 만들 순간 고르기</b> 로 만드세요.</p>'
+      : `<p class="empty">${allBroadcasts ? '이 서버에는 아직 만든 방송 클립이 없습니다.' : '이 방송에는 아직 만든 클립이 없습니다.'}<br>디스코드의 요약판에서 <b>🎥 클립 만들 순간 고르기</b> 로 만드세요.</p>`
   }
 </main>
 <style>
@@ -581,10 +599,9 @@ function clipPage(folder, files) {
 </style>
 <script>
 (function () {
-  var folder = ${JSON.stringify(folder)};
   // 암호는 이 페이지의 메모리에만 둡니다. 공개 보기에는 인증을 요구하지 않습니다.
   var token = null;
-  async function removeClip(name, retry) {
+  async function removeClip(folder, name, retry) {
     var headers = { 'Content-Type': 'application/json' };
     if (token) {
       var bytes = new TextEncoder().encode('admin:' + token);
@@ -599,7 +616,7 @@ function clipPage(folder, files) {
       if (retry) { alert('암호가 틀렸습니다. 다시 삭제를 눌러 입력해주세요.'); return false; }
       token = window.prompt('관리 암호를 입력해주세요. (봇 .env의 WEB_TOKEN · 아이디는 필요 없습니다)');
       if (!token) return false;
-      return removeClip(name, true);
+      return removeClip(folder, name, true);
     }
     if (!r.ok) { alert('지우지 못했습니다. 잠시 뒤 다시 시도해주세요.'); return false; }
     var result = await r.json();
@@ -610,10 +627,11 @@ function clipPage(folder, files) {
     var button = card.querySelector('[data-del]');
     button.addEventListener('click', async function () {
       var name = card.dataset.name;
+      var folder = card.dataset.folder;
       if (!confirm(name + ' 을 지웁니다. 되돌릴 수 없습니다.')) return;
       button.disabled = true;
       try {
-        if (await removeClip(name, false)) card.remove();
+        if (await removeClip(folder, name, false)) card.remove();
       } catch (e) { alert('연결에 실패했습니다. 잠시 뒤 다시 시도해주세요.'); }
       finally { button.disabled = false; }
     });

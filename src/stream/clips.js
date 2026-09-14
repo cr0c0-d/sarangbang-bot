@@ -17,6 +17,7 @@ import path from 'node:path';
 import { config } from '../config.js';
 import { userError } from '../user-error.js';
 import { downloadSection, nextFfmpeg, liveInfo } from '../music/ytdlp.js';
+import { sessionsForGuild, streamOf } from './store.js';
 
 const BASE = path.join(config.dataDir, 'clips');
 
@@ -106,6 +107,27 @@ export async function listFolders() {
     out.push({ name, count: files.length, bytes: files.reduce((a, f) => a + f.bytes, 0) });
   }
   return out;
+}
+
+/** 한 서버의 모든 방송 세션에 실제로 남아 있는 클립을 최신순으로 모읍니다. */
+export async function listGuildClips(guildId) {
+  const all = [];
+  for (const session of sessionsForGuild(guildId)) {
+    const metadata = new Map((session.clips ?? []).map((clip) => [clip.file, clip]));
+    for (const file of await listClips(session.id).catch(() => [])) {
+      const saved = metadata.get(file.name);
+      const stream = saved?.userId ? streamOf(session, saved.userId) : null;
+      all.push({
+        ...file,
+        folder: session.id,
+        title: saved?.title || file.name.replace(/\.[a-z0-9]+$/i, ''),
+        game: stream?.game || session.game || '게임 미지정',
+        userId: saved?.userId || null,
+        startedAt: stream?.startedAt || session.openedAt,
+      });
+    }
+  }
+  return all.sort((a, b) => b.mtime - a.mtime);
 }
 
 export async function deleteClip(folder, file) {
@@ -515,4 +537,9 @@ export async function makeClip({ folder, url, startSec, endSec, title }) {
 /** 웹에서 이 세션 클립을 볼 주소. */
 export function clipPageUrl(folder) {
   return `${config.images.webPublicUrl}/c/${folder}`;
+}
+
+/** Discord 서버 하나의 모든 방송 클립을 모아 보는 주소. */
+export function allClipPageUrl(guildId) {
+  return `${config.images.webPublicUrl}/clips/${guildId}`;
 }
