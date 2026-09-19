@@ -80,7 +80,7 @@ import {
 import { makeClip, clipPageUrl, allClipPageUrl, fmtBytes, cleanupByBudget, filePath as clipFilePath } from './clips.js';
 import { enabled as driveEnabled, uploadClip } from './drive.js';
 import { config } from '../config.js';
-import { handleAdminRecordComponent } from './admin-records.js';
+import { handleAdminRecordComponent, handleAdminRecordModal } from './admin-records.js';
 
 /** 오프셋을 이 범위 밖으로 두면 실수입니다. 6시간이면 어떤 방송이든 덮습니다. */
 const OFFSET_LIMIT_SEC = 6 * 3600;
@@ -990,6 +990,7 @@ async function turnClipPage(interaction, customId) {
 
 export async function handleStreamModal(interaction, client) {
   const id = interaction.customId;
+  if (id.startsWith('tm:adminrecordgamem:')) return handleAdminRecordModal(interaction);
   if (id === 'tm:offsetm') return submitOffset(interaction, client);
   if (id.startsWith('tm:descm:')) return submitDesc(interaction, client);
   if (id.startsWith('tm:tmaddm:')) return submitTimelineAdd(interaction, client);

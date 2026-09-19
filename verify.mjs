@@ -2973,7 +2973,44 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
     reply: async (payload) => { adminRecordDetail = payload; }, followUp: async () => {},
   });
   ok('관리자가 방송 상세 요약에서 연결·편집을 이어감',
-    adminRecordDetail.content.includes('연결 확인 게임') && JSON.stringify(adminRecordDetail).includes('tm:replay:'));
+    adminRecordDetail.content.includes('연결 확인 게임') && JSON.stringify(adminRecordDetail).includes('tm:replay:') &&
+    JSON.stringify(adminRecordDetail).includes('tm:adminrecordgame:'));
+  let adminGameModal;
+  await adminRecords.handleAdminRecordComponent({
+    customId: `tm:adminrecordgame:${auditSession.id}:${auditStream.userId}`,
+    guildId: 'admin-audit-guild', memberPermissions: { has: () => true },
+    showModal: async (modal) => { adminGameModal = modal.toJSON(); },
+  });
+  ok('관리자 방송 상세에서 게임 연결 수정 모달을 엶',
+    adminGameModal.custom_id.startsWith('tm:adminrecordgamem:') && JSON.stringify(adminGameModal).includes('연결할 게임'));
+
+  const auditCatalog = await import('./src/game/catalog.js');
+  const auditForumStore = await import('./src/game/store.js');
+  await auditCatalog.initGameCatalog();
+  await auditForumStore.initForumPosts();
+  const correctedGame = { key: 'name:수정된게임', name: '수정된 게임', appid: null, image: null, genres: [], cooperative: null };
+  auditCatalog.rememberGame('admin-audit-guild', correctedGame);
+  auditForumStore.bindForumPost('admin-audit-guild', 'rec', correctedGame.key, 'corrected-record-thread');
+  store.markStreamForumPosted(auditSession, auditStream.userId, 'old-record-thread', ['old-record-message']);
+  let correctedDetail;
+  const sentAdminRecords = [];
+  const deletedAdminRecords = [];
+  await adminRecords.handleAdminRecordModal({
+    customId: `tm:adminrecordgamem:${auditSession.id}:${auditStream.userId}`,
+    guildId: 'admin-audit-guild', memberPermissions: { has: () => true },
+    fields: { getTextInputValue: () => correctedGame.name },
+    client: { channels: { fetch: async () => ({
+      isThread: () => true, isTextBased: () => true,
+      messages: { delete: async (id) => { deletedAdminRecords.push(id); } },
+      send: async (payload) => { sentAdminRecords.push(payload); return { id: 'corrected-record-message' }; },
+    }) } },
+    deferUpdate: async () => {},
+    editReply: async (payload) => { correctedDetail = payload; },
+  });
+  ok('관리자가 방송 기록의 게임과 녹화방 연결을 함께 수정',
+    auditStream.gameKey === correctedGame.key && auditStream.forumPosted.threadId === 'corrected-record-thread' &&
+    sentAdminRecords.length === 1 && deletedAdminRecords.includes('old-record-message') &&
+    correctedDetail.content.includes('수정된 게임'));
 
   // ── 서버별 사람 상징 이모지 ──
   const symbolCommand = (await import('./src/symbol-commands.js')).commands[0];

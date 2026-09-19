@@ -6,14 +6,30 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
+  LabelBuilder,
   MessageFlags,
+  ModalBuilder,
   PermissionFlagsBits,
   StringSelectMenuBuilder,
+  TextInputBuilder,
+  TextInputStyle,
 } from 'discord.js';
-import { sessionsForGuild, sessionById, streamOf, timelineFor } from './store.js';
+import {
+  sessionsForGuild,
+  sessionById,
+  restoreStreamGame,
+  setStreamForumPosted,
+  setStreamGame,
+  streamOf,
+  timelineFor,
+} from './store.js';
 import { postIdFor } from '../game/store.js';
+import { rememberGame } from '../game/catalog.js';
+import { resolveGame } from '../game/steam.js';
+import { publishStreamRecord } from '../game/forum.js';
 import { symbolMention } from '../settings.js';
 import { buildSummary } from './panel.js';
+import { userError } from '../user-error.js';
 
 const PAGE_SIZE = 8;
 const FILTERS = new Set(['attention', 'all', 'live', 'complete']);
@@ -126,6 +142,137 @@ function isAdmin(interaction) {
   return interaction.memberPermissions?.has(PermissionFlagsBits.ManageGuild);
 }
 
+function gameEditRow(session, stream) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`tm:adminrecordgame:${session.id}:${stream.userId}`)
+      .setLabel('게임 연결 수정')
+      .setEmoji('🎮')
+      .setStyle(ButtonStyle.Secondary)
+  );
+}
+
+/** 관리자 상세 요약 마지막 장에만 게임 연결 수정 버튼을 붙입니다. */
+export function buildAdminRecordDetail(session, stream, notice = '') {
+  const pages = buildSummary(session, stream).map((page) => ({ ...page }));
+  const last = pages[pages.length - 1];
+  last.content = notice ? `${notice}\n\n${last.content}` : last.content;
+  last.components = [...(last.components ?? []), gameEditRow(session, stream)];
+  return pages;
+}
+
+function openGameEditModal(interaction, sessionId, userId) {
+  const session = sessionById(sessionId);
+  const stream = session?.guildId === interaction.guildId ? streamOf(session, userId) : null;
+  if (!stream) return interaction.reply({ content: '그 방송 기록을 찾지 못했습니다.', flags: MessageFlags.Ephemeral });
+  const input = new TextInputBuilder()
+    .setCustomId('game')
+    .setStyle(TextInputStyle.Short)
+    .setRequired(true)
+    .setMaxLength(100)
+    .setPlaceholder('게임 이름·별칭 또는 Steam 상점 주소');
+  if (stream.game) input.setValue(stream.game.slice(0, 100));
+  return interaction.showModal(
+    new ModalBuilder()
+      .setCustomId(`tm:adminrecordgamem:${session.id}:${stream.userId}`)
+      .setTitle('방송 기록의 게임 연결 수정')
+      .addLabelComponents(
+        new LabelBuilder()
+          .setLabel('연결할 게임')
+          .setDescription('녹화방 포스트에 이미 연결된 게임을 입력하세요')
+          .setTextInputComponent(input)
+      )
+  );
+}
+
+async function deleteOldRecordMessages(client, forumPosted) {
+  if (!forumPosted?.threadId || !forumPosted.messageIds?.length) return true;
+  const thread = await client.channels.fetch(forumPosted.threadId).catch(() => null);
+  if (!thread?.isTextBased?.()) return false;
+  let complete = true;
+  for (const id of forumPosted.messageIds) {
+    try { await thread.messages.delete(id); }
+    catch (err) { if (err.code !== 10008) complete = false; }
+  }
+  return complete;
+}
+
+function gameInputKey(raw) {
+  const text = String(raw ?? '').trim();
+  const steamUrl = text.match(/store\.steampowered\.com\/app\/(\d+)/i);
+  return steamUrl ? `steam:${steamUrl[1]}` : text;
+}
+
+/** 게임 수정 모달 제출. 새 녹화방 게시 성공 전에는 이전 게시물을 지우지 않습니다. */
+export async function handleAdminRecordModal(interaction) {
+  if (!isAdmin(interaction)) {
+    return interaction.reply({ content: '서버 관리자만 방송 기록을 수정할 수 있습니다.', flags: MessageFlags.Ephemeral });
+  }
+  const [, , sessionId, userId] = interaction.customId.split(':');
+  const session = sessionById(sessionId);
+  const stream = session?.guildId === interaction.guildId ? streamOf(session, userId) : null;
+  if (!stream) return interaction.reply({ content: '그 방송 기록을 찾지 못했습니다.', flags: MessageFlags.Ephemeral });
+
+  const raw = interaction.fields.getTextInputValue('game');
+  const game = await resolveGame(gameInputKey(raw), interaction.guildId);
+  if (!game) throw userError('게임을 확인하지 못했습니다. 게임 이름·별칭 또는 Steam 상점 주소를 확인해주세요.');
+  const targetThreadId = postIdFor(interaction.guildId, 'rec', game.key);
+  if (!targetThreadId) {
+    throw userError(`**${game.name}**에 연결된 녹화방 포스트가 없습니다. 먼저 해당 녹화방 포스트에서 \`/게임\`으로 게임을 연결해주세요.`);
+  }
+
+  const oldGame = {
+    name: stream.game,
+    key: stream.gameKey,
+    appid: stream.appid ?? null,
+    cooperative: stream.cooperative ?? null,
+  };
+  const oldPosted = stream.forumPosted ? {
+    ...stream.forumPosted,
+    messageIds: [...(stream.forumPosted.messageIds ?? [])],
+  } : null;
+  const moving = Boolean(oldPosted?.threadId && oldPosted.threadId !== targetThreadId);
+  const ended = Boolean(stream.endedAt || session.closedAt);
+  if (moving && !ended) {
+    throw userError('진행 중인 방송에 이미 녹화방 게시물이 있어 지금은 옮길 수 없습니다. 방송을 종료한 뒤 다시 시도해주세요.');
+  }
+  await interaction.deferUpdate();
+  setStreamGame(session, userId, game);
+
+  let publishResult = null;
+  if (ended) {
+    if (moving) setStreamForumPosted(session, userId, null);
+    publishResult = await publishStreamRecord(interaction.client, session, stream, { refreshPreview: true }).catch(() => null);
+    if (!publishResult || !['posted', 'updated'].includes(publishResult.status)) {
+      restoreStreamGame(session, userId, oldGame);
+      setStreamForumPosted(session, userId, oldPosted);
+      const failed = buildAdminRecordDetail(
+        session,
+        stream,
+        '⚠️ 새 게임의 녹화방에 게시하지 못해 변경을 되돌렸습니다. 봇의 포스트 보기·메시지 전송 권한을 확인해주세요.'
+      );
+      return interaction.editReply({
+        ...failed[failed.length - 1],
+        allowedMentions: { parse: [] },
+      });
+    }
+  }
+  rememberGame(interaction.guildId, game, raw);
+
+  const cleanupComplete = ended && moving
+    ? await deleteOldRecordMessages(interaction.client, oldPosted)
+    : true;
+  const notice =
+    `🎮 게임 연결을 **${game.name}**으로 수정했습니다.` +
+    (ended && moving ? ' 녹화방 게시물도 새 게임으로 옮겼습니다.' : '') +
+    (!cleanupComplete ? '\n⚠️ 새 게시물은 만들었지만 이전 녹화방 메시지 일부를 지우지 못했습니다. 이전 포스트를 확인해주세요.' : '');
+  const pages = buildAdminRecordDetail(session, stream, notice);
+  return interaction.editReply({
+    ...pages[pages.length - 1],
+    allowedMentions: { parse: [] },
+  });
+}
+
 export function executeAdminRecords(interaction) {
   const filter = interaction.options.getString('범위') || 'attention';
   return interaction.reply({
@@ -152,7 +299,7 @@ export async function handleAdminRecordComponent(interaction) {
     const session = sessionById(sessionId);
     const stream = session?.guildId === interaction.guildId ? streamOf(session, userId) : null;
     if (!stream) return interaction.reply({ content: '그 방송 기록을 찾지 못했습니다.', flags: MessageFlags.Ephemeral });
-    const pages = buildSummary(session, stream);
+    const pages = buildAdminRecordDetail(session, stream);
     await interaction.reply({
       ...pages[0], flags: MessageFlags.Ephemeral | MessageFlags.SuppressNotifications,
       allowedMentions: { parse: [] },
@@ -164,5 +311,9 @@ export async function handleAdminRecordComponent(interaction) {
       });
     }
     return;
+  }
+  if (id.startsWith('tm:adminrecordgame:')) {
+    const [, , sessionId, userId] = id.split(':');
+    return openGameEditModal(interaction, sessionId, userId);
   }
 }

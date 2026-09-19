@@ -264,12 +264,39 @@ export function setStreamGame(session, userId, game) {
   return stream;
 }
 
+/** 관리 작업이 실패했을 때 게임 필드를 이전 값 그대로 되돌립니다. */
+export function restoreStreamGame(session, userId, game) {
+  const stream = streamOf(session, userId);
+  if (!stream) return null;
+  Object.assign(stream, {
+    game: game?.name || '',
+    gameKey: game?.key || null,
+    appid: game?.appid ?? null,
+    cooperative: game?.cooperative ?? null,
+  });
+  save();
+  return stream;
+}
+
 export function markStreamForumPosted(session, userId, threadId, messageIds, complete = true) {
   const stream = streamOf(session, userId);
   if (!stream) return null;
   stream.forumPosted = { threadId, messageIds, complete, at: nowSec() };
   save();
   return stream.forumPosted;
+}
+
+/** 게임 연결을 바꿔 녹화방 게시물을 옮길 때 게시 상태를 비우거나 되돌립니다. */
+export function setStreamForumPosted(session, userId, value) {
+  const stream = streamOf(session, userId);
+  if (!stream) return null;
+  if (!value) delete stream.forumPosted;
+  else stream.forumPosted = {
+    ...value,
+    messageIds: [...(value.messageIds ?? [])],
+  };
+  save();
+  return stream.forumPosted ?? null;
 }
 
 export function setOffset(session, userId, offsetSec) {
