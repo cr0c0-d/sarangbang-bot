@@ -875,13 +875,39 @@ function timelineEditTarget(interaction, customId) {
   return { parts, session, stream, userId };
 }
 
+/** 지금 누른 메시지가 본인에게만 보이는 요약/편집 화면인지 확인합니다. */
+function isPrivateInteractionMessage(interaction) {
+  return Boolean(interaction.message?.flags?.has?.(MessageFlags.Ephemeral));
+}
+
+/** 편집을 마치면 별도 확인 메시지를 쌓지 않고, 같은 비공개 화면을 최신 요약으로 되돌립니다. */
+function refreshedPrivateSummary(session, stream, notice = '', extraComponents = []) {
+  const pages = buildSummary(session, stream);
+  const last = pages[pages.length - 1];
+  return {
+    ...last,
+    content: notice ? `${notice}\n\n${last.content}` : last.content,
+    components: [...(last.components ?? []), ...extraComponents],
+    allowedMentions: { parse: [] },
+  };
+}
+
+function replyOrRefreshPrivateSummary(interaction, session, stream, notice = '', extraComponents = []) {
+  const payload = refreshedPrivateSummary(session, stream, notice, extraComponents);
+  return isPrivateInteractionMessage(interaction)
+    ? interaction.update(payload)
+    : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+}
+
 /** 요약판에서 방송별 타임라인 편집 목록을 나만 보기로 엽니다. */
 function openTimelineEditPicker(interaction, customId, turning = false) {
   const { parts, session, stream, userId } = timelineEditTarget(interaction, customId);
   if (!stream) return interaction.reply(eph('그 방송 기록을 찾지 못했습니다.'));
   if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
   const payload = buildTimelineEditPicker(session, stream, Number(parts[4]) || 0);
-  return turning ? interaction.update(payload) : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  return turning || isPrivateInteractionMessage(interaction)
+    ? interaction.update(payload)
+    : interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
 }
 
 function selectTimelineEdit(interaction, customId) {
@@ -913,8 +939,8 @@ async function toggleTimelineMark(interaction, client, customId, hidden) {
   if (!canEditTimeline(interaction, userId)) return interaction.reply(eph('방송자 본인 또는 서버 관리자만 타임라인을 수정할 수 있습니다.'));
   const changed = setTimelineMarkHidden(session, userId, parts[4], hidden);
   if (!changed) return interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
-  await interaction.update(buildTimelineEditPicker(
-    session, stream, Number(parts[5]) || 0, parts[4], hidden ? '🗑️ 이 방송의 타임라인에서 삭제했습니다.' : '↩️ 이 방송의 타임라인에 복원했습니다.'
+  await interaction.update(refreshedPrivateSummary(
+    session, stream, hidden ? '🗑️ 이 방송의 타임라인에서 삭제했습니다.' : '↩️ 이 방송의 타임라인에 복원했습니다.'
   ));
   const result = await updateSummary(client, session, stream, { refreshPreview: true }).catch(() => null);
   if (result && !['posted', 'updated'].includes(result.status)) {
@@ -995,19 +1021,14 @@ async function submitTimelineAdd(interaction, client) {
   if (!mark) return interaction.reply(eph('타임라인을 추가하지 못했습니다. 방송 기록을 다시 열어 시도해주세요.'));
 
   const notice = `➕ **${hhmmss(sec)}** 타임라인을 추가했습니다.`;
-  const payload = buildTimelineEditPicker(session, stream, 0, mark.id, notice);
-  await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  await replyOrRefreshPrivateSummary(interaction, session, stream, notice);
   let syncFailed = false;
   try {
     const result = await updateSummary(client, session, stream, { refreshPreview: true });
     if (result && !['posted', 'updated'].includes(result.status)) syncFailed = true;
   } catch { syncFailed = true; }
   if (syncFailed) {
-    await interaction.editReply({
-      content: `${payload.content}\n⚠️ 추가는 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.`,
-      components: payload.components,
-      allowedMentions: { parse: [] },
-    });
+    await interaction.followUp(eph('⚠️ 추가는 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.'));
   }
 }
 
@@ -1021,10 +1042,10 @@ async function submitTimelineTime(interaction, client) {
   if (!setTimelineMarkSecond(session, userId, parts[4], sec)) return interaction.reply(eph('그 마킹을 찾지 못했습니다.'));
 
   const message = `⏱️ 이 방송의 타임라인 시간을 **${hhmmss(sec)}**로 고쳤습니다.`;
-  await interaction.reply(eph(message));
+  await replyOrRefreshPrivateSummary(interaction, session, stream, message);
   const result = await updateSummary(client, session, stream, { refreshPreview: true }).catch(() => null);
   if (result && !['posted', 'updated'].includes(result.status)) {
-    await interaction.editReply(`${message}\n⚠️ 수정은 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.`);
+    await interaction.followUp(eph('⚠️ 수정은 저장했지만 녹화방 갱신에 실패했습니다. 권한을 확인한 뒤 다시 시도해주세요.'));
   }
 }
 
@@ -1221,26 +1242,24 @@ async function submitDesc(interaction, client) {
 
   const next = from + DESC_PER_PAGE;
   const more = next < rows.length;
-  const payload = {
-    content:
-      `✏️ ${changed}개를 고쳤습니다.` +
-      (more ? ` 아직 ${rows.length - next}개 남았습니다.` : ' 전부 채웠습니다.'),
-    flags: MessageFlags.Ephemeral,
-  };
+  const notice =
+    `✏️ ${changed}개를 고쳤습니다.` +
+    (more ? ` 아직 ${rows.length - next}개 남았습니다.` : ' 전부 채웠습니다.');
+  const extraComponents = [];
   if (more) {
-    payload.components = [
+    extraComponents.push(
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
           .setCustomId(`tm:desc:${sessionId}:${userId}:${next}`)
           .setLabel(`다음 ${Math.min(DESC_PER_PAGE, rows.length - next)}개`)
           .setEmoji('✏️')
           .setStyle(ButtonStyle.Primary)
-      ),
-    ];
+      )
+    );
   }
-  await interaction.reply(payload);
+  await replyOrRefreshPrivateSummary(interaction, session, stream, notice, extraComponents);
 
-  // 공유 마킹 설명은 다른 방송자의 타임라인에도 들어갑니다. 해당 포럼도 함께 갱신합니다. 개인 요약은 다시 열어 확인합니다.
+  // 공유 마킹 설명은 다른 방송자의 타임라인에도 들어갑니다. 해당 포럼도 함께 갱신합니다.
   let syncFailed = false;
   for (const target of session.streams) {
     if (target !== stream && !timelineFor(session, target).some(({ mark }) => changedMarkIds.has(mark.id))) continue;
@@ -1250,7 +1269,7 @@ async function submitDesc(interaction, client) {
     } catch { syncFailed = true; }
   }
   if (syncFailed) {
-    await interaction.editReply({ content: `${payload.content}\n⚠️ 일부 게시물 동기화에 실패했습니다. 설명은 저장됐습니다. 권한을 확인한 뒤 설명 채우기를 다시 제출해주세요.` });
+    await interaction.followUp(eph('⚠️ 일부 게시물 동기화에 실패했습니다. 설명은 저장됐습니다. 권한을 확인한 뒤 설명 채우기를 다시 제출해주세요.'));
   }
 }
 
@@ -1269,7 +1288,7 @@ async function sendOwnSummary(interaction, session) {
   }
 }
 
-/** 개인 요약은 다시 열 때 최신 내용으로 만들고, 공유 녹화방만 동기화합니다. */
+/** 공유 녹화방 게시물을 최신 내용으로 동기화합니다. */
 async function updateSummary(client, session, stream, options) {
   if (stream.forumPosted?.messageIds?.length) {
     return publishStreamRecord(client, session, stream, options);

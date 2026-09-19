@@ -3387,6 +3387,13 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('공개 요약 신규 전송 경로 제거', !si.includes('async function postSummary'));
   ok('개인 요약 ID를 영구 저장하지 않음', !si.includes('setSummaryMessages'));
   ok('개인 요약 재조회는 본인 방송만 선택', si.includes('streamOf(session, interaction.user.id)'));
+  ok('비공개 요약의 타임라인 수정은 같은 메시지를 편집 화면으로 전환',
+    si.includes('return turning || isPrivateInteractionMessage(interaction)') &&
+    si.includes('? interaction.update(payload)'));
+  ok('타임라인 추가·시간 수정·설명 저장 뒤 같은 비공개 요약을 갱신',
+    (si.match(/replyOrRefreshPrivateSummary\(interaction, session, stream/g) ?? []).length >= 3);
+  ok('타임라인 삭제·복원 뒤 같은 비공개 요약을 갱신',
+    si.includes('await interaction.update(refreshedPrivateSummary('));
   ok('요약판을 올린 뒤 제어판을 맨 아래로 다시 올림', si.includes('repostStreamPanel(client, interaction.guildId'));
   // 채널을 못 찾으면 **닫지 않는다.** 닫아버리면 [이어서 기록] 버튼도 못 그려서 되돌릴 길이 없다.
   {
