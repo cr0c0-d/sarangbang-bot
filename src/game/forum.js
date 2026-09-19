@@ -42,7 +42,7 @@ function recordTimelineRow(stream, mark, sec) {
     .replace(/([\\`*_[\]()~>|])/g, '\\$1');
   // Discord는 <URL>로 감싼 개별 링크의 자동 임베드를 만들지 않습니다.
   // 링크 대상에 꺾쇠를 넣어 시간 텍스트는 그대로 클릭 가능하게 유지합니다.
-  return `${link ? `[${time}](<${link}>)` : time} ${description}`;
+  return `${link ? `[${time}](<${link}>)` : time} ${description}${mark.forUserId == null ? ' [다 같이]' : ''}`;
 }
 
 /** 헤더와 클릭 가능한 타임라인까지 포함해 Discord 2,000자 안에서 나눕니다. */

@@ -3211,11 +3211,6 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   s.marks.splice(s.marks.indexOf(sharedFirst), 1);
   s.marks.splice(s.marks.indexOf(distinctShared), 1);
 
-  // 등록 안 한 사람이 누르면 갈 곳이 없다. 그때만 모두의 것으로 둔다.
-  const guest = store.addMark(s, 'u9', null);
-  ok('등록 안 한 사람이 찍으면 모두의 것', guest.forUserId === null);
-  store.removeLastMark(s, 'u9');
-
   // 취소는 **내가 찍은 것** 중 마지막. 남이 방금 찍은 것을 지우면 안 된다.
   const mineLast = store.addMark(s, 'u1');
   const othersLast = store.addMark(s, 'u2');
@@ -3237,7 +3232,9 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
 
   const si0 = fs.readFileSync('./src/stream/index.js', 'utf8');
   ok('마킹 버튼이 내 방송에만 찍음',
-    si0.includes('addMark(session, userId, mine ? userId : null)'));
+    si0.includes('if (!mine)') && si0.includes('addMark(session, userId, userId)'));
+  ok('미등록·종료 사용자의 마킹은 자동 공유하지 않음',
+    si0.includes('진행 중인 내 방송이 없습니다') && !si0.includes('mine ? userId : null'));
   ok('찍은 뒤 [다 같이] 버튼을 함께 줌', si0.includes('tm:share:${mark.id}'));
   ok('취소는 내가 찍은 것만', si0.includes('removeLastMark(session, interaction.user.id)'));
 
@@ -3295,6 +3292,12 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   ok('요약판에 설명이 들어감', joined.includes('차에 치임'));
   ok('개인 요약 이름 멘션 앞에 상징 이모지', joined.includes(`${localEmoji} <@u1>`));
   ok('설명 없는 마킹도 줄은 남김', joined.includes('(설명 없음)'));
+  const sharedForSummary = store.addMark(s, 'u2', null);
+  sharedForSummary.at = now - 60;
+  const sharedSummary = panel.buildSummary(s, u1).map((m) => m.content).join('\n');
+  ok('요약판에서 개인·공유 마킹 개수와 공유 항목 구분',
+    sharedSummary.includes('내 방송 2 · 다 같이 1') && sharedSummary.includes('[다 같이]'));
+  store.removeLastMark(s, 'u2');
   // 요약판이 tm:panel: 을 쓰면 **훑기가 요약판을 제어판으로 오인해 지운다.**
   ok('요약판 조작부에 tm:panel: 이 없음 (훑기가 지우면 안 됨)',
     idsOf(summary[summary.length - 1]).every((x) => !x.startsWith('tm:panel:')),

@@ -612,39 +612,43 @@ async function markNow(interaction, client) {
   if (!session) return interaction.reply(eph('기록 중인 방송이 없습니다.'));
 
   const userId = interaction.user.id;
-  // ★ **끝낸 방송에는 넣지 않습니다.** 끝낸 사람도 방에 남아 같이 볼 수 있는데,
-  //   그때 찍은 것이 이미 굳은 내 타임라인에 들어가면 녹화방 글과 어긋납니다.
-  //   그런 사람의 마킹은 아래에서 **모두의 타임라인**으로 갑니다.
+  // ★ **끝낸 방송과 미등록 사용자는 마킹하지 않습니다.**
+  //   예전에는 이 경우 자동으로 모두의 타임라인에 넣었습니다. 그러면 방송자는 한 번만
+  //   눌렀는데도 다른 사람이 누른 마킹이 자기 종료 요약에 섞여 중복처럼 보입니다.
+  //   공유는 등록 방송자가 찍은 뒤 `다 같이 하던 순간`을 명시적으로 눌렀을 때만 합니다.
   const mine = liveStreamOf(session, userId);
+  if (!mine) {
+    const registered = streamOf(session, userId);
+    return interaction.reply(eph(
+      registered
+        ? '내 방송 기록은 이미 종료됐습니다. **▶️ 이어서 기록**을 누른 뒤 마킹해주세요.'
+        : '진행 중인 내 방송이 없습니다. 먼저 `/방송 게임명:<게임>`으로 방송 기록을 시작해주세요.\n' +
+          '다른 사람의 방송에 함께 넣을 장면은 그 방송자가 찍고 **👥 다 같이 하던 순간**을 눌러야 합니다.'
+    ));
+  }
 
   // ★ **내 방송에만** 찍습니다. 동시에 방송을 켜도 각자 다른 게임을 할 수 있습니다.
-  //   단 등록을 안 한 사람이 누르면 갈 곳이 없으므로 그때만 모두의 것으로 둡니다.
-  const mark = addMark(session, userId, mine ? userId : null);
+  const mark = addMark(session, userId, userId);
   if (!mark) {
     return interaction.reply(eph(`마킹이 ${MARK_MAX}개를 넘었습니다. 방송을 종료하고 새로 시작해주세요.`));
   }
 
   const count = session.marks.filter((m) => m.byUserId === userId).length;
-  const payload = mine
-    ? {
-        content:
-          `✂️ 찍었습니다 · ${hhmmss(Math.max(0, markSecondsFor(mine, mark)))} · **내 방송** (${count}번째)\n` +
-          '다 같이 하던 순간이면 아래 버튼으로 모두의 타임라인에 넣을 수 있습니다.',
-        components: [
-          new ActionRowBuilder().addComponents(
-            new ButtonBuilder()
-              .setCustomId(`tm:share:${mark.id}`)
-              .setLabel('다 같이 하던 순간')
-              .setEmoji('👥')
-              .setStyle(ButtonStyle.Secondary)
-          ),
-        ],
-        flags: MessageFlags.Ephemeral,
-      }
-    : eph(
-        `✂️ 찍었습니다 (${count}번째) · **모두의 타임라인**에 넣었습니다.\n` +
-          '(내 방송이 없거나 이미 끝냈기 때문입니다. `🎬 지난 게임으로 등록`·`/방송`으로 등록하거나 `▶️ 이어서 기록` 을 누르면 그다음부터는 내 방송에만 찍힙니다)'
-      );
+  const payload = {
+    content:
+      `✂️ 찍었습니다 · ${hhmmss(Math.max(0, markSecondsFor(mine, mark)))} · **내 방송** (${count}번째)\n` +
+      '다 같이 하던 순간이면 아래 버튼으로 모두의 타임라인에 넣을 수 있습니다.',
+    components: [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`tm:share:${mark.id}`)
+          .setLabel('다 같이 하던 순간')
+          .setEmoji('👥')
+          .setStyle(ButtonStyle.Secondary)
+      ),
+    ],
+    flags: MessageFlags.Ephemeral,
+  };
 
   // ⚠️ **답을 먼저 합니다.** 제어판 수정이 앞에 오면 전송 한도에 걸릴 때
   //    가장 많이 눌리는 버튼에서 "Unknown interaction" 이 납니다. (기획 3.10)

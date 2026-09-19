@@ -474,10 +474,13 @@ export function buildClipModal(session, stream, mark) {
 export function buildSummary(session, stream, clipPage = 0, expanded = false) {
   const rows = timelineFor(session, stream);
   const editableRows = editableTimelineFor(session, stream);
+  const sharedCount = rows.filter(({ mark }) => mark.forUserId == null).length;
+  const ownCount = rows.length - sharedCount;
   const header =
     `📝 ${symbolMention(session.guildId, stream.userId)} 의 타임라인` +
     (stream.game || session.game ? ` · ${stream.game || session.game}` : '') +
-    ` · 마킹 ${rows.length}개\n` +
+    ` · 마킹 ${rows.length}개` +
+    (sharedCount ? ` (내 방송 ${ownCount} · 다 같이 ${sharedCount})` : '') + '\n' +
     (stream.url ? `<${stream.url}>` : '⚠️ 다시보기 링크 연결 대기');
 
   if (rows.length === 0) {
@@ -490,7 +493,9 @@ export function buildSummary(session, stream, clipPage = 0, expanded = false) {
       ...(buttons.length ? { components: [new ActionRowBuilder().addComponents(...buttons)] } : {}) }];
   }
 
-  const lines = rows.map(({ mark, sec }) => `${hhmmss(sec)} ${mark.text || '(설명 없음)'}`);
+  const lines = rows.map(({ mark, sec }) =>
+    `${hhmmss(sec)} ${mark.text || '(설명 없음)'}${mark.forUserId == null ? ' [다 같이]' : ''}`
+  );
 
   // 코드블록으로 감싸야 유튜브 설명란에 그대로 복사됩니다.
   // 길면 여러 장으로 나눕니다 — 조각마다 코드블록을 따로 닫아야 합니다.
@@ -563,7 +568,7 @@ export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkI
     .setPlaceholder(pages > 1 ? `수정할 마킹 고르기 (${current + 1}/${pages}쪽)` : '수정할 마킹 고르기')
     .addOptions(slice.map(({ mark, sec, hidden }) => ({
       label: cut(`${hidden ? '삭제됨 · ' : ''}${hhmmss(sec)}`, 100),
-      description: mark.text ? cut(mark.text, 90) : '설명 없음',
+      description: cut(`${mark.forUserId == null ? '다 같이 · ' : ''}${mark.text || '설명 없음'}`, 90),
       value: mark.id,
     })));
   const components = [new ActionRowBuilder().addComponents(select)];
