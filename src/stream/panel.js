@@ -605,8 +605,12 @@ export function buildTimelineEditPicker(session, stream, page = 0, selectedMarkI
 }
 
 export function buildReplayLinkModal(session, stream) {
+  // Label 제목은 45자가 상한입니다. 게임명은 직접 입력 시 100자까지 들어올 수 있어서
+  // 그대로 붙이면 Discord가 `Received one or more errors`만 띄우고 창을 거부합니다.
+  const suffix = ' 다시보기 주소';
+  const game = cut(String(stream.game || session.game || '방송'), 45 - suffix.length);
   return new ModalBuilder().setCustomId(`tm:replaym:${session.id}:${stream.userId}`).setTitle('다시보기 연결')
-    .addLabelComponents(new LabelBuilder().setLabel(`${stream.game || session.game || '방송'} 다시보기 주소`)
+    .addLabelComponents(new LabelBuilder().setLabel(`${game}${suffix}`)
       .setDescription('유튜브 처리가 끝나지 않았어도 주소를 먼저 연결할 수 있습니다.')
       .setTextInputComponent(new TextInputBuilder().setCustomId('url').setStyle(TextInputStyle.Short)
         .setPlaceholder('https://www.youtube.com/watch?v=…').setRequired(true)));

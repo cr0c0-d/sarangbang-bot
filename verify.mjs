@@ -3687,6 +3687,13 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   replayInteraction.memberPermissions.has = () => true;
   await streamModule.handleStreamComponent(replayInteraction, pendingClient);
   ok('서버 관리자는 다른 방송자의 연결 모달 사용 가능', replayModal.custom_id === `tm:replaym:${pendingSession.id}:pending-user`);
+  const streamPanel = await import('./src/stream/panel.js');
+  const longReplayModal = streamPanel.buildReplayLinkModal(
+    { id: pendingSession.id, game: '가'.repeat(100) },
+    { userId: 'pending-user', game: '가'.repeat(100) }
+  ).toJSON();
+  ok('게임명이 100자여도 다시보기 연결 모달의 45자 제목 제한을 지킴',
+    longReplayModal.components[0].label.length <= 45 && longReplayModal.components[0].label.endsWith('다시보기 주소'));
   let pickerReply, pickerUpdate, clipModal;
   const pickerInteraction = {
     guildId: session.guildId, customId: `tm:clipsopen:${session.id}:broadcaster`,

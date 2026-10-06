@@ -2795,6 +2795,7 @@ discord.js 빌더는 **`toJSON()` 안에서** 값을 검사한다. 잘못된 값
 |---|---|
 | `LabelBuilder.setDescription(null)` | **거부** |
 | `LabelBuilder.setDescription('')` | **거부** |
+| `LabelBuilder.setLabel(46자 이상)` | **거부** |
 | `EmbedBuilder.setDescription('')` | **거부** |
 | `TextInputBuilder.setValue('')` | 통과 |
 | `TextInputBuilder.setPlaceholder('')` | 통과 |
