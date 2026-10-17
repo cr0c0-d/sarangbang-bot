@@ -828,6 +828,13 @@ discord.js 를 올릴 때 확인할 것.
 
 ### 3.4 TTS 엔진: `msedge-tts`
 
+`msedge-tts`는 **2.1.0 이상**을 써야 한다. 2026-10-10 전후 Microsoft가 예전
+`speech.platform.bing.com` 합성 웹소켓을 막아 2.0.7에서는
+`Edge TTS WebSocket error: Unexpected server response: 403`이 발생했다.
+2.1.0은 합성 주소를 `api.msedgeservices.com`으로 바꾼 버전이다. `package.json`만 바꾸고
+`package-lock.json`을 갱신하지 않으면 서버의 `npm install`이 예전 버전을 다시 설치하므로
+두 파일을 항상 함께 갱신한다. `verify.mjs`가 이 잠금 버전을 검사한다.
+
 #### ⚠️ 낱자(자음·모음)만 있는 글은 **소리가 안 난다** — 실측
 
 Edge TTS 는 `ㅋㅋ` `ㅎㅎ` `ㅇㅇ` 처럼 낱자만 이어진 글에 **0바이트를 돌려준다.**
@@ -2762,6 +2769,7 @@ DAVE 복호화 실패를 확정할 수 없습니다. 진단은 이제 기존 스
 | `Sign in to confirm you're not a bot` | 데이터센터 IP 차단 (AWS/GCP/Oracle에서 흔함) | PO Token 공급자를 켜고, 계정 필요 영상용 쿠키는 예비로 유지 |
 | `youtubepot`·`bgutil`·`127.0.0.1:4416` 오류 | PO Token 공급자 중단 또는 플러그인 불일치 | `systemctl status sarangbang-pot-provider@$USER`; 쿠키가 있으면 자동 예비 시도 |
 | TTS·링크감지가 에러 없이 무반응 | `MessageContent` 인텐트 꺼짐 | 개발자 포털에서 켜고 재시작 |
+| `Edge TTS WebSocket error: ... 403` | Microsoft가 예전 합성 주소를 차단함 / `msedge-tts` 2.0.7 | 최신 코드를 받고 `npm install`; 2.1.0 이상인지 확인 |
 | 슬래시 명령어가 안 보임 | `npm run deploy` 안 함 / 봇이 `applications.commands` 없이 초대됨 | 재초대 후 deploy |
 | 명령어 이름이 옛것으로 보임 | 개명 후 deploy 안 함 | `npm run deploy` |
 | `.env` 를 고쳤는데 반영 안 됨 | `/관리자 채널설정` 값이 우선함 | 같은 화면에서 출처를 보고 해제 |
