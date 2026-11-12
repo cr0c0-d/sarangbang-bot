@@ -418,12 +418,13 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
 // (이 검사가 없어서 실재하지 않는 목소리 6개가 들어간 적이 있습니다)
 {
   // 2026-10 Microsoft가 예전 speech.platform.bing.com 합성 웹소켓을 403으로 막았습니다.
-  // msedge-tts 2.1.0부터 새 api.msedgeservices.com 주소를 사용합니다. package.json만 올리고
-  // lock을 빼먹으면 서버의 npm install이 다시 2.0.7을 설치하므로 둘 다 고정해 검사합니다.
+  // 2.1.1은 v2 인증과 서버 시간 보정 재시도, 연결·합성 제한 시간을 포함합니다.
+  // package.json만 올리고 lock을 빼먹으면 서버의 npm install이 예전 버전을 다시 설치하므로
+  // 둘 다 고정해 검사합니다.
   const packageJson = JSON.parse(fs.readFileSync('./package.json', 'utf8'));
   const packageLock = JSON.parse(fs.readFileSync('./package-lock.json', 'utf8'));
-  ok('Edge TTS가 새 합성 주소를 쓰는 버전', packageJson.dependencies['msedge-tts'] === '^2.1.0');
-  ok('Edge TTS 잠금 버전도 2.1.0', packageLock.packages['node_modules/msedge-tts']?.version === '2.1.0');
+  ok('Edge TTS가 v2 인증·시간 보정을 쓰는 버전', packageJson.dependencies['msedge-tts'] === '^2.1.1');
+  ok('Edge TTS 잠금 버전도 2.1.1', packageLock.packages['node_modules/msedge-tts']?.version === '2.1.1');
 
   const { listVoices } = await import('./src/tts/synth.js');
   const { VOICES } = await import('./src/tts/voices.js');
