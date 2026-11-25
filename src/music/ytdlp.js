@@ -837,10 +837,11 @@ export async function liveInfo(url) {
       '--no-warnings',
       '--ignore-config',
       '--no-playlist',
+      '--ignore-no-formats-error', // 종료된 라이브(Post-Live)에서 formats 없어도 메타데이터 추출
       ...extraArgs(),
       url,
     ],
-    { timeouts: [10_000, 20_000] }
+    { timeouts: [15_000, 30_000] } // 종료 직후 영상은 조금 더 걸릴 수 있음
   );
 
   const [id, ts, status, ...rest] = String(out).trim().split('\n')[0].split('\t');
