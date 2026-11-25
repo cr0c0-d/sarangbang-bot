@@ -3506,7 +3506,10 @@ ok('WEB_BIND 적용 (127.0.0.1 바인딩)', server.address().address === '127.0.
   const yt = fs.readFileSync('./src/music/ytdlp.js', 'utf8');
   ok('시작 시각은 release_timestamp 로 읽음', yt.includes('%(release_timestamp)s'));
   ok('게시 시각(timestamp)을 시작 시각으로 쓰지 않음', !/'%\(timestamp\)s'/.test(yt));
-  ok('메타데이터 한 번 읽는 데는 제한시간을 따로 줌', /liveInfo[\s\S]{0,900}timeouts: \[10_000, 20_000\]/.test(yt));
+  const liveInfoSource = yt.split('export async function liveInfo')[1]?.split('export function downloadSection')[0] ?? '';
+  ok('종료 직후 포맷 없는 라이브도 메타데이터 조회', liveInfoSource.includes("'--ignore-no-formats-error'"));
+  ok('메타데이터 조회는 운영 서버 속도에 맞춘 제한시간을 따로 줌',
+    /timeouts: \[20_000, 30_000\]/.test(liveInfoSource));
 
   const env = fs.readFileSync('./.env.example', 'utf8');
   ok('.env.example 에 STREAM_CHANNEL_ID', env.includes('STREAM_CHANNEL_ID='));

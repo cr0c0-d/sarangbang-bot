@@ -822,6 +822,12 @@ export async function warmUpCache(url = 'https://www.youtube.com/watch?v=dQw4w9W
  *    자기를 조정하는데, 망고 프로세스에는 그 실적이 없어서 기본 20초/40초가 됩니다.
  *    메타데이터 한 번 읽는 일에 1분을 기다리면 사람은 고장으로 봅니다.
  *
+ * ⚠️ 종료 직후 라이브는 `post_live` 메타데이터가 있어도 아직 재생 포맷이 없습니다.
+ *    이때 yt-dlp 는 기본적으로 `This live event has ended.` 로 실패합니다.
+ *    우리는 영상을 내려받는 것이 아니라 ID·시작 시각·방송 상태만 읽으므로
+ *    `--ignore-no-formats-error` 로 포맷 없는 정보도 받아야 합니다. 주소만 보고 라이브라고
+ *    간주하면 일반 영상까지 연결되므로, 부르는 쪽의 `live_status` 검증은 그대로 둡니다.
+ *
  * `videoId` 도 함께 돌려줍니다. **`@계정/live` 같은 고정 주소를 지금 방송으로 풀기 위해서**입니다
  * (실측: `youtube.com/@ABCNews/live` → `id=iipR5yUp36o` · `status=is_live`).
  * 그 덕에 사람마다 주소를 한 번만 저장해두면 매번 링크를 붙이지 않아도 됩니다.
@@ -837,10 +843,13 @@ export async function liveInfo(url) {
       '--no-warnings',
       '--ignore-config',
       '--no-playlist',
+      '--ignore-no-formats-error',
       ...extraArgs(),
       url,
     ],
-    { timeouts: [10_000, 20_000] }
+    // 운영 서버 실측에서 10초 첫 시도가 잘리고 다음 시도는 약 15초에 응답했습니다.
+    // 첫 시도부터 20초를 줘 불필요한 프로세스 재실행을 피하고, 최악에도 51초 안에 끝냅니다.
+    { timeouts: [20_000, 30_000] }
   );
 
   const [id, ts, status, ...rest] = String(out).trim().split('\n')[0].split('\t');

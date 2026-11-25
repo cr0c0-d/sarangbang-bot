@@ -1726,6 +1726,14 @@ Discord 자동완성의 25개 상한 때문에 빈 검색어로 전부 표시할
 release_ts=1645318623 ts=1645314636 is_live=True status=is_live dur=NA
 ```
 
+방송 종료 직후에는 YouTube가 `post_live` 메타데이터는 주면서 재생 포맷은 아직 만들지 않은
+구간이 있습니다. yt-dlp 기본 동작은 이 상태를 `This live event has ended.` 오류로 끝내지만,
+`liveInfo()`는 다운로드가 아니라 ID·`release_timestamp`·`live_status`만 필요합니다. 따라서
+이 호출에만 `--ignore-no-formats-error`를 사용합니다. 이후에도 `live_status`가
+`is_live`·`post_live`·`was_live`인지 확인하므로 일반 YouTube 영상을 다시보기로 잘못 연결하지 않습니다.
+운영 서버에서 10초 제한이 먼저 잘리고 두 번째 시도가 약 15초 걸린 기록이 있어 조회 제한은
+20초/30초로 둡니다.
+
 ⚠️ **`timestamp` 를 쓰면 안 된다.** 그건 게시 시각이고, 위 실측에서 66분 차이가 났다.
 
 계산은 `store.js` 의 한 줄이다. **부호를 헷갈리기 쉬우니 정의부터 읽을 것.**
