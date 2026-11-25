@@ -701,13 +701,13 @@ async function submitReplayLink(interaction, client) {
   try {
     info = await liveInfo(url);
   } catch (err) {
-    // 종료된 라이브(특히 Post-Live Manifestless)에서 yt-dlp가 이 에러를 던지는 경우가 있음.
-    // formats가 아직 없어도 다시보기로 유효하므로, videoId를 알고 있으면 연결 진행.
-    if (/this live event has ended/i.test(err.message) || /this live event has ended/i.test(err.stderr || '')) {
-      console.warn(`[stream] 다시보기 연결: "This live event has ended." 무시하고 진행 (${videoId})`);
+    // 종료 직후 VOD에서 흔히 나오는 에러들 (Post-Live Manifestless 등)
+    if (/this live event has ended|no video formats found|requested format is not available/i.test(err.message) ||
+        /this live event has ended|no video formats found/i.test(err.stderr || '')) {
+      console.warn(`[stream] 다시보기 연결: 종료 직후 VOD 에러 무시 (${videoId}) — ${String(err.message).split('\n')[0]}`);
       info = {
         videoId,
-        startedAt: null, // 타임스탬프는 나중에 다시 시도하거나 기존 값 유지
+        startedAt: null,
         liveStatus: 'post_live',
         title: '',
       };
@@ -715,8 +715,10 @@ async function submitReplayLink(interaction, client) {
       throw userError(`유튜브 영상을 확인하지 못했습니다. 공개 범위와 주소를 확인해주세요.\n${err.message}`);
     }
   }
+  // liveStatus가 예상값이 아니어도 videoId가 있으면 다시보기로 허용
   if (!['is_live', 'was_live', 'post_live'].includes(info.liveStatus)) {
-    throw userError('라이브 다시보기 영상이 아닙니다. 해당 방송의 유튜브 다시보기 주소를 넣어주세요.');
+    console.warn(`[stream] 다시보기 liveStatus=${info.liveStatus || '(empty)'} (${videoId}) — 그래도 진행`);
+    info.liveStatus = info.liveStatus || 'post_live';
   }
   linkStreamReplay(session, userId, { url, videoId, startedAt: info.startedAt });
   const result = await publishStreamRecord(client, session, stream, { refreshPreview: true });
