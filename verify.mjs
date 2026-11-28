@@ -427,7 +427,7 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('Edge TTS 잠금 버전도 2.1.1', packageLock.packages['node_modules/msedge-tts']?.version === '2.1.1');
 
   const { listVoices } = await import('./src/tts/synth.js');
-  const { looksLikeMp3, collectMp3 } = await import('./src/tts/synth.js');
+  const { looksLikeMp3, collectMp3, voiceAttempts } = await import('./src/tts/synth.js');
   const { Readable } = await import('node:stream');
   ok('TTS가 MPEG 프레임 MP3를 판별', looksLikeMp3(Buffer.from([0xff, 0xf3, 0xa4, 0xc4])));
   ok('TTS가 ID3 MP3를 판별', looksLikeMp3(Buffer.from('ID3\u0004')));
@@ -438,8 +438,13 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   let invalidTtsError;
   await collectMp3(Readable.from([Buffer.from('not mp3')])).catch((e) => { invalidTtsError = e; });
   ok('잘못된 TTS 응답을 ffmpeg 전에 차단', invalidTtsError?.message.includes('MP3가 아닌'));
+  ok('선택 목소리 실패 뒤 다국어 기본 목소리로 대체',
+    voiceAttempts('ko-KR-SunHiNeural').join(',') ===
+      'ko-KR-SunHiNeural,ko-KR-SunHiNeural,ko-KR-HyunsuMultilingualNeural');
+  ok('기본 목소리는 새 연결로 한 번만 재시도',
+    voiceAttempts('ko-KR-HyunsuMultilingualNeural').length === 2);
   const synthSource = fs.readFileSync('./src/tts/synth.js', 'utf8');
-  ok('TTS 실패는 새 연결로 한 번 재시도', synthSource.includes('attempt <= 2') && synthSource.includes('discardEngine()'));
+  ok('TTS 실패는 연결을 버리고 재시도', synthSource.includes('discardEngine()'));
   ok('서버가 달라도 공유 TTS 엔진 동시 변경 방지', synthSource.includes('serializeSynthesis'));
   const { VOICES } = await import('./src/tts/voices.js');
   const real = new Set((await listVoices('')).map((v) => v.shortName));

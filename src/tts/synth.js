@@ -15,6 +15,7 @@
 //   사용자가 실제로 읽어주기를 쓴 뒤 30분간 조용하면 예열을 멈춥니다.
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
 import { Readable } from 'node:stream';
+import { DEFAULT_VOICE } from './voices.js';
 
 const FORMAT = OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3;
 
@@ -68,23 +69,36 @@ export async function collectMp3(stream) {
   throw new Error(`Edge TTS가 MP3가 아닌 데이터를 반환했습니다 (${audio.length}바이트).`);
 }
 
-/** 실패한 연결을 버리고 한 번 새 연결로 다시 합성합니다. */
+export function voiceAttempts(voice) {
+  // 선택 목소리 자체가 특정 언어를 못 읽는 경우가 있어, 새 연결 재시도 뒤에는
+  // 모든 언어를 읽는 기본 다국어 목소리로 한 번 더 시도합니다.
+  return voice === DEFAULT_VOICE
+    ? [voice, voice]
+    : [voice, voice, DEFAULT_VOICE];
+}
+
+/** 실패한 연결을 버리고 새 연결, 필요하면 기본 목소리로 다시 합성합니다. */
 async function synthesizeBuffer(text, voice, opts) {
   let lastError;
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  const attempts = voiceAttempts(voice);
+  for (let attempt = 0; attempt < attempts.length; attempt++) {
+    const attemptVoice = attempts[attempt];
     try {
-      if (!engine || engineVoice !== voice) {
+      if (!engine || engineVoice !== attemptVoice) {
         discardEngine();
-        engine = await createEngine(voice);
-        engineVoice = voice;
+        engine = await createEngine(attemptVoice);
+        engineVoice = attemptVoice;
       }
       return await collectMp3(engine.toStream(text, opts).audioStream);
     } catch (err) {
       lastError = err;
       discardEngine();
+      if (attempt === 1 && attempts.length === 3) {
+        console.warn(`[tts] ${voice} 합성 실패 → 기본 목소리로 대체: ${err.message}`);
+      }
     }
   }
-  throw new Error(`Edge TTS 음성 생성에 두 번 실패했습니다: ${lastError?.message ?? lastError}`, {
+  throw new Error(`Edge TTS 음성 생성에 ${attempts.length}번 실패했습니다: ${lastError?.message ?? lastError}`, {
     cause: lastError,
   });
 }
