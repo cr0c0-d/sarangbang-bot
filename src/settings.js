@@ -11,6 +11,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { config } from './config.js';
+import { DEFAULT_VOICE, isVoiceAvailable } from './tts/voices.js';
 
 const FILE = path.join(config.dataDir, 'settings.json');
 
@@ -216,7 +217,11 @@ export function clearUserVoice(guildId, userId) {
 
 /** 이 사람의 글을 읽을 때 쓸 목소리. */
 export function voiceFor(guildId, userId) {
-  return userVoice(guildId, userId) ?? config.tts.voice;
+  const personal = userVoice(guildId, userId);
+  if (isVoiceAvailable(personal)) return personal;
+  // Microsoft가 목소리를 목록에서 내리면 예전 개인 설정은 settings.json에 남아 있습니다.
+  // 없는 목소리를 계속 합성해 빈 음성이 반복되지 않도록, 서버 기본값 또는 안전한 기본값으로 갑니다.
+  return isVoiceAvailable(config.tts.voice) ? config.tts.voice : DEFAULT_VOICE;
 }
 
 // ── 읽어주기 속도 (사람마다 따로) ─────────────────────────────

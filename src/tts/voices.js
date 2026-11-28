@@ -2,8 +2,9 @@
 //
 // Edge TTS 가 "한국어(ko-KR)" 로 분류해 주는 목소리는 3개뿐입니다.
 // 하지만 **다국어(Multilingual) 목소리는 로케일과 무관하게 한국어를 읽습니다.**
-// 2026-08-31 에 한국어 문장으로 12종을 전부 실측했고 모두 정상 발화했습니다.
-// 그래서 3종 → 15종으로 넓혔습니다.
+// 2026-08-31 에 한국어 문장으로 다국어 목소리를 실측해 목록을 넓혔습니다.
+// Microsoft가 2026-11에 세라피나·플로리안을 목록에서 내렸으므로, 선택지는 고정된
+// 카탈로그가 아닙니다. verify가 현재 Edge 목록과 계속 대조합니다.
 //
 // ⚠️ 여기에 이름을 추가하면 반드시 `npm run verify` 를 돌리세요.
 //    Azure 카탈로그에는 있어도 Edge 무료 엔드포인트에는 없는 이름이 많고,
@@ -21,13 +22,17 @@ export const VOICES = [
   { value: 'en-AU-WilliamMultilingualNeural', label: '윌리엄 · 남성', note: '다국어' },
   { value: 'fr-FR-VivienneMultilingualNeural', label: '비비안 · 여성', note: '다국어' },
   { value: 'fr-FR-RemyMultilingualNeural', label: '레미 · 남성', note: '다국어' },
-  { value: 'de-DE-SeraphinaMultilingualNeural', label: '세라피나 · 여성', note: '다국어' },
-  { value: 'de-DE-FlorianMultilingualNeural', label: '플로리안 · 남성', note: '다국어' },
   { value: 'it-IT-GiuseppeMultilingualNeural', label: '주세페 · 남성', note: '다국어' },
   { value: 'pt-BR-ThalitaMultilingualNeural', label: '탈리타 · 여성', note: '다국어' },
 ];
 
-/** 슬래시 명령어 선택지 형태로. (디스코드 제한 25개 — 지금 14개라 여유 있음) */
+export const DEFAULT_VOICE = 'ko-KR-HyunsuMultilingualNeural';
+
+export function isVoiceAvailable(value) {
+  return VOICES.some((voice) => voice.value === value);
+}
+
+/** 슬래시 명령어 선택지 형태로. (디스코드 제한 25개 — 지금 12개라 여유 있음) */
 export const VOICE_CHOICES = VOICES.map((v) => ({
   name: `${v.label} (${v.note})`,
   value: v.value,

@@ -14,6 +14,7 @@
 //   그래서 아주 짧은 문장을 주기적으로 합성해 **연결을 따뜻하게 유지**합니다.
 //   사용자가 실제로 읽어주기를 쓴 뒤 30분간 조용하면 예열을 멈춥니다.
 import { MsEdgeTTS, OUTPUT_FORMAT } from 'msedge-tts';
+import { Readable } from 'node:stream';
 
 const FORMAT = OUTPUT_FORMAT.AUDIO_24KHZ_96KBITRATE_MONO_MP3;
 
@@ -28,6 +29,7 @@ let engine = null;
 let engineVoice = null;
 let lastUsed = 0;
 let keepaliveTimer = null;
+let synthesisChain = Promise.resolve();
 
 async function createEngine(voice) {
   const tts = new MsEdgeTTS();
@@ -35,13 +37,55 @@ async function createEngine(voice) {
   return tts;
 }
 
-/** 스트림을 끝까지 흘려보내 버립니다. (예열용 — 소리는 쓰지 않음) */
-function drain(stream) {
-  return new Promise((resolve) => {
-    stream.on('data', () => {});
-    stream.once('end', resolve);
-    stream.once('error', resolve);
-    setTimeout(resolve, 10_000);
+function discardEngine() {
+  try { engine?.close?.(); } catch {}
+  engine = null;
+  engineVoice = null;
+}
+
+/** 길드가 달라도 하나의 공유 엔진을 동시에 바꾸지 않도록 합성을 직렬화합니다. */
+function serializeSynthesis(fn) {
+  const next = synthesisChain.then(fn, fn);
+  synthesisChain = next.catch(() => {});
+  return next;
+}
+
+/** Edge TTS가 돌려준 값이 실제 MP3 헤더로 시작하는지 확인합니다. */
+export function looksLikeMp3(buffer) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 4) return false;
+  // ID3 태그 또는 MPEG 오디오 프레임 동기 비트(11개 1비트).
+  return buffer.subarray(0, 3).toString('ascii') === 'ID3' ||
+    (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0);
+}
+
+/** 스트림 오류와 0바이트·오류문자 응답을 ffmpeg 전에 잡습니다. */
+export async function collectMp3(stream) {
+  const chunks = [];
+  for await (const chunk of stream) chunks.push(Buffer.from(chunk));
+  const audio = Buffer.concat(chunks);
+  if (looksLikeMp3(audio)) return audio;
+  if (audio.length === 0) throw new Error('Edge TTS가 빈 음성을 반환했습니다.');
+  throw new Error(`Edge TTS가 MP3가 아닌 데이터를 반환했습니다 (${audio.length}바이트).`);
+}
+
+/** 실패한 연결을 버리고 한 번 새 연결로 다시 합성합니다. */
+async function synthesizeBuffer(text, voice, opts) {
+  let lastError;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      if (!engine || engineVoice !== voice) {
+        discardEngine();
+        engine = await createEngine(voice);
+        engineVoice = voice;
+      }
+      return await collectMp3(engine.toStream(text, opts).audioStream);
+    } catch (err) {
+      lastError = err;
+      discardEngine();
+    }
+  }
+  throw new Error(`Edge TTS 음성 생성에 두 번 실패했습니다: ${lastError?.message ?? lastError}`, {
+    cause: lastError,
   });
 }
 
@@ -51,16 +95,11 @@ function drain(stream) {
  */
 export async function prewarm(voice) {
   try {
-    if (!engine || engineVoice !== voice) {
-      engine = await createEngine(voice);
-      engineVoice = voice;
-    }
-    await drain(engine.toStream(WARM_TEXT).audioStream);
+    await serializeSynthesis(() => synthesizeBuffer(WARM_TEXT, voice));
     startKeepalive();
     return true;
-  } catch (err) {
-    engine = null;
-    engineVoice = null;
+  } catch {
+    discardEngine();
     return false;
   }
 }
@@ -71,19 +110,18 @@ function startKeepalive() {
     // 오래 안 쓰면 예열을 그만둡니다. 다음에 쓸 때 다시 시작됩니다.
     if (lastUsed && Date.now() - lastUsed > IDLE_STOP_MS) {
       stopKeepalive();
-      engine = null;
-      engineVoice = null;
+      discardEngine();
       return;
     }
     // 방금 썼으면 이미 따뜻하므로 건너뜁니다.
     if (Date.now() - lastUsed < KEEPALIVE_MS) return;
     if (!engine) return;
+    const warmVoice = engineVoice;
     try {
-      await drain(engine.toStream(WARM_TEXT).audioStream);
+      await serializeSynthesis(() => synthesizeBuffer(WARM_TEXT, warmVoice));
     } catch {
       // 연결이 끊겼습니다. 다음 요청 때 새로 만듭니다.
-      engine = null;
-      engineVoice = null;
+      discardEngine();
     }
   }, KEEPALIVE_MS);
   // 이 타이머 때문에 프로세스가 종료되지 못하는 일은 없어야 합니다.
@@ -137,22 +175,11 @@ export async function synthesize(text, voice, speedPercent = 100) {
   lastUsed = Date.now();
   startKeepalive();
 
-  if (!engine || engineVoice !== voice) {
-    engine = await createEngine(voice);
-    engineVoice = voice;
-  }
-
   // ⚠️ 속도는 **호출할 때마다** 넘깁니다. 연결(engine)에 묶이는 값이 아니라서
   //    사람마다 다른 속도를 써도 연결을 다시 맺지 않습니다 (예열이 그대로 살아 있음).
   const opts = prosodyOptions(text, speedPercent);
-  try {
-    return engine.toStream(text, opts).audioStream;
-  } catch (err) {
-    // 웹소켓이 끊겨 있으면 한 번 새로 만들어서 재시도합니다.
-    engine = await createEngine(voice);
-    engineVoice = voice;
-    return engine.toStream(text, opts).audioStream;
-  }
+  const audio = await serializeSynthesis(() => synthesizeBuffer(text, voice, opts));
+  return Readable.from(audio);
 }
 
 /** 사용 가능한 목소리 목록 (설정할 때 참고용) */

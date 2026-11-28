@@ -427,6 +427,20 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   ok('Edge TTS 잠금 버전도 2.1.1', packageLock.packages['node_modules/msedge-tts']?.version === '2.1.1');
 
   const { listVoices } = await import('./src/tts/synth.js');
+  const { looksLikeMp3, collectMp3 } = await import('./src/tts/synth.js');
+  const { Readable } = await import('node:stream');
+  ok('TTS가 MPEG 프레임 MP3를 판별', looksLikeMp3(Buffer.from([0xff, 0xf3, 0xa4, 0xc4])));
+  ok('TTS가 ID3 MP3를 판별', looksLikeMp3(Buffer.from('ID3\u0004')));
+  ok('TTS가 오류문자 응답을 MP3로 오인하지 않음', !looksLikeMp3(Buffer.from('Forbidden')));
+  let emptyTtsError;
+  await collectMp3(Readable.from([])).catch((e) => { emptyTtsError = e; });
+  ok('빈 TTS 응답을 ffmpeg 전에 차단', emptyTtsError?.message.includes('빈 음성'));
+  let invalidTtsError;
+  await collectMp3(Readable.from([Buffer.from('not mp3')])).catch((e) => { invalidTtsError = e; });
+  ok('잘못된 TTS 응답을 ffmpeg 전에 차단', invalidTtsError?.message.includes('MP3가 아닌'));
+  const synthSource = fs.readFileSync('./src/tts/synth.js', 'utf8');
+  ok('TTS 실패는 새 연결로 한 번 재시도', synthSource.includes('attempt <= 2') && synthSource.includes('discardEngine()'));
+  ok('서버가 달라도 공유 TTS 엔진 동시 변경 방지', synthSource.includes('serializeSynthesis'));
   const { VOICES } = await import('./src/tts/voices.js');
   const real = new Set((await listVoices('')).map((v) => v.shortName));
   let missing = VOICES.filter((v) => !real.has(v.value));
@@ -445,6 +459,8 @@ ok('링크는 "링크를 보냈어요" 로', cleanText({ content: 'https://x.com
   st.setUserVoice(G, U, 'en-US-AvaMultilingualNeural');
   ok('내 목소리가 기본값을 덮음', st.voiceFor(G, U) === 'en-US-AvaMultilingualNeural');
   ok('다른 사람은 기본값 그대로', st.voiceFor(G, U2) === config.tts.voice);
+  st.setUserVoice(G, U, 'de-DE-SeraphinaMultilingualNeural');
+  ok('목록에서 사라진 예전 개인 목소리는 기본값으로 대체', st.voiceFor(G, U) === config.tts.voice);
   ok('내 목소리 해제하면 기본값으로', st.clearUserVoice(G, U) && st.voiceFor(G, U) === config.tts.voice);
 
   // ★ 읽는 속도도 **사람마다** 저장합니다 (소유자 요청). 목소리와 같은 자리·같은 방식.
